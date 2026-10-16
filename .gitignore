@@ -1,0 +1,21 @@
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+expo-env.d.ts
+android/
+ios/
+
+# Environment: real config never goes to git - .env.example is the committed template
+.env
+.env.local
+
+# logs
+*.log
+.serena/
+*.zip
+*.sh
+*.ps1
+
