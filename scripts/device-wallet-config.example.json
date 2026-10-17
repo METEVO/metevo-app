@@ -1,0 +1,10 @@
+{
+  "metevoLspUrl": "http://192.168.1.10:8080",
+  "metevoLspBearerToken": "REPLACE-WITH-THE-LSP-APAY_BEARER_TOKEN",
+  "bitcoindRpcHost": "192.168.1.10",
+  "bitcoindRpcPort": 18443,
+  "bitcoindRpcUsername": "REPLACE-WITH-REGTEST-RPC-USER",
+  "bitcoindRpcPassword": "REPLACE-WITH-REGTEST-RPC-PASSWORD",
+  "rgbIndexerUrl": "http://192.168.1.10:3000",
+  "rgbProxyEndpoint": "http://192.168.1.10:3001"
+}

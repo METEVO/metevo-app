@@ -11,6 +11,8 @@ ios/
 # Environment: real config never goes to git - .env.example is the committed template
 .env
 .env.local
+# Device-provisioned wallet config (real regtest values, pushed via adb)
+scripts/device-wallet-config.json
 
 # logs
 *.log

@@ -15,6 +15,9 @@ describe('describeWalletError', () => {
       describeWalletError(errorNamed('PaymentValidationError', 'raw proposal payload')),
     ).toBe('Nothing was submitted: the proposal is not payable.');
     expect(
+      describeWalletError(errorNamed('WalletConfigError', 'field details with values')),
+    ).toBe('The wallet configuration has not been provisioned on this device.');
+    expect(
       describeWalletError(errorNamed('MetevoLspError', 'HTTP 500: raw server body')),
     ).toBe('The METEVO LSP could not be reached. Try again.');
   });

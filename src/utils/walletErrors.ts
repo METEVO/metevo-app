@@ -13,6 +13,8 @@ export function describeWalletError(cause: unknown): string {
       return 'Biometric authentication failed or was cancelled.';
     case 'PaymentValidationError':
       return 'Nothing was submitted: the proposal is not payable.';
+    case 'WalletConfigError':
+      return 'The wallet configuration has not been provisioned on this device.';
     case 'MetevoLspError':
       return 'The METEVO LSP could not be reached. Try again.';
     default:
