@@ -12,5 +12,8 @@ config.resolver.assetExts = config.resolver.assetExts.filter(
   (extension) => extension !== 'svg',
 );
 config.resolver.sourceExts.push('svg');
+// The Bare worklet bundle ships as a data asset: the worklet runtime
+// evaluates it, Metro must not try to compile it.
+config.resolver.assetExts.push('rlnbundle');
 
 module.exports = config;

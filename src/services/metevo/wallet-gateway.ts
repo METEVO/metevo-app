@@ -1,6 +1,13 @@
-import * as FileSystem from 'expo-file-system/legacy';
-
 import { ENV } from '../../config/env';
+import {
+  createBareWalletSessionGateway,
+} from './bareGateway';
+import { walletConfigFromDevice } from './deviceConfig';
+import {
+  assertPayableInvoice,
+  getPaymentStatus,
+  type MetevoPaymentStatus,
+} from './wallet';
 
 /**
  * Setup flow stages in the design's order (section 29): the node is
@@ -45,28 +52,9 @@ export interface SubmittedPayment {
  */
 export type PaymentNetworkStatus = 'pending' | 'settled' | 'failed' | 'unknown';
 
-/**
- * Thrown before a proposal reaches the node: nothing was submitted and no
- * funds moved, so callers must not treat this as an ambiguous outcome.
- */
-export class PaymentValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'PaymentValidationError';
-  }
-}
-
-/** Lightning invoices carry an "ln" human-readable prefix; anything else is
- * not payable and is rejected before the node is touched. */
-const BOLT11_INVOICE_PATTERN = /^ln[a-z0-9]{6,}/i;
-
-function assertPayableInvoice(invoice: string): void {
-  if (!BOLT11_INVOICE_PATTERN.test(invoice)) {
-    throw new PaymentValidationError(
-      'the proposal is not a payable lightning invoice; nothing was submitted',
-    );
-  }
-}
+// Single source of truth lives in wallet.ts (the worklet imports the same
+// compiled module); re-exported here to keep the established import path.
+export { PaymentValidationError } from './wallet';
 
 export interface WalletSessionGateway {
   /** Whether this device already holds a stored wallet seed. */
@@ -201,29 +189,6 @@ function createWdkWalletSessionGateway(): WalletSessionGateway {
     return deviceConfig;
   }
 
-  function walletDataDirectory(): string {
-    const base =
-      FileSystem.documentDirectory ?? FileSystem.cacheDirectory ?? '';
-    return `${base}wdk-wallet`;
-  }
-
-  function walletConfig(
-    device: import('./deviceConfig').DeviceWalletConfig,
-  ): import('./wallet').MetevoWalletConfig {
-    return {
-      network: ENV.EXPO_PUBLIC_WALLET_NETWORK,
-      dataDir: walletDataDirectory(),
-      lspBaseUrl: device.lspApiUrl,
-      lspBearerToken: device.lspBearerToken,
-      bitcoindRpcHost: device.bitcoindRpcHost,
-      bitcoindRpcPort: device.bitcoindRpcPort,
-      bitcoindRpcUsername: device.bitcoindRpcUsername,
-      bitcoindRpcPassword: device.bitcoindRpcPassword,
-      indexerUrl: device.rgbIndexerUrl,
-      proxyEndpoint: device.rgbProxyEndpoint,
-    };
-  }
-
   return {
     async hasStoredWallet() {
       const secureStore = loadSecureStore();
@@ -252,7 +217,7 @@ function createWdkWalletSessionGateway(): WalletSessionGateway {
       if (mnemonic === null) {
         throw new Error('no wallet seed is stored on this device');
       }
-      wallet = await createMetevoWallet(mnemonic, walletConfig(device));
+      wallet = await createMetevoWallet(mnemonic, walletConfigFromDevice(device));
 
       onProgress('connecting-lsp', 'Connecting to the METEVO LSP…');
       usdmAssetId = await findAssetIdByTicker(wallet.account);
@@ -305,34 +270,10 @@ function createWdkWalletSessionGateway(): WalletSessionGateway {
       return { paymentHash: paymentHash.length > 0 ? paymentHash : null };
     },
     async checkPayment(paymentHash) {
-      if (wallet === null || paymentHash.length === 0) {
+      if (wallet === null) {
         return 'unknown';
       }
-      await wallet.account.sync();
-      const payments = (await wallet.account.listPayments()) as unknown;
-      const list = Array.isArray(payments) ? payments : (payments as Record<string, unknown>)?.payments;
-      if (!Array.isArray(list)) {
-        return 'unknown';
-      }
-      const match = list.find((entry: unknown) => {
-        const hash = String(
-          (entry as Record<string, unknown>)?.payment_hash ??
-            (entry as Record<string, unknown>)?.paymentHash ??
-            '',
-        ).toLowerCase();
-        return hash === paymentHash.toLowerCase();
-      });
-      if (match === undefined) {
-        return 'unknown';
-      }
-      const status = String((match as Record<string, unknown>)?.status ?? 'Pending');
-      if (status === 'Succeeded') {
-        return 'settled';
-      }
-      if (status === 'Failed') {
-        return 'failed';
-      }
-      return 'pending';
+      return getPaymentStatus(wallet.account, paymentHash);
     },
     async shutdown() {
       if (wallet !== null) {
@@ -345,10 +286,7 @@ function createWdkWalletSessionGateway(): WalletSessionGateway {
 }
 
 export function createWalletSessionGateway(): WalletSessionGateway {
-  const gateway =
-    ENV.EXPO_PUBLIC_WALLET_MODE === 'wdk'
-      ? createWdkWalletSessionGateway()
-      : createMockWalletSessionGateway();
+  const gateway = selectGateway();
 
   // Single-flight guard: concurrent createWallet calls (double-tap before
   // the UI disables the button) must not race the check-then-act seed
@@ -363,4 +301,14 @@ export function createWalletSessionGateway(): WalletSessionGateway {
       return creation;
     },
   };
+}
+
+function selectGateway(): WalletSessionGateway {
+  if (ENV.EXPO_PUBLIC_WALLET_MODE === 'mock') {
+    return createMockWalletSessionGateway();
+  }
+  if (ENV.EXPO_PUBLIC_WALLET_TRANSPORT === 'bare') {
+    return createBareWalletSessionGateway();
+  }
+  return createWdkWalletSessionGateway();
 }

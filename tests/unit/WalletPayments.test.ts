@@ -31,6 +31,7 @@ jest.mock('../../src/services/metevo/secure-store', () => ({
   deviceSupportsBiometrics: jest.fn().mockResolvedValue(true),
 }));
 jest.mock('../../src/services/metevo/wallet', () => ({
+  ...jest.requireActual('../../src/services/metevo/wallet'),
   createMetevoWallet: jest.fn(),
   findAssetIdByTicker: jest.fn().mockResolvedValue(null),
   getMetevoWalletStatus: jest.fn().mockResolvedValue({

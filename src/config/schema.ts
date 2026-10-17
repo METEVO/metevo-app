@@ -69,6 +69,10 @@ export const appEnvSchema = z.object({
    * channel before continuing without one (the LSP provisions on a cron;
    * readiness is reported through the wallet status afterwards). */
   EXPO_PUBLIC_CHANNEL_PROVISION_TIMEOUT_MS: intFromEnv(120_000, 5_000, 600_000),
+  /** How the real wallet node is hosted in wdk mode: "inprocess" drives the
+   * WDK module from the app's JS runtime (Node tooling/scripts); "bare"
+   * hosts it in a Bare worklet (the mobile device path). */
+  EXPO_PUBLIC_WALLET_TRANSPORT: z.enum(['inprocess', 'bare']).default('inprocess'),
 });
 
 export type AppEnv = z.infer<typeof appEnvSchema>;
