@@ -1,21 +1,26 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
+import AttentionVoice from '../../assets/voice_attention_dark.svg';
 import ProcessingVoice from '../../assets/voice_processing_dark.svg';
 import SuccessVoice from '../../assets/voice_success_dark.svg';
 import {
   MetevoTheme,
+  useTheme,
   useThemedStyles,
 } from '../../design/ThemeContext';
+import { useWalletSession } from '../../hooks/useWalletSession';
+import { PaymentNetworkStatus } from '../../services/metevo/wallet-gateway';
 import { layout } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
 
-type PaymentStage = 'review' | 'pending' | 'settled';
+type PaymentStage = 'review' | 'pending' | 'settled' | 'failed' | 'unknown';
 
 /**
  * The design's demo proposal (section 20/21 storyboard). Real amounts,
- * destination validation and fees arrive with the wallet payment flow;
- * animation completion never counts as settlement confirmation.
+ * destination validation and fees arrive with the wallet payment flow; the
+ * demo invoice is clearly marked and never reaches a real node in mock
+ * mode.
  */
 const MOCK_PROPOSAL = [
   { label: 'To', value: 'Maria' },
@@ -25,31 +30,101 @@ const MOCK_PROPOSAL = [
   { label: 'Total', value: '10.02 USDm' },
 ] as const;
 
+const DEMO_INVOICE = 'rgb:mock-destination-invoice (demo only)';
 const DEMO_NOTE = 'Demo proposal - not a real payment.';
-const MOCK_SETTLEMENT_DELAY_MS = 3_000;
+
+/** Poll cadence and the timeout that turns pending into unknown. */
+const STATUS_POLL_INTERVAL_MS = 2_000;
+const STATUS_TIMEOUT_MS = 60_000;
+
+const PENDING_TITLE = 'Pending';
+const FAILED_TITLE = 'The payment failed';
+const UNKNOWN_TITLE = 'Status unknown';
+const UNKNOWN_NOTE =
+  'The payment may or may not have been submitted. Check the existing transaction before doing anything else.';
+const CHECK_ACTION = 'Check again';
+const NEW_REVIEW_ACTION = 'New review';
 
 /**
  * Design sections 20/21: full payment review, then an explicit one-shot
- * confirmation. Cancel discards the unsubmitted proposal; pending is never
- * displayed as success.
+ * confirmation. Confirm authorizes this exact proposal once; cancel
+ * discards it. Pending is never displayed as success; a timeout after
+ * possible submission becomes unknown, and the only recovery is checking
+ * the existing payment - the design forbids automatic resending.
  */
 export function SendPaymentCard() {
+  const theme = useTheme();
   const styles = useThemedStyles(makeStyles);
+  const { submitPayment, checkPayment } = useWalletSession();
+
   const [stage, setStage] = useState<PaymentStage>('review');
+  const paymentHashRef = useRef<string | null>(null);
+
+  const confirm = useCallback(async () => {
+    setStage('pending');
+    try {
+      const submitted = await submitPayment({ invoice: DEMO_INVOICE });
+      paymentHashRef.current = submitted.paymentHash;
+    } catch {
+      // Submission may or may not have reached the node; unknown keeps the
+      // outcome honest instead of guessing.
+      setStage('unknown');
+    }
+  }, [submitPayment]);
 
   useEffect(() => {
     if (stage !== 'pending') {
       return undefined;
     }
-    const settlementTimer = setTimeout(() => setStage('settled'), MOCK_SETTLEMENT_DELAY_MS);
-    return () => clearTimeout(settlementTimer);
-  }, [stage]);
+    let cancelled = false;
+    const deadline = Date.now() + STATUS_TIMEOUT_MS;
+
+    const poll = async () => {
+      const hash = paymentHashRef.current;
+      if (hash === null) {
+        setStage('unknown');
+        return;
+      }
+      const status: PaymentNetworkStatus = await checkPayment(hash);
+      if (cancelled) {
+        return;
+      }
+      if (status === 'settled' || status === 'failed') {
+        setStage(status);
+        return;
+      }
+      if (Date.now() >= deadline) {
+        setStage('unknown');
+        return;
+      }
+      pollTimer = setTimeout(poll, STATUS_POLL_INTERVAL_MS);
+    };
+
+    let pollTimer = setTimeout(poll, STATUS_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(pollTimer);
+    };
+  }, [stage, checkPayment]);
+
+  const checkExisting = useCallback(async () => {
+    const hash = paymentHashRef.current;
+    if (hash === null) {
+      return;
+    }
+    const status = await checkPayment(hash);
+    if (status === 'settled' || status === 'failed') {
+      setStage(status);
+      return;
+    }
+    // Still unconfirmed stays unknown: pending is not resubmitted.
+  }, [checkPayment]);
 
   if (stage === 'pending') {
     return (
       <View style={styles.centered}>
         <ProcessingVoice width={64} height={64} />
-        <Text style={styles.title}>Pending</Text>
+        <Text style={styles.title}>{PENDING_TITLE}</Text>
         <Text style={styles.caption}>The payment is not confirmed yet.</Text>
       </View>
     );
@@ -66,6 +141,38 @@ export function SendPaymentCard() {
     );
   }
 
+  if (stage === 'failed') {
+    return (
+      <View style={styles.centered}>
+        <AttentionVoice width={64} height={64} />
+        <Text style={styles.title}>{FAILED_TITLE}</Text>
+        <Text style={styles.caption}>
+          The node reported a confirmed failure. Nothing was resent.
+        </Text>
+        <ActionButton
+          label={NEW_REVIEW_ACTION}
+          variant="primary"
+          onPress={() => setStage('review')}
+        />
+      </View>
+    );
+  }
+
+  if (stage === 'unknown') {
+    return (
+      <View style={styles.centered}>
+        <AttentionVoice width={64} height={64} />
+        <Text style={styles.title}>{UNKNOWN_TITLE}</Text>
+        <Text style={styles.caption}>{UNKNOWN_NOTE}</Text>
+        <ActionButton
+          label={CHECK_ACTION}
+          variant="primary"
+          onPress={() => void checkExisting()}
+        />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.canvas}>
       <Text style={styles.title}>Send USDm</Text>
@@ -78,7 +185,7 @@ export function SendPaymentCard() {
       <Text style={styles.caption}>{DEMO_NOTE}</Text>
       <View style={styles.actions}>
         <ActionButton label="Cancel" variant="outlined" onPress={() => setStage('review')} grow />
-        <ActionButton label="Confirm payment" variant="primary" onPress={() => setStage('pending')} grow />
+        <ActionButton label="Confirm payment" variant="primary" onPress={() => void confirm()} grow />
       </View>
     </View>
   );

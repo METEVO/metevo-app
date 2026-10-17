@@ -10,6 +10,9 @@ import React, {
 
 import { ThemeMode, useThemePreference } from '../design/ThemeContext';
 import {
+  PaymentNetworkStatus,
+  PaymentProposal,
+  SubmittedPayment,
   WalletSessionGateway,
   WalletSessionSnapshot,
   WalletSetupStep,
@@ -60,6 +63,10 @@ export interface WalletSession {
   requestSignIn(): void;
   openWallet(): Promise<void>;
   refreshWallet(): Promise<void>;
+  /** Submit the current proposal exactly once (design payment.confirm). */
+  submitPayment(proposal: PaymentProposal): Promise<SubmittedPayment>;
+  /** Query an existing payment; never creates a replacement (payment.check). */
+  checkPayment(paymentHash: string): Promise<PaymentNetworkStatus>;
   /** Back navigation to a fixed earlier phase (account -> theme, etc.). */
   reopenPhase(phase: SessionPhase): void;
 }
@@ -150,6 +157,18 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
 
   const reopenPhase = useCallback((target: SessionPhase) => setPhase(target), []);
 
+  const submitPayment = useCallback(
+    (proposal: PaymentProposal) =>
+      withGateway((gateway) => gateway.submitPayment(proposal)),
+    [withGateway],
+  );
+
+  const checkPayment = useCallback(
+    (paymentHash: string) =>
+      withGateway((gateway) => gateway.checkPayment(paymentHash)),
+    [withGateway],
+  );
+
   const session = useMemo(
     () => ({
       phase,
@@ -168,6 +187,8 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       requestSignIn,
       openWallet,
       refreshWallet,
+      submitPayment,
+      checkPayment,
       reopenPhase,
     }),
     [
@@ -187,6 +208,8 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       requestSignIn,
       openWallet,
       refreshWallet,
+      submitPayment,
+      checkPayment,
       reopenPhase,
     ],
   );
