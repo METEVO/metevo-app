@@ -9,7 +9,8 @@
     "ios": "expo run:ios",
     "typecheck": "tsc --noEmit",
     "test": "jest",
-    "bundle:wallet": "npm run compile:worklet && bare-pack bare/wallet-worklet.js --linked -o bare/wallet.rlnbundle",
+    "postinstall": "patch-package",
+    "bundle:wallet": "npm run compile:worklet && bare-pack bare/wallet-worklet.js --linked --imports node_modules/bare-node-runtime/imports.json -o bare/wallet.rlnbundle",
     "compile:worklet": "tsc -p tsconfig.worklet.json"
   },
   "dependencies": {
@@ -27,7 +28,7 @@
     "expo-secure-store": "57.0.4",
     "react": "19.2.3",
     "react-native": "0.86.3",
-    "react-native-bare-kit": "0.15.5",
+    "react-native-bare-kit": "0.15.6",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-svg": "^15.15.4",
     "zod": "^3.25.76"
@@ -39,6 +40,7 @@
     "bare-link": "^4.0.1",
     "bare-pack": "^2.2.5",
     "jest": "^30.5.2",
+    "patch-package": "^8.0.1",
     "react-native-svg-transformer": "^1.5.3",
     "ts-jest": "^29.4.15",
     "typescript": "~6.0.3"
