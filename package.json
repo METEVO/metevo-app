@@ -28,7 +28,7 @@
     "expo-secure-store": "57.0.4",
     "react": "19.2.3",
     "react-native": "0.86.3",
-    "react-native-bare-kit": "0.15.6",
+    "react-native-bare-kit": "0.15.5",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-svg": "^15.15.4",
     "zod": "^3.25.76"
