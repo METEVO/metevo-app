@@ -10,6 +10,7 @@ const INTENT_DESCRIPTIONS: Record<IntentId, string> = {
   'read-transactions': 'Read the last transactions out loud',
   'read-spending-overview': 'Summarise spending over time',
   'read-balance': 'Read all balances out loud',
+  contacts: 'Open your contacts',
 };
 
 /**

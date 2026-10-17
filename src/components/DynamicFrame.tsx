@@ -8,6 +8,8 @@ import { cardBase, layout } from './styles';
 interface DynamicFrameProps {
   /** Current intent id; null shows the idle placeholder. */
   intent: IntentId | null;
+  /** Hands a card's Done action the way back to the idle hint. */
+  onClearIntent?: () => void;
 }
 
 /**
@@ -19,10 +21,10 @@ interface DynamicFrameProps {
  * TODO(phase 2): `intent` comes from `useIntents`, fed by the QVAC
  * voice-to-intent pipeline.
  */
-export function DynamicFrame({ intent }: DynamicFrameProps) {
+export function DynamicFrame({ intent, onClearIntent }: DynamicFrameProps) {
   return (
     <View style={[styles.frame, cardBase]}>
-      <IntentCard id={intent} />
+      <IntentCard id={intent} onClearIntent={onClearIntent} />
     </View>
   );
 }
