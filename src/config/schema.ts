@@ -81,6 +81,16 @@ export const appEnvSchema = z.object({
   LSP_PEER_URI: optionalUrlFromEnv,
   /** RGB-compatible node / indexer endpoint. */
   RGB_NODE_ENDPOINT: optionalUrlFromEnv,
+  /** METEVO LSP API base URL (utexo-lsp instance serving the USDm asset). */
+  METEVO_LSP_URL: optionalUrlFromEnv,
+  /** Bearer token for the METEVO LSP /metevo/* routes. The same value is
+   * configured on the LSP as APAY_BEARER_TOKEN. Never behind EXPO_PUBLIC_. */
+  METEVO_LSP_BEARER_TOKEN: emptyToUndefined,
+  /** BIP-39 mnemonic for the embedded WDK RGB Lightning wallet. Node-side
+   * script use (tests) only - never embedded in the app bundle. */
+  METEVO_WALLET_MNEMONIC: emptyToUndefined,
+  /** Password for unlocking the embedded wallet node. Node-side use only. */
+  METEVO_WALLET_PASSWORD: emptyToUndefined,
   /** Wallet account xpub - public key only, never private keys. */
   RGB_NODE_ACCOUNT_XPUB: emptyToUndefined,
   /** Locally provisioned QVAC model identifier. */
