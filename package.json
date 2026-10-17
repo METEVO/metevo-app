@@ -5,8 +5,8 @@
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "bundle:wallet": "npm run compile:worklet && bare-pack bare/wallet-worklet.js --linked -o bare/wallet.rlnbundle",
