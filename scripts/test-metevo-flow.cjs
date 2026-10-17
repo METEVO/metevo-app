@@ -126,33 +126,51 @@ async function level3() {
     assert.ok(status.pubkey, 'wallet pubkey missing');
     ok(`wallet unlocked, pubkey ${status.pubkey}`);
 
+    step('Waiting for on-chain funds');
+    const address = await account.getAddress();
+    console.log(`   wallet address: ${address}`);
+    let btc = status.btcSpendableSat;
+    if (btc < 15_000) {
+      console.log(`   ACTION: run this in another terminal (rgb-lightning-node dir):`);
+      console.log(`     ./regtest.sh sendtoaddress ${address} 20000 && ./regtest.sh mine 1`);
+      const deadline = Date.now() + 360_000;
+      while (Date.now() < deadline && btc < 15_000) {
+        await account.sync();
+        const b = await account.getBalanceDetails(false);
+        btc = Number(b?.vanilla?.spendable ?? 0);
+        if (btc < 15_000) { process.stdout.write('.'); await new Promise((r) => setTimeout(r, 5_000)); }
+      }
+      assert.ok(btc >= 15_000, 'wallet was not funded within 6 minutes');
+    }
+    ok(`wallet funded with ${btc} sats`);
+
     const usdmAssetId = await findAssetIdByTicker(account, 'USDM');
     console.log(`   wallet aware of USDM: ${usdmAssetId ?? 'no (blind invoice path)'}`);
 
+    const lspPubkey = (process.env.METEVO_LSP_PEER_PUBKEY || '').split('@')[0];
     if (process.env.METEVO_LSP_PEER_PUBKEY) {
       step('Connecting wallet to our LSP peer');
       await account.connectPeer(process.env.METEVO_LSP_PEER_PUBKEY);
       ok(`connected to ${process.env.METEVO_LSP_PEER_PUBKEY.slice(0, 20)}...`);
-      if (usdmAssetId) {
-        step('Waiting for a usable USDM channel (LSP cron opens it)');
-        const deadline = Date.now() + 300_000;
-        let ready = false;
-        while (Date.now() < deadline && !ready) {
-          await account.sync();
-          const chans = await account.listChannels();
-          const list = Array.isArray(chans) ? chans : chans?.channels ?? [];
-          ready = list.some((c) => (c.is_usable ?? c.ready) === true && (c.asset_id ?? null) === usdmAssetId);
-          if (!ready) { process.stdout.write('.'); await new Promise((r) => setTimeout(r, 10_000)); }
-        }
-        assert.ok(ready, 'USDM channel did not become usable in 5 minutes');
-        ok('USDM channel usable');
+      step('Waiting for a usable channel (LSP cron opens it; mine 1 block if stuck)');
+      const deadline = Date.now() + 300_000;
+      let ready = false;
+      while (Date.now() < deadline && !ready) {
+        await account.sync();
+        const chans = await account.listChannels();
+        const list = Array.isArray(chans) ? chans : chans?.channels ?? [];
+        ready = list.some((c) => c.peer_pubkey === lspPubkey && (c.is_usable ?? c.ready) === true);
+        if (!ready) { process.stdout.write('.'); await new Promise((r) => setTimeout(r, 10_000)); }
       }
+      assert.ok(ready, 'channel to the LSP did not become usable in 5 minutes');
+      ok('channel usable');
     } else {
       console.log('   METEVO_LSP_PEER_PUBKEY not set; assuming the channel already exists (LSP cron).');
     }
 
     step(`Funding: buy $${BUY_USD} of USDM`);
-    const baseline = usdmAssetId ? Number(await account.getTokenBalance(usdmAssetId)) : 0;
+    const balanceAssetId = usdmAssetId ?? null;
+    const baseline = balanceAssetId ? Number(await account.getTokenBalance(balanceAssetId)) : 0;
     const result = await fundMetevoWallet(wallet, lsp, {
       usdAmount: BUY_USD,
       usdmAssetId,
@@ -162,21 +180,18 @@ async function level3() {
     ok(`claimed via ${result.invoiceKind} invoice`);
 
     step('Checking USDM balance');
-    if (usdmAssetId) {
-      const deadline = Date.now() + 600_000;
-      let final = baseline;
-      while (Date.now() < deadline) {
-        await account.refreshTransfers({ skip_sync: false, filter: [] });
-        final = Number(await account.getTokenBalance(usdmAssetId));
-        if (final > baseline) break;
-        process.stdout.write('.');
-        await new Promise((r) => setTimeout(r, 15_000));
-      }
-      assert.ok(final > baseline, 'USDM balance did not increase');
-      ok(`USDM balance ${baseline} -> ${final} base units`);
-    } else {
-      ok('wallet was blind to USDM; re-run after this transfer to exercise the witness path');
+    const settleAssetId = result.quote.assetId || balanceAssetId;
+    const deadline = Date.now() + 600_000;
+    let final = baseline;
+    while (Date.now() < deadline) {
+      await account.refreshTransfers({ skip_sync: false, filter: [] });
+      final = Number(await account.getTokenBalance(settleAssetId));
+      if (final > baseline) break;
+      process.stdout.write('.');
+      await new Promise((r) => setTimeout(r, 15_000));
     }
+    assert.ok(final > baseline, 'USDM balance did not increase');
+    ok(`USDM balance ${baseline} -> ${final} base units`);
 
     console.log('\nPASSED: WDK wallet connects, pays, claims and holds USDM.');
   } finally {
