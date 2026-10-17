@@ -11,3 +11,15 @@ export {
 export type { MetevoWallet, MetevoWalletConfig, MetevoWalletStatus } from './wallet';
 export { awaitInvoiceSettlement, fundMetevoWallet } from './funding';
 export type { FundOptions, FundResult } from './funding';
+export {
+  authenticateToAccessSecrets,
+  createWalletSecurely,
+  deviceSupportsBiometrics,
+  readWalletMnemonic,
+  readWalletPassword,
+  storeWalletMnemonic,
+  storeWalletPassword,
+  walletExistsOnDevice,
+} from './secure-store';
+export { SecureWalletStoreError } from './secure-store';
+export { getMetevoLspClient, resetMetevoLspClient } from './lsp-client-instance';
