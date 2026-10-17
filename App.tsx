@@ -2,6 +2,7 @@ import React from 'react';
 import { StyleSheet } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
+import { colors } from './src/components/styles';
 import { HomeScreen } from './src/screens/HomeScreen';
 
 /**
@@ -27,6 +28,6 @@ export default function App() {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: '#f4f4f4',
+    backgroundColor: colors.background,
   },
 });
