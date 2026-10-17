@@ -19,6 +19,7 @@ import {
   createWalletSessionGateway,
 } from '../services/metevo/wallet-gateway';
 import { speakAnnouncement } from '../services/spokenInteraction';
+import { describeWalletError } from '../utils/walletErrors';
 
 /**
  * Phases of the single METEVO flow, in the design's order: opening screen,
@@ -129,8 +130,12 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       setSetupStep('idle');
       setPhase('wallet');
     } catch (cause) {
+      console.log(
+        '[metevo] wallet setup failed:',
+        cause instanceof Error ? cause.name : 'unknown',
+      );
       setSetupStep('idle');
-      setErrorMessage(cause instanceof Error ? cause.message : String(cause));
+      setErrorMessage(describeWalletError(cause));
     }
   }, [withGateway]);
 
@@ -148,8 +153,12 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       setWallet(await withGateway((gateway) => gateway.readStatus()));
       setPhase('home');
     } catch (cause) {
+      console.log(
+        '[metevo] wallet open failed:',
+        cause instanceof Error ? cause.name : 'unknown',
+      );
       setSetupStep('idle');
-      setErrorMessage(cause instanceof Error ? cause.message : String(cause));
+      setErrorMessage(describeWalletError(cause));
     }
   }, [withGateway]);
 
