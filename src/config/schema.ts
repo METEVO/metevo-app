@@ -60,6 +60,15 @@ const optionalUrlFromEnv = z.preprocess(
   z.string().url().optional(),
 );
 
+/** Lightning peer URI: compressed pubkey (66 hex chars) @ host : port. */
+const LSP_PEER_URI_PATTERN = /^[0-9a-f]{66}@[a-z0-9.\-]+:[0-9]{1,5}$/i;
+
+/** Like emptyToUndefined, but the value must be a peer URI when present. */
+const optionalPeerUriFromEnv = z.preprocess(
+  (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+  z.string().regex(LSP_PEER_URI_PATTERN).optional(),
+);
+
 export const appEnvSchema = z.object({
   // --- App flavour -----------------------------------------------------------
   EXPO_PUBLIC_METEVO_ENV: z.enum(['dev', 'prod']).default('dev'),
@@ -75,12 +84,43 @@ export const appEnvSchema = z.object({
   /** Kill switch for the automatic stop (false = stop only on second tap). */
   EXPO_PUBLIC_RECORDING_ALLOW_AUTO_STOP: boolFromEnv('true'),
 
+  // --- Wallet session (Step: onboarding + wallet setup) ------------------------
+  /** Wallet runtime: "mock" simulates the full setup flow (Expo Go demos),
+   * "wdk" drives the real @utexo/wdk-rgb-lightning node (debug APK builds). */
+  EXPO_PUBLIC_WALLET_MODE: z.enum(['mock', 'wdk']).default('mock'),
+  /** Bitcoin network for the embedded wallet node. */
+  EXPO_PUBLIC_WALLET_NETWORK: z.enum(['regtest', 'testnet', 'signet', 'mainnet']).default('regtest'),
+  /** bitcoind RPC for the wdk mode chain sync. Regtest dev values only. */
+  EXPO_PUBLIC_BITCOIND_RPC_HOST: z.string().min(1).default('127.0.0.1'),
+  EXPO_PUBLIC_BITCOIND_RPC_PORT: intFromEnv(18443, 1, 65_535),
+  EXPO_PUBLIC_BITCOIND_RPC_USERNAME: emptyToUndefined,
+  /** Regtest-only RPC credential. Provide via .env.local; never commit a
+   * value and never reuse a mainnet/testnet password here. */
+  EXPO_PUBLIC_BITCOIND_RPC_PASSWORD: emptyToUndefined,
+  /** RGB indexer (must match the wallet network) for the wdk mode. */
+  EXPO_PUBLIC_RGB_INDEXER_URL: optionalUrlFromEnv,
+  /** RGB proxy endpoint used for blinded receive invoices. */
+  EXPO_PUBLIC_RGB_PROXY_ENDPOINT: optionalUrlFromEnv,
+
+  // --- METEVO LSP (utexo-lsp serving the USDm asset) ---------------------------
+  /** METEVO LSP API base URL for the /metevo/* buy and claim routes. */
+  METEVO_LSP_URL: optionalUrlFromEnv,
+  /** Bearer token for the METEVO LSP /metevo/* routes. The same value is
+   * configured on the LSP as APAY_BEARER_TOKEN. Never behind EXPO_PUBLIC_. */
+  METEVO_LSP_BEARER_TOKEN: emptyToUndefined,
+
   // --- Reserved for future functional phases (validated when present) ----------
-  /** Lightning Service Provider peer. TODO(phase 2): real peers are
-   * pubkey@host:port, not URLs - relax this schema when wiring the LSP. */
-  LSP_PEER_URI: optionalUrlFromEnv,
+  /** Lightning Service Provider peer as pubkey@host:port for direct peer
+   * connects outside the LSP API base URL flow. */
+  LSP_PEER_URI: optionalPeerUriFromEnv,
   /** RGB-compatible node / indexer endpoint. */
   RGB_NODE_ENDPOINT: optionalUrlFromEnv,
+  /** BIP-39 mnemonic for the embedded WDK RGB Lightning wallet. Node-side
+   * script use (tests) only - the app generates and stores the seed in the
+   * device secure store, never in the environment. */
+  METEVO_WALLET_MNEMONIC: emptyToUndefined,
+  /** Password for unlocking the embedded wallet node. Node-side use only. */
+  METEVO_WALLET_PASSWORD: emptyToUndefined,
   /** Wallet account xpub - public key only, never private keys. */
   RGB_NODE_ACCOUNT_XPUB: emptyToUndefined,
   /** Locally provisioned QVAC model identifier. */

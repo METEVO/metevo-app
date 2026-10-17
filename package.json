@@ -10,9 +10,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@scure/bip39": "^2.4.0",
+    "@utexo/wdk-rgb-lightning": "^0.1.0-beta.15",
     "expo": "^57.0.29",
     "expo-audio": "~57.0.5",
+    "expo-crypto": "~57.0.4",
     "expo-file-system": "~57.0.7",
+    "expo-local-authentication": "~58.0.2",
+    "expo-secure-store": "~58.0.2",
     "react": "19.2.3",
     "react-native": "0.86.3",
     "react-native-safe-area-context": "~5.7.0",
