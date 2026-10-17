@@ -142,11 +142,62 @@ npx expo run:android --variant debug
 
 ## Open items
 
-- Failed / unknown payment status views exist in the interaction spec but
-  arrive with the real payment wiring (the mock settles deterministically).
-- Whole-screen theme preview: ThemeOptions previews palettes per card; a
-  live full-shell theme switch needs the style layer to become theme-aware.
-- Sign in / passkey are design states; the account contract is team-owned.
-- Real-mode channel provisioning depends on the LSP cron; if the channel
-  is not ready within 30 s the home shell still opens with
-  `channelReady: false` (no fake balance is ever shown).
+- ~~Failed / unknown payment status views~~ **resolved** (see follow-up).
+- ~~Whole-screen theme preview~~ **resolved** (see follow-up).
+- ~~Sign-in is design-only~~ **partially resolved**: existing wallets now
+  route to sign-in; passkey itself stays seam-only until the team-owned
+  account contract lands.
+- ~~30 s channel wait~~ **resolved** (see follow-up).
+- Whole-screen theme persistence across app restarts (storage contract) is
+  still open; the preference is session-scoped for now.
+
+## Follow-up iteration: status, theme and channel honesty
+
+1. **Payment status machine (design 21 rules, now real).**
+   The gateway gained `submitPayment(proposal)` (one-shot; returns the
+   trackable payment hash) and `checkPayment(hash)` (query-only; never
+   creates a replacement). `SendPaymentCard` now runs the full machine:
+   pending (poll every 2 s) -> settled / failed, timeout after possible
+   submission -> **unknown**, and submit errors -> unknown. Unknown offers
+   only "Check again" - the design forbids automatic resending; failed
+   requires the node's confirmed failure and offers "New review" (a new
+   proposal, never a resend). The proposal itself stays DEMO-marked until
+   the resolver contract lands.
+2. **Theme-aware style layer + live whole-screen preview.**
+   `src/design/theme.ts` (`createTheme(mode)`) + `ThemeContext.tsx`
+   (`ThemePreferenceProvider`, `useTheme`, `useThemedStyles`). Every
+   component now derives its palette (and its dark/light icon assets) from
+   the provider; the deprecated static palette exports were removed. The
+   theme onboarding step sets the preference immediately, so the whole
+   screen previews the candidate palette live (text, surfaces, outlines,
+   symbols - geometry preserved), exactly as section 27 demands.
+3. **Channel provisioning honesty.**
+   `EXPO_PUBLIC_CHANNEL_PROVISION_TIMEOUT_MS` (default 120 s, range
+   5-600 s) replaces the hardcoded 30 s: the LSP provisions channels on a
+   cron, so the wait is best-effort and **timing out is not an error** -
+   the home shell opens, keeps polling the wallet status every 5 s, shows
+   an "Opening your USDm channel…" note (attention outline) and gates the
+   Receive action with the explanation until `channelReady`. No fake
+   balance is ever shown ("— USDm" until real).
+4. **Existing-wallet routing.**
+   The gateway exposes `hasStoredWallet()`; the account welcome detects a
+   stored wallet and swaps the paths: Sign in becomes primary, Create
+   account is disabled with an explanatory note - instead of failing later
+   with "a wallet already exists on this device".
+5. **Biometric gate hardening.**
+   The WDK open path now authenticates with device biometrics **strictly
+   before** reading the stored seed (pinned by
+   `tests/unit/WalletGateway.test.ts`). Seed generation moved to
+   `src/services/metevo/mnemonic.ts`, lazy-required like the native
+   module, so mock mode and the unit tests never execute the ESM-only
+   BIP-39 dependency.
+
+New/changed in this iteration: `src/design/theme.ts`,
+`src/design/ThemeContext.tsx`, `src/services/metevo/mnemonic.ts`,
+`src/services/metevo/wallet-gateway.ts` (payment + stored-wallet + channel
+API), `src/hooks/useWalletSession.tsx` (context provider),
+`src/components/intent-cards/SendPaymentCard.tsx`,
+`src/components/onboarding/AccountAccess.tsx`,
+`src/screens/HomeScreen.tsx`, `src/components/*` (theme adoption),
+`tests/unit/WalletPayments.test.ts` (6 tests), plus schema/`.env.example`
+for the new timeout variable.
