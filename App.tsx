@@ -2,7 +2,7 @@ import React from 'react';
 import { StyleSheet } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
-import { colors } from './src/components/styles';
+import { ThemePreferenceProvider, useThemePreference } from './src/design/ThemeContext';
 import { HomeScreen } from './src/screens/HomeScreen';
 
 /**
@@ -17,8 +17,18 @@ import { HomeScreen } from './src/screens/HomeScreen';
  */
 export default function App() {
   return (
+    <ThemePreferenceProvider>
+      <AppRoot />
+    </ThemePreferenceProvider>
+  );
+}
+
+function AppRoot() {
+  const { theme } = useThemePreference();
+
+  return (
     <SafeAreaProvider>
-      <SafeAreaView style={styles.root}>
+      <SafeAreaView style={[styles.root, { backgroundColor: theme.colors.background }]}>
         <HomeScreen />
       </SafeAreaView>
     </SafeAreaProvider>
@@ -28,6 +38,5 @@ export default function App() {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: colors.background,
   },
 });

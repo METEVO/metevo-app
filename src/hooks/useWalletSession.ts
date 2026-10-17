@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 
+import { ThemeMode, useThemePreference } from '../design/ThemeContext';
 import {
   WalletSessionGateway,
   WalletSessionSnapshot,
@@ -32,7 +33,7 @@ export type UiLanguage =
   | 'espanol'
   | 'kiswahili';
 
-export type UiTheme = 'dark' | 'light';
+export type UiTheme = ThemeMode;
 
 export interface WalletSession {
   phase: SessionPhase;
@@ -63,10 +64,10 @@ export interface WalletSession {
  */
 export function useWalletSession(): WalletSession {
   const gatewayRef = useRef<WalletSessionGateway | null>(null);
+  const { theme, setThemeMode } = useThemePreference();
 
   const [phase, setPhase] = useState<SessionPhase>('opening');
   const [language, setLanguage] = useState<UiLanguage | null>(null);
-  const [theme, setTheme] = useState<UiTheme>('dark');
   const [setupStep, setSetupStep] = useState<WalletSetupStep>('idle');
   const [progressMessage, setProgressMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -91,7 +92,10 @@ export function useWalletSession(): WalletSession {
     setPhase((current) => (current === 'language' && language !== null ? 'theme' : current));
   }, [language]);
 
-  const chooseTheme = useCallback((selected: UiTheme) => setTheme(selected), []);
+  const chooseTheme = useCallback(
+    (selected: UiTheme) => setThemeMode(selected),
+    [setThemeMode],
+  );
 
   const continueTheme = useCallback(() => setPhase('account'), []);
 
@@ -136,7 +140,7 @@ export function useWalletSession(): WalletSession {
   return {
     phase,
     language,
-    theme,
+    theme: theme.mode,
     setupStep,
     progressMessage,
     errorMessage,
