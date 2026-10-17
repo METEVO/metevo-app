@@ -36,7 +36,9 @@ jest.mock('../../src/services/metevo/secure-store', () => ({
   deviceSupportsBiometrics: jest.fn().mockResolvedValue(true),
 }));
 
-type GatewayModule = typeof import('../../src/services/metevo/wallet-gateway');
+type GatewayModule = {
+  createWalletSessionGateway: () => import('../../src/services/metevo/wallet-gateway').WalletSessionGateway;
+};
 
 const mockedSecureStore = jest.mocked(
   require('../../src/services/metevo/secure-store'),
@@ -44,14 +46,24 @@ const mockedSecureStore = jest.mocked(
 
 /**
  * Loads the gateway module fresh so the eager ENV validation sees the
- * requested wallet mode (the module caches its parsed environment).
+ * requested wallet mode (the module caches its parsed environment). The
+ * in-process wdk gateway lives outside the app bundle, in wdkNodeGateway.
  */
 function loadGatewayWithMode(mode: 'mock' | 'wdk'): GatewayModule {
   let loaded!: GatewayModule;
   jest.isolateModules(() => {
     process.env.EXPO_PUBLIC_WALLET_MODE = mode;
     process.env.EXPO_PUBLIC_CHANNEL_PROVISION_TIMEOUT_MS = '5000';
-    loaded = require('../../src/services/metevo/wallet-gateway');
+    const gatewayModule =
+      mode === 'wdk'
+        ? require('../../src/services/metevo/wdkNodeGateway')
+        : require('../../src/services/metevo/wallet-gateway');
+    loaded = {
+      createWalletSessionGateway: () =>
+        mode === 'wdk'
+          ? gatewayModule.createWdkWalletSessionGateway()
+          : gatewayModule.createWalletSessionGateway(),
+    };
   });
   return loaded;
 }

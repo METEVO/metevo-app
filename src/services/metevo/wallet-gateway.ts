@@ -1,13 +1,10 @@
 import { ENV } from '../../config/env';
-import {
-  createBareWalletSessionGateway,
-} from './bareGateway';
-import { walletConfigFromDevice } from './deviceConfig';
-import {
-  assertPayableInvoice,
-  getPaymentStatus,
-  type MetevoPaymentStatus,
-} from './wallet';
+import { createBareWalletSessionGateway } from './bareGateway';
+
+// Single source of truth lives in paymentGuard.ts (the worklet imports the
+// same compiled module); re-exported here to keep the established import
+// path.
+export { PaymentValidationError } from './paymentGuard';
 
 /**
  * Setup flow stages in the design's order (section 29): the node is
@@ -52,10 +49,6 @@ export interface SubmittedPayment {
  */
 export type PaymentNetworkStatus = 'pending' | 'settled' | 'failed' | 'unknown';
 
-// Single source of truth lives in wallet.ts (the worklet imports the same
-// compiled module); re-exported here to keep the established import path.
-export { PaymentValidationError } from './wallet';
-
 export interface WalletSessionGateway {
   /** Whether this device already holds a stored wallet seed. */
   hasStoredWallet(): Promise<boolean>;
@@ -71,6 +64,8 @@ export interface WalletSessionGateway {
   shutdown(): Promise<void>;
 }
 
+type SecureStoreModule = typeof import('./secure-store');
+
 /** Fixed demo values so mock-mode screens show the design's example data. */
 const MOCK_NODE_PUBKEY =
   '020000000000000000000000000000000000000000000000000000000000000001';
@@ -84,25 +79,6 @@ const MOCK_SETTLE_AFTER_CHECKS = 2;
 
 function waitFor(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * The regtest flow script connects the LSP peer explicitly before the LSP's
- * cron provisions the channel; do the same on-device when a peer URI is
- * provisioned. The call is optional on the beta module surface, so a
- * missing method skips the step instead of breaking the open flow.
- */
-async function connectLspPeer(
-  account: unknown,
-  peerUri: string,
-): Promise<void> {
-  const connectable = account as {
-    connectPeer?: (uri: string) => Promise<unknown>;
-  };
-  if (typeof connectable.connectPeer !== 'function') {
-    return;
-  }
-  await connectable.connectPeer(peerUri);
 }
 
 function createMockWalletSessionGateway(): WalletSessionGateway {
@@ -167,130 +143,19 @@ function createMockWalletSessionGateway(): WalletSessionGateway {
   };
 }
 
-type WdkServiceModule = typeof import('./wallet');
-type SecureStoreModule = typeof import('./secure-store');
-type MnemonicModule = typeof import('./mnemonic');
-type DeviceConfigModule = typeof import('./deviceConfig');
-
-const CHANNEL_POLL_INTERVAL_MS = 2_000;
-
-/**
- * Real mode drives the prepared WDK service functions. The native
- * `@utexo/wdk-rgb-lightning` module and the ESM-only BIP-39 source are
- * required lazily inside this module: mock mode (Expo Go) and the unit
- * tests never execute them. Debug APK builds include the native module
- * and can run `EXPO_PUBLIC_WALLET_MODE=wdk`.
- */
-function createWdkWalletSessionGateway(): WalletSessionGateway {
-  let wallet: import('./wallet').MetevoWallet | null = null;
-  let usdmAssetId: string | null = null;
-  let deviceConfig: import('./deviceConfig').DeviceWalletConfig | null = null;
-
-  const loadSecureStore = (): SecureStoreModule => require('./secure-store');
-  const loadWdkService = (): WdkServiceModule => require('./wallet');
-  const loadMnemonicSource = (): MnemonicModule => require('./mnemonic');
-  const loadDeviceConfig = (): DeviceConfigModule => require('./deviceConfig');
-
-  /** Fails fast (before the biometric prompt) when setup is impossible. */
-  async function ensureDeviceConfig() {
-    deviceConfig ??= await loadDeviceConfig().loadDeviceWalletConfig();
-    return deviceConfig;
+function selectGateway(): WalletSessionGateway {
+  if (ENV.EXPO_PUBLIC_WALLET_MODE === 'mock') {
+    return createMockWalletSessionGateway();
   }
-
-  return {
-    async hasStoredWallet() {
-      const secureStore = loadSecureStore();
-      return secureStore.walletExistsOnDevice();
-    },
-    async createWallet() {
-      const secureStore = loadSecureStore();
-      if (await secureStore.walletExistsOnDevice()) {
-        throw new Error('a wallet already exists on this device');
-      }
-      await secureStore.createWalletSecurely(
-        () => loadMnemonicSource().generateMnemonicWithDeviceEntropy(),
-      );
-    },
-    async openWallet(onProgress) {
-      const { createMetevoWallet, findAssetIdByTicker, getMetevoWalletStatus } =
-        loadWdkService();
-      const secureStore = loadSecureStore();
-
-      onProgress('opening-node', 'Opening…');
-      const device = await ensureDeviceConfig();
-      // Hardening rule: reading the stored seed requires a fresh biometric
-      // unlock, strictly before the secure store is touched.
-      await secureStore.authenticateToAccessSecrets('Open your METEVO wallet');
-      const mnemonic = await secureStore.readWalletMnemonic();
-      if (mnemonic === null) {
-        throw new Error('no wallet seed is stored on this device');
-      }
-      wallet = await createMetevoWallet(mnemonic, walletConfigFromDevice(device));
-
-      onProgress('connecting-lsp', 'Connecting to the METEVO LSP…');
-      usdmAssetId = await findAssetIdByTicker(wallet.account);
-      if (device.lspPeerUri) {
-        await connectLspPeer(wallet.account, device.lspPeerUri);
-      }
-      await waitFor(CHANNEL_POLL_INTERVAL_MS);
-
-      onProgress('provisioning-channel', 'Opening your USDm channel…');
-      // The LSP provisions channels on a cron, so the wait is best-effort:
-      // timing out here is not an error - the home shell opens and keeps
-      // polling the wallet status until the channel is usable.
-      const deadline = Date.now() + ENV.EXPO_PUBLIC_CHANNEL_PROVISION_TIMEOUT_MS;
-      let status = await getMetevoWalletStatus(wallet.account, usdmAssetId);
-      while (!status.usdmChannelReady && Date.now() < deadline) {
-        await waitFor(CHANNEL_POLL_INTERVAL_MS);
-        status = await getMetevoWalletStatus(wallet.account, usdmAssetId);
-      }
-      onProgress('ready', 'Wallet connected');
-    },
-    async readStatus() {
-      if (wallet === null) {
-        return {
-          nodePubkey: null,
-          btcSpendableSat: 0,
-          balanceUsdmBaseUnits: null,
-          channelReady: false,
-        };
-      }
-      const { getMetevoWalletStatus } = loadWdkService();
-      const status = await getMetevoWalletStatus(wallet.account, usdmAssetId);
-      return {
-        nodePubkey: status.pubkey,
-        btcSpendableSat: status.btcSpendableSat,
-        balanceUsdmBaseUnits: status.usdmBaseUnits,
-        channelReady: status.usdmChannelReady,
-      };
-    },
-    async submitPayment(proposal) {
-      if (wallet === null) {
-        throw new Error('the wallet is not open');
-      }
-      // Real-node boundary: even a clearly-marked demo proposal must fail
-      // validation here instead of reaching sendPayment.
-      assertPayableInvoice(proposal.invoice);
-      const response = (await wallet.account.sendPayment({
-        invoice: proposal.invoice,
-      })) as Record<string, unknown>;
-      const paymentHash = String(response?.payment_hash ?? response?.paymentHash ?? '');
-      return { paymentHash: paymentHash.length > 0 ? paymentHash : null };
-    },
-    async checkPayment(paymentHash) {
-      if (wallet === null) {
-        return 'unknown';
-      }
-      return getPaymentStatus(wallet.account, paymentHash);
-    },
-    async shutdown() {
-      if (wallet !== null) {
-        const { shutdownMetevoWallet } = loadWdkService();
-        await shutdownMetevoWallet(wallet);
-        wallet = null;
-      }
-    },
-  };
+  if (ENV.EXPO_PUBLIC_WALLET_TRANSPORT === 'bare') {
+    return createBareWalletSessionGateway();
+  }
+  // The in-process WDK gateway cannot exist inside the app bundle: the WDK
+  // binding resolves to a Node-only entry there. Node tooling uses
+  // wdkNodeGateway.ts directly.
+  throw new Error(
+    'wdk mode requires the bare transport inside the app; set EXPO_PUBLIC_WALLET_TRANSPORT=bare',
+  );
 }
 
 export function createWalletSessionGateway(): WalletSessionGateway {
@@ -309,14 +174,4 @@ export function createWalletSessionGateway(): WalletSessionGateway {
       return creation;
     },
   };
-}
-
-function selectGateway(): WalletSessionGateway {
-  if (ENV.EXPO_PUBLIC_WALLET_MODE === 'mock') {
-    return createMockWalletSessionGateway();
-  }
-  if (ENV.EXPO_PUBLIC_WALLET_TRANSPORT === 'bare') {
-    return createBareWalletSessionGateway();
-  }
-  return createWdkWalletSessionGateway();
 }

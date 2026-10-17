@@ -12,7 +12,7 @@ import {
   readWalletMnemonic,
   walletExistsOnDevice,
 } from './secure-store';
-import type { MetevoPaymentStatus } from './wallet';
+import type { MetevoPaymentStatus } from './paymentGuard';
 import type {
   WalletProgressListener,
   WalletSessionGateway,
