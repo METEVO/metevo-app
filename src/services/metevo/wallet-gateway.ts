@@ -155,6 +155,7 @@ function createMockWalletSessionGateway(): WalletSessionGateway {
 type WdkServiceModule = typeof import('./wallet');
 type SecureStoreModule = typeof import('./secure-store');
 type MnemonicModule = typeof import('./mnemonic');
+type DeviceConfigModule = typeof import('./deviceConfig');
 
 const CHANNEL_POLL_INTERVAL_MS = 2_000;
 
@@ -168,10 +169,18 @@ const CHANNEL_POLL_INTERVAL_MS = 2_000;
 function createWdkWalletSessionGateway(): WalletSessionGateway {
   let wallet: import('./wallet').MetevoWallet | null = null;
   let usdmAssetId: string | null = null;
+  let deviceConfig: import('./deviceConfig').DeviceWalletConfig | null = null;
 
   const loadSecureStore = (): SecureStoreModule => require('./secure-store');
   const loadWdkService = (): WdkServiceModule => require('./wallet');
   const loadMnemonicSource = (): MnemonicModule => require('./mnemonic');
+  const loadDeviceConfig = (): DeviceConfigModule => require('./deviceConfig');
+
+  /** Fails fast (before the biometric prompt) when setup is impossible. */
+  async function ensureDeviceConfig() {
+    deviceConfig ??= await loadDeviceConfig().loadDeviceWalletConfig();
+    return deviceConfig;
+  }
 
   function walletDataDirectory(): string {
     const base =
@@ -179,18 +188,20 @@ function createWdkWalletSessionGateway(): WalletSessionGateway {
     return `${base}wdk-wallet`;
   }
 
-  function walletConfig(): import('./wallet').MetevoWalletConfig {
+  function walletConfig(
+    device: import('./deviceConfig').DeviceWalletConfig,
+  ): import('./wallet').MetevoWalletConfig {
     return {
       network: ENV.EXPO_PUBLIC_WALLET_NETWORK,
       dataDir: walletDataDirectory(),
-      lspBaseUrl: ENV.METEVO_LSP_URL,
-      lspBearerToken: ENV.METEVO_LSP_BEARER_TOKEN,
-      bitcoindRpcHost: ENV.EXPO_PUBLIC_BITCOIND_RPC_HOST,
-      bitcoindRpcPort: ENV.EXPO_PUBLIC_BITCOIND_RPC_PORT,
-      bitcoindRpcUsername: ENV.EXPO_PUBLIC_BITCOIND_RPC_USERNAME ?? '',
-      bitcoindRpcPassword: ENV.EXPO_PUBLIC_BITCOIND_RPC_PASSWORD ?? '',
-      indexerUrl: ENV.EXPO_PUBLIC_RGB_INDEXER_URL ?? '',
-      proxyEndpoint: ENV.EXPO_PUBLIC_RGB_PROXY_ENDPOINT ?? '',
+      lspBaseUrl: device.metevoLspUrl,
+      lspBearerToken: device.metevoLspBearerToken,
+      bitcoindRpcHost: device.bitcoindRpcHost,
+      bitcoindRpcPort: device.bitcoindRpcPort,
+      bitcoindRpcUsername: device.bitcoindRpcUsername,
+      bitcoindRpcPassword: device.bitcoindRpcPassword,
+      indexerUrl: device.rgbIndexerUrl,
+      proxyEndpoint: device.rgbProxyEndpoint,
     };
   }
 
@@ -214,6 +225,7 @@ function createWdkWalletSessionGateway(): WalletSessionGateway {
       const secureStore = loadSecureStore();
 
       onProgress('opening-node', 'Opening…');
+      const device = await ensureDeviceConfig();
       // Hardening rule: reading the stored seed requires a fresh biometric
       // unlock, strictly before the secure store is touched.
       await secureStore.authenticateToAccessSecrets('Open your METEVO wallet');
@@ -221,7 +233,7 @@ function createWdkWalletSessionGateway(): WalletSessionGateway {
       if (mnemonic === null) {
         throw new Error('no wallet seed is stored on this device');
       }
-      wallet = await createMetevoWallet(mnemonic, walletConfig());
+      wallet = await createMetevoWallet(mnemonic, walletConfig(device));
 
       onProgress('connecting-lsp', 'Connecting to the METEVO LSP…');
       usdmAssetId = await findAssetIdByTicker(wallet.account);

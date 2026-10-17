@@ -7,7 +7,22 @@ jest.mock('@utexo/wdk-rgb-lightning', () => ({
 jest.mock('expo-file-system/legacy', () => ({
   documentDirectory: '/tmp/metevo-test/',
   cacheDirectory: '/tmp/metevo-cache/',
+  readAsStringAsync: jest.fn(async () => mockDeviceConfigContent),
 }));
+
+/** Obviously fake device config; values are test-only, never real. */
+const DEVICE_CONFIG_FIXTURE = {
+  metevoLspUrl: 'http://127.0.0.1:8080',
+  metevoLspBearerToken: 'test-token',
+  bitcoindRpcHost: '127.0.0.1',
+  bitcoindRpcPort: 18443,
+  bitcoindRpcUsername: 'regtest',
+  bitcoindRpcPassword: 'test-only-password',
+  rgbIndexerUrl: 'http://127.0.0.1:3000',
+  rgbProxyEndpoint: 'http://127.0.0.1:3001',
+};
+
+let mockDeviceConfigContent = JSON.stringify(DEVICE_CONFIG_FIXTURE);
 jest.mock('expo-crypto', () => ({
   getRandomValues: jest.fn((array: Uint8Array) => array),
 }));
