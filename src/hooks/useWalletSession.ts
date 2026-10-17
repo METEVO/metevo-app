@@ -51,6 +51,8 @@ export interface WalletSession {
   requestSignIn(): void;
   openWallet(): Promise<void>;
   refreshWallet(): Promise<void>;
+  /** Back navigation to a fixed earlier phase (account -> theme, etc.). */
+  reopenPhase(phase: SessionPhase): void;
 }
 
 /**
@@ -129,6 +131,8 @@ export function useWalletSession(): WalletSession {
     setWallet(await withGateway((gateway) => gateway.readStatus()));
   }, [withGateway]);
 
+  const reopenPhase = useCallback((target: SessionPhase) => setPhase(target), []);
+
   return {
     phase,
     language,
@@ -146,5 +150,6 @@ export function useWalletSession(): WalletSession {
     requestSignIn,
     openWallet,
     refreshWallet,
+    reopenPhase,
   };
 }
