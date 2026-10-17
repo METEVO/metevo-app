@@ -2,10 +2,11 @@ import React, { useCallback, useRef } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { createAudioPlayer, type AudioPlayer } from 'expo-audio';
 
+import IdleVoice from '../assets/voice_idle_dark.svg';
+import ListeningVoice from '../assets/voice_listening_dark.svg';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
 import { chooseArchiveDirectory } from '../utils/recordingArchive';
-import { colors, layout, typography } from './styles';
-import { VoiceVisualizer } from './VoiceVisualizer';
+import { colors, layout, scale, typography } from './styles';
 
 interface RecordingControlsProps {
   /**
@@ -16,9 +17,24 @@ interface RecordingControlsProps {
 }
 
 /**
- * Bottom control cluster of the sketch: the big TALK button centered with
- * a small debug replay button on the left. The audio on/off toggle lives
- * in the StatusHeader.
+ * tokens.accessibility.assetViewBox is "-8 -8 80 80": the voice assets
+ * render at their full viewport so the state outlines keep their clearance
+ * instead of being shrunk into the old 64-unit box.
+ */
+const VOICE_ASSET_VIEWPORT_REFERENCE = 80;
+
+const VOICE_SIZE = scale(VOICE_ASSET_VIEWPORT_REFERENCE);
+
+/**
+ * Bottom shell region: the stateful voice control centered with a small
+ * debug replay button on the left. The audio on/off toggle lives in the
+ * StatusHeader.
+ *
+ * Voice states follow the design handoff: idle shows the microphone
+ * silhouette and starts recording; listening shows the stop square with a
+ * solid outer ring and stops recording. Stopping never implies acceptance,
+ * and the processing, success and attention states arrive with the
+ * functional phases.
  *
  * TODO(debug): the left button exists only for on-device verification -
  * short-press replays the last recording, long-press opens the folder
@@ -56,7 +72,7 @@ export function RecordingControls({ onRecordingComplete }: RecordingControlsProp
     console.log('[metevo] archive folder:', directoryUri ?? 'not chosen');
   }, []);
 
-  const { phase, currentLevelDb, start, stop } = useAudioRecorder(handleCompleted);
+  const { phase, start, stop } = useAudioRecorder(handleCompleted);
 
   const recording = phase === 'recording';
 
@@ -76,16 +92,16 @@ export function RecordingControls({ onRecordingComplete }: RecordingControlsProp
       </TouchableOpacity>
 
       <TouchableOpacity
-        style={[styles.primaryButton, recording && styles.primaryButtonActive]}
+        style={styles.voiceButton}
         onPress={recording ? stop : start}
         accessibilityRole="button"
         accessibilityLabel={recording ? 'Stop talking' : 'Talk'}
         accessibilityHint="Press once to talk to METEVO; press again or stay silent to stop."
       >
         {recording ? (
-          <VoiceVisualizer levelDb={currentLevelDb} />
+          <ListeningVoice width={VOICE_SIZE} height={VOICE_SIZE} />
         ) : (
-          <Text style={styles.primaryLabel}>TALK</Text>
+          <IdleVoice width={VOICE_SIZE} height={VOICE_SIZE} />
         )}
       </TouchableOpacity>
 
@@ -101,19 +117,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     width: '100%',
   },
-  primaryButton: {
-    width: layout.primaryButton,
-    height: layout.primaryButton,
-    borderRadius: layout.primaryButton / 2,
-    backgroundColor: colors.accent,
+  voiceButton: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 8,
   },
-  primaryButtonActive: {
-    backgroundColor: colors.danger,
-  },
-  primaryLabel: typography.primaryLabel,
   sideButton: {
     width: layout.secondaryButton,
     height: layout.secondaryButton,
