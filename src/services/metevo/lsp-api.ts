@@ -110,40 +110,95 @@ export class MetevoLspClient {
   }
 }
 
+/**
+ * Strict validators for untrusted LSP responses: a malicious or buggy LSP
+ * must not be able to inject NaN, negative or non-numeric amounts, or
+ * garbage hashes/invoices into the payment flow.
+ */
+function requireFiniteInteger(
+  value: unknown,
+  endpoint: string,
+  field: string,
+  minimum: number,
+): number {
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim().length > 0
+        ? Number(value)
+        : Number.NaN;
+  if (!Number.isSafeInteger(parsed) || parsed < minimum) {
+    throw new MetevoLspError(
+      endpoint,
+      200,
+      `response field ${field} is not an integer >= ${minimum}`,
+    );
+  }
+  return parsed;
+}
+
+function requireHexHash(value: unknown, endpoint: string, field: string): string {
+  const text = typeof value === 'string' ? value : '';
+  if (!/^[0-9a-f]{64}$/i.test(text)) {
+    throw new MetevoLspError(
+      endpoint,
+      200,
+      `response field ${field} is not a 64-hex hash`,
+    );
+  }
+  return text.toLowerCase();
+}
+
+function requireBolt11Invoice(value: unknown, endpoint: string): string {
+  const text = typeof value === 'string' ? value : '';
+  if (!/^ln[a-z0-9]{6,}/i.test(text)) {
+    throw new MetevoLspError(
+      endpoint,
+      200,
+      'response field invoice is not a bolt11 string',
+    );
+  }
+  return text;
+}
+
 function parseBuyQuote(value: unknown): MetevoBuyQuote {
+  const ENDPOINT = '/metevo/buy';
   if (typeof value !== 'object' || value === null) {
-    throw new MetevoLspError('/metevo/buy', 200, 'response is not an object');
+    throw new MetevoLspError(ENDPOINT, 200, 'response is not an object');
   }
   const record = value as Record<string, unknown>;
-  const required = ['payment_hash', 'invoice', 'amount_msat', 'sats', 'usd_amount', 'asset_id', 'asset_amount', 'sats_per_usd'] as const;
-  for (const key of required) {
-    const present = typeof record[key] === 'string' || typeof record[key] === 'number';
-    if (!present) {
-      throw new MetevoLspError('/metevo/buy', 200, `response is missing ${key}`);
-    }
+  const rawExpires = record['expires_at'] ?? 0;
+  const expiresAt = typeof rawExpires === 'number' ? rawExpires : Number(rawExpires);
+  if (!Number.isFinite(expiresAt) || expiresAt < 0) {
+    throw new MetevoLspError(ENDPOINT, 200, 'response field expires_at is not a timestamp');
   }
   return {
-    paymentHash: String(record['payment_hash']),
-    invoice: String(record['invoice']),
-    amountMsat: Number(record['amount_msat']),
-    sats: Number(record['sats']),
-    usdAmount: Number(record['usd_amount']),
-    assetId: String(record['asset_id']),
-    assetAmount: Number(record['asset_amount']),
-    satsPerUsd: Number(record['sats_per_usd']),
-    expiresAt: Number(record['expires_at'] ?? 0),
+    paymentHash: requireHexHash(record['payment_hash'], ENDPOINT, 'payment_hash'),
+    invoice: requireBolt11Invoice(record['invoice'], ENDPOINT),
+    amountMsat: requireFiniteInteger(record['amount_msat'], ENDPOINT, 'amount_msat', 1),
+    sats: requireFiniteInteger(record['sats'], ENDPOINT, 'sats', 1),
+    usdAmount: requireFiniteInteger(record['usd_amount'], ENDPOINT, 'usd_amount', 1),
+    assetId: String(record['asset_id'] ?? ''),
+    assetAmount: requireFiniteInteger(record['asset_amount'], ENDPOINT, 'asset_amount', 1),
+    satsPerUsd: requireFiniteInteger(record['sats_per_usd'], ENDPOINT, 'sats_per_usd', 1),
+    expiresAt,
   };
 }
 
 function parseClaimResult(value: unknown): MetevoClaimResult {
+  const ENDPOINT = '/metevo/claim';
   if (typeof value !== 'object' || value === null) {
-    throw new MetevoLspError('/metevo/claim', 200, 'response is not an object');
+    throw new MetevoLspError(ENDPOINT, 200, 'response is not an object');
   }
   const record = value as Record<string, unknown>;
+  const assetId = String(record['asset_id'] ?? '');
+  if (assetId.length === 0) {
+    throw new MetevoLspError(ENDPOINT, 200, 'response field asset_id is empty');
+  }
   return {
-    paymentHash: String(record['payment_hash'] ?? ''),
-    assetId: String(record['asset_id'] ?? ''),
-    assetAmount: Number(record['asset_amount'] ?? 0),
+    paymentHash: requireHexHash(record['payment_hash'], ENDPOINT, 'payment_hash'),
+    assetId,
+    assetAmount: requireFiniteInteger(record['asset_amount'], ENDPOINT, 'asset_amount', 0),
     status: String(record['status'] ?? ''),
     ...(record['reason'] !== undefined ? { reason: String(record['reason']) } : {}),
   };

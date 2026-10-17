@@ -219,3 +219,105 @@ function makeClientResponding(response: Response): MetevoLspClient {
     fetchImpl: jest.fn().mockResolvedValue(response),
   });
 }
+
+/**
+ * Audit hardening: a malicious or buggy LSP must not inject NaN, negative
+ * or non-numeric amounts, or garbage hashes/invoices into the payment
+ * flow. Every hostile payload must fail inside the parser, before any
+ * number or string reaches the funding state machine.
+ */
+describe('hostile buy quote payloads', () => {
+  const VALID_QUOTE = {
+    payment_hash: 'a24672c1b3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0',
+    invoice: 'lnbcrt300000n1...',
+    amount_msat: 300_000_000,
+    sats: 300_000,
+    usd_amount: 100,
+    asset_id: 'rgb:usdm-contract-id',
+    asset_amount: 10_000_000_000,
+    sats_per_usd: 3000,
+  };
+
+  const HOSTILE_FIELDS: Array<[string, unknown]> = [
+    ['amount_msat', ''],
+    ['amount_msat', 'not-a-number'],
+    ['amount_msat', 0],
+    ['amount_msat', -1],
+    ['amount_msat', '1e999'],
+    ['amount_msat', 1.5],
+    ['sats', -300_000],
+    ['usd_amount', 0],
+    ['asset_amount', Number.NaN],
+    ['sats_per_usd', ''],
+    ['payment_hash', 'abc'],
+    ['payment_hash', ''],
+    ['payment_hash', 12345],
+    ['invoice', ''],
+    ['invoice', 'rgb:mock-destination-invoice (demo only)'],
+    ['invoice', 42],
+    ['expires_at', 'not-a-timestamp'],
+    ['expires_at', -5],
+  ];
+
+  for (const [field, value] of HOSTILE_FIELDS) {
+    it(`rejects ${field}=${String(value).slice(0, 20)}`, async () => {
+      const payload = { ...VALID_QUOTE, [field]: value };
+      const client = makeClientResponding(jsonResponse(200, payload));
+
+      const error = await client
+        .buy(100)
+        .then(() => null, (e: unknown) => e);
+
+      expect(error).toBeInstanceOf(MetevoLspError);
+      expect((error as MetevoLspError).endpoint).toBe('/metevo/buy');
+    });
+  }
+
+  it('rejects a response with a missing required field', async () => {
+    const payload = { ...VALID_QUOTE };
+    delete (payload as Record<string, unknown>)['sats'];
+    const client = makeClientResponding(jsonResponse(200, payload));
+
+    const error = await client.buy(100).then(() => null, (e: unknown) => e);
+
+    expect(error).toBeInstanceOf(MetevoLspError);
+    expect((error as MetevoLspError).message).toContain('sats');
+  });
+});
+
+describe('hostile claim payloads', () => {
+  it('rejects a malformed payment hash and empty asset id', async () => {
+    const client = makeClientResponding(
+      jsonResponse(200, { payment_hash: 'zz', asset_id: '', asset_amount: 5, status: 'delivered' }),
+    );
+
+    const error = await client
+      .claim({
+        paymentHash: 'a24672c1b3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0',
+        rgbInvoice: 'rgb1blind...',
+      })
+      .then(() => null, (e: unknown) => e);
+
+    expect(error).toBeInstanceOf(MetevoLspError);
+  });
+
+  it('accepts a zero asset amount (failed claims carry none)', async () => {
+    const client = makeClientResponding(
+      jsonResponse(200, {
+        payment_hash: 'a24672c1b3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0',
+        asset_id: 'rgb:usdm-contract-id',
+        asset_amount: 0,
+        status: 'failed',
+        reason: 'payment expired',
+      }),
+    );
+
+    const result = await client.claim({
+      paymentHash: 'a24672c1b3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0',
+      rgbInvoice: 'rgb1blind...',
+    });
+
+    expect(result.status).toBe('failed');
+    expect(result.reason).toBe('payment expired');
+  });
+});
