@@ -4,8 +4,8 @@ import { ScrollView, StyleSheet, View } from 'react-native';
 import { BalancesCard } from '../components/BalancesCard';
 import { DynamicFrame } from '../components/DynamicFrame';
 import { HistorySpendingLinks } from '../components/HistorySpendingLinks';
-import { ProfileLink } from '../components/ProfileLink';
 import { RecordingControls } from '../components/RecordingControls';
+import { StatusHeader } from '../components/StatusHeader';
 import { TransactionList } from '../components/TransactionList';
 import { MOCK_TRANSACTIONS } from '../components/mocks';
 import { layout } from '../components/styles';
@@ -27,15 +27,13 @@ export function HomeScreen() {
 
   return (
     <ScrollView contentContainerStyle={styles.content}>
-      <View style={styles.topRow}>
-        <ProfileLink />
-        <BalancesCard
-          balances={[
-            { label: 'USDm BAL', value: '$100.00' },
-            { label: 'SATS BAL', value: '50,000 sats' },
-          ]}
-        />
-      </View>
+      <StatusHeader />
+      <BalancesCard
+        balances={[
+          { label: 'USDm BAL', value: '$100.00' },
+          { label: 'SATS BAL', value: '50,000 sats' },
+        ]}
+      />
 
       <TransactionList transactions={MOCK_TRANSACTIONS} />
 
@@ -72,10 +70,5 @@ const styles = StyleSheet.create({
   content: {
     padding: layout.screenPadding,
     gap: layout.sectionGap,
-  },
-  topRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: layout.rowGap,
   },
 });

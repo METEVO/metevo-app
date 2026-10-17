@@ -17,8 +17,8 @@ interface RecordingControlsProps {
 
 /**
  * Bottom control cluster of the sketch: the big TALK button centered with
- * the AUDIO ON/OFF toggle on the right, and a small debug replay button on
- * the left.
+ * a small debug replay button on the left. The audio on/off toggle lives
+ * in the StatusHeader.
  *
  * TODO(debug): the left button exists only for on-device verification -
  * short-press replays the last recording, long-press opens the folder
@@ -89,14 +89,7 @@ export function RecordingControls({ onRecordingComplete }: RecordingControlsProp
         )}
       </TouchableOpacity>
 
-      <TouchableOpacity
-        style={styles.sideButton}
-        onPress={() => undefined}
-        accessibilityRole="button"
-        accessibilityLabel="Audio on or off"
-      >
-        <Text style={styles.sideLabel}>AUDIO ON</Text>
-      </TouchableOpacity>
+      <View style={styles.sideSpacer} />
     </View>
   );
 }
@@ -134,4 +127,5 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   sideLabel: { ...typography.caption, textAlign: 'center' },
+  sideSpacer: { width: layout.secondaryButton },
 });
