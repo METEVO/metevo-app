@@ -194,18 +194,26 @@ Open decisions that need product input (not mechanical):
 
 ## Open items
 
-- **Bare runtime hosting (blocks in-app wdk mode on BOTH platforms):** the
-  prepared service layer was validated Node-side only
-  (`@utexo/rgb-lightning-node-nodejs` + scripts/e2e). The in-app path
-  requires `@utexo/rgb-lightning-node-bare` (optional peer, not installed
-  in any checkout). Upstream: the published wrapper is a 0.2.0-beta.4
-  candidate ("fresh-wallet only, not approved for production rollout");
-  Android additionally needs the documented staging integration
-  (`react-native-bare-kit@0.15.5` + Gradle hook + NDK 27.1.12297006 -
-  installing the npm package alone does not apply the hook); iOS prebuilt
-  artifacts exist (`ios-arm64`, simulator targets) but no documented RN
-  app integration recipe yet. Until this lands, the proven real-flow demo
-  is the Node-side script; the in-app node is the next integration project.
+- **In-app node hosting: the JS layer is DONE, the native pairing is the
+  remaining blocker.** Landed: `bare/wallet-worklet.js` (Bare worklet RPC
+  server over the prepared services), `EXPO_PUBLIC_WALLET_TRANSPORT=bare`
+  device path, the RN-side IPC gateway (`bareGateway.ts`, same
+  `WalletSessionGateway` contract), framing/progress tests, and the
+  emit-compatible `.js` import extensions. Blocked upstream:
+  `@utexo/wdk-rgb-lightning@0.1.0-beta.15` (latest) peers with
+  `rgb-lightning-node-bare <0.2.0`, and the 0.1.x line ships NO prebuilt
+  Android artifacts (its postinstall falls back to a Rust source build
+  needing rustup + NDK + CMake). The `0.2.0-beta.4` line has the Android
+  prebuilds + staging recipe but is rejected by the published WDK peer
+  range and is itself "fresh-wallet only, not approved for production
+  rollout". Unblocks when a WDK release widens the peer range to the
+  0.2.x runtime (watch `npm view @utexo/wdk-rgb-lightning peerDependencies`).
+  Alternative if the demo demands it: source-build the 0.1.x Android
+  prebuilds (rustup + NDK 27.1 + CMake) — hours of toolchain work with an
+  unqualified-ELF risk the upstream staging step was designed to prevent.
+- iOS: prebuilt artifacts exist upstream (`ios-arm64`, simulator targets)
+  but no documented React Native integration recipe yet; the app code needs
+  no changes when it lands (same gateway seam).
 
 - ~~Failed / unknown payment status views~~ **resolved** (see follow-up).
 - ~~Whole-screen theme preview~~ **resolved** (see follow-up).
