@@ -140,6 +140,44 @@ npx expo run:android --variant debug
 - Onboarding voice controls render idle/listening states only; recognition
   stays with the audio phase.
 
+## Security audit record (2026-10-17)
+
+A read-only security audit ran over `origin/main..feat/wallet-onboarding-lsp`.
+Verified clean: no committed or logged secrets, 256-bit CSPRNG seed
+generation, inert SVG assets, sound lockfile integrity, no injection
+surfaces, working lazy-require boundary (Expo Go cannot load the native
+module), one-shot mock approval UX with amount/destination/fee display, no
+auto-resend on timeout.
+
+Mechanical findings fixed in this branch:
+
+| Finding | Fix commit |
+| --- | --- |
+| M-3 biometric gate missing on the seed read path | `85cd426` (biometric unlock strictly before `readWalletMnemonic`, with gateway ordering test) |
+| L-1 TOCTOU race on wallet creation | `dd0626d` (single-flight wrapper in the gateway factory + concurrency test) |
+| L-3 weak validation of untrusted LSP responses | `0ad4301` (strict integer/hash/bolt11 validators + 21 hostile-payload tests) |
+| L-2 no timeout on LSP HTTP requests | `26dcad1` (race-based fail-fast timeout, signal-independent, + test) |
+| new-surface: demo invoice could reach the real node's sendPayment | `1299a62` (`PaymentValidationError` + bolt11 format guard before `sendPayment`; card shows "Nothing was submitted"; wdk plumbing test fixtures updated to bolt11-shaped fakes) |
+| L-6 raw error bodies rendered as UI text | `60c6a09` (`describeWalletError` maps failures to fixed text; raw details logged by type only) |
+| I-1/I-2/I-3 barrel footgun, dead password API, jest duplicate key | `e99e9a0` (barrel deleted — nothing imported it; existence now checked via a marker key so the seed never loads just for a boolean; dead `storeWalletPassword`/`readWalletPassword` removed) |
+
+Open decisions that need product input (not mechanical):
+
+- **M-1**: `EXPO_PUBLIC_BITCOIND_RPC_PASSWORD` is embedded into any
+  distributed APK bundle. Do not ship real values in distributed builds;
+  the device should not talk raw bitcoind RPC at all long-term.
+- **M-5**: `METEVO_LSP_URL`/`METEVO_LSP_BEARER_TOKEN` cannot reach the
+  device (correctly not `EXPO_PUBLIC_`), so wdk-mode LSP features need a
+  decision: dev-client env bridge, runtime-issued per-device token, or a
+  documented LAN-only demo with rotated credentials.
+- **M-2**: `fundMetevoWallet` still pays the LSP invoice without decoding
+  and verifying the invoice against the quote (amount, payment hash). It
+  must gain that check plus an explicit approval card before it is wired
+  into the UI.
+- **M-4**: no seed backup/reveal step exists; before real funds flow, add a
+  one-time verified reveal (or a documented recovery plan) and revisit
+  `WHEN_UNLOCKED_THIS_DEVICE_ONLY`.
+
 ## Open items
 
 - ~~Failed / unknown payment status views~~ **resolved** (see follow-up).
