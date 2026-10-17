@@ -42,7 +42,9 @@ const deviceConfigSchema = z
     bitcoindRpcPort: z.number().int().min(1).max(65_535),
     bitcoindRpcUsername: z.string().min(1),
     bitcoindRpcPassword: z.string().min(1),
-    rgbIndexerUrl: z.string().url(),
+    /** Esplora/Electrs indexer as host:port - the utexo harness format
+     * carries no URL scheme (e.g. "127.0.0.1:50001"). */
+    rgbIndexerUrl: z.string().min(1),
     rgbProxyEndpoint: z.string().url(),
   })
   .strict();

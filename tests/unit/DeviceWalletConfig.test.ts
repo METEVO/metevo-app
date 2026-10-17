@@ -16,7 +16,7 @@ const VALID_CONFIG = {
   bitcoindRpcPort: 18443,
   bitcoindRpcUsername: 'regtest',
   bitcoindRpcPassword: 'test-only-password',
-  rgbIndexerUrl: 'http://127.0.0.1:3000',
+  rgbIndexerUrl: '127.0.0.1:50001',
   rgbProxyEndpoint: 'http://127.0.0.1:3001',
 };
 

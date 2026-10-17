@@ -6,6 +6,6 @@
   "bitcoindRpcPort": 18443,
   "bitcoindRpcUsername": "REPLACE-WITH-REGTEST-RPC-USER",
   "bitcoindRpcPassword": "REPLACE-WITH-REGTEST-RPC-PASSWORD",
-  "rgbIndexerUrl": "http://192.168.1.10:3000",
+  "rgbIndexerUrl": "192.168.1.10:50001",
   "rgbProxyEndpoint": "http://192.168.1.10:3001"
 }
