@@ -101,6 +101,10 @@ export const appEnvSchema = z.object({
   EXPO_PUBLIC_RGB_INDEXER_URL: optionalUrlFromEnv,
   /** RGB proxy endpoint used for blinded receive invoices. */
   EXPO_PUBLIC_RGB_PROXY_ENDPOINT: optionalUrlFromEnv,
+  /** How long the wallet setup waits for the LSP to provision the USDm
+   * channel before continuing without one (the LSP provisions on a cron;
+   * readiness is reported through the wallet status afterwards). */
+  EXPO_PUBLIC_CHANNEL_PROVISION_TIMEOUT_MS: intFromEnv(120_000, 5_000, 600_000),
 
   // --- METEVO LSP (utexo-lsp serving the USDm asset) ---------------------------
   /** METEVO LSP API base URL for the /metevo/* buy and claim routes. */

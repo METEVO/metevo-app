@@ -128,7 +128,6 @@ type WdkServiceModule = typeof import('./wallet');
 type SecureStoreModule = typeof import('./secure-store');
 type MnemonicModule = typeof import('./mnemonic');
 
-const CHANNEL_PROVISION_TIMEOUT_MS = 30_000;
 const CHANNEL_POLL_INTERVAL_MS = 2_000;
 
 /**
@@ -197,7 +196,10 @@ function createWdkWalletSessionGateway(): WalletSessionGateway {
       await waitFor(CHANNEL_POLL_INTERVAL_MS);
 
       onProgress('provisioning-channel', 'Opening your USDm channel…');
-      const deadline = Date.now() + CHANNEL_PROVISION_TIMEOUT_MS;
+      // The LSP provisions channels on a cron, so the wait is best-effort:
+      // timing out here is not an error - the home shell opens and keeps
+      // polling the wallet status until the channel is usable.
+      const deadline = Date.now() + ENV.EXPO_PUBLIC_CHANNEL_PROVISION_TIMEOUT_MS;
       let status = await getMetevoWalletStatus(wallet.account, usdmAssetId);
       while (!status.usdmChannelReady && Date.now() < deadline) {
         await waitFor(CHANNEL_POLL_INTERVAL_MS);

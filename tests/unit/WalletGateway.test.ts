@@ -34,6 +34,7 @@ function loadGatewayWithMode(mode: 'mock' | 'wdk'): GatewayModule {
   let loaded!: GatewayModule;
   jest.isolateModules(() => {
     process.env.EXPO_PUBLIC_WALLET_MODE = mode;
+    process.env.EXPO_PUBLIC_CHANNEL_PROVISION_TIMEOUT_MS = '5000';
     loaded = require('../../src/services/metevo/wallet-gateway');
   });
   return loaded;
