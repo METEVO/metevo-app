@@ -7,7 +7,8 @@ bare/compiled/
 .expo/
 dist/
 expo-env.d.ts
-android/
+# android/ is committed: the Bare staging integration lives in the Gradle
+# files (see android/build.gradle) and must be reviewed in-repo.
 ios/
 
 # Environment: real config never goes to git - .env.example is the committed template
