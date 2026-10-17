@@ -90,7 +90,8 @@ android {
     namespace 'app.metevo.wallet'
     defaultConfig {
         applicationId 'app.metevo.wallet'
-        minSdkVersion rootProject.ext.minSdkVersion
+        // react-native-bare-kit requires API 29+ (its manifest declares it)
+        minSdkVersion 29
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "0.1.0"
