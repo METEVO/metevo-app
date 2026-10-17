@@ -1,11 +1,15 @@
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, TouchableOpacity, View } from 'react-native';
 
-import { colors, layout, typography } from './styles';
+import ProfileIcon from '../assets/profile_dark.svg';
+import { colors, layout, scale } from './styles';
+
+/** Intrinsic reference size from the profile asset SVG viewBox. */
+const PROFILE_ICON_REFERENCE = { width: 15, height: 17 } as const;
 
 /**
- * Top-left circular profile placeholder of the sketch.
- * TODO(phase 2): profile / settings screen (likely spoken, not visual).
+ * Top-left circular profile control of the design's status header.
+ * TODO(phase 2): profile / settings flow (likely spoken, not visual).
  */
 export function ProfileLink() {
   return (
@@ -16,7 +20,10 @@ export function ProfileLink() {
         accessibilityRole="button"
         accessibilityLabel="Profile"
       >
-        <Text style={typography.body}>A</Text>
+        <ProfileIcon
+          width={scale(PROFILE_ICON_REFERENCE.width)}
+          height={scale(PROFILE_ICON_REFERENCE.height)}
+        />
       </TouchableOpacity>
     </View>
   );
