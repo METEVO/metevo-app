@@ -45,16 +45,22 @@ function requireOpenWallet() {
 }
 
 /**
- * The regtest flow script connects the LSP peer explicitly before the LSP's
- * cron provisions the channel; do the same here when a peer URI is
- * provisioned. The call is optional on the beta module surface.
+ * The module's designed LSP flow: bootstrapLsp connects the peer, waits for
+ * peer visibility and runs the APay provisioning against lspBaseUrl. Falls
+ * back to a plain peer connect when the beta runtime lacks the method.
  */
-async function connectLspPeer(account, peerUri) {
-  const connectable = account
-  if (typeof connectable.connectPeer !== 'function') {
+async function bootstrapLspIfAvailable(account, peerUri) {
+  if (typeof account.bootstrapLsp === 'function') {
+    await account.bootstrapLsp({
+      peerPubkeyAndAddr: peerUri,
+      waitForPeerMs: 30_000,
+      pollIntervalMs: 2_000,
+    })
     return
   }
-  await connectable.connectPeer(peerUri)
+  if (typeof account.connectPeer === 'function') {
+    await account.connectPeer(peerUri)
+  }
 }
 
 async function openWallet({ mnemonic, walletConfig, lspPeerUri, channelTimeoutMs }) {
@@ -64,7 +70,7 @@ async function openWallet({ mnemonic, walletConfig, lspPeerUri, channelTimeoutMs
 
   emitProgress('connecting-lsp', 'Connecting to the METEVO LSP…')
   if (lspPeerUri) {
-    await connectLspPeer(wallet.account, lspPeerUri)
+    await bootstrapLspIfAvailable(wallet.account, lspPeerUri)
   }
   await waitFor(CHANNEL_POLL_INTERVAL_MS)
 
