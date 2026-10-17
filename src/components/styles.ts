@@ -1,15 +1,12 @@
-import { StyleSheet } from 'react-native';
-
 import { metevoDesignTokens } from '../design/designTokens';
-import { createTheme, scale } from '../design/theme';
+import { scale } from '../design/theme';
 
 export { scale };
 
 /**
  * Theme-free geometry constants. Palette-dependent values (colors,
- * typography, cardBase, voiceStates) moved to src/design/theme.ts; use
- * useTheme() from src/design/ThemeContext instead of the deprecated
- * static exports below.
+ * typography, cardBase, voiceStates) live in src/design/theme.ts; consume
+ * them through useTheme() from src/design/ThemeContext.
  */
 
 /** tokens.runtimeGuidance.touchTarget: minimum 48x48 logical pixels. */
@@ -32,15 +29,3 @@ export const layout = {
    * render at their full viewport so the state outlines keep clearance. */
   voiceViewport: scale(80),
 } as const;
-
-/** @deprecated static launch palette; consume `useTheme()` instead. */
-export const colors = createTheme('dark').colors;
-
-/** @deprecated static launch palette; consume `useTheme()` instead. */
-export const voiceStates = createTheme('dark').voiceStates;
-
-/** @deprecated static launch palette; consume `useTheme()` instead. */
-export const typography = createTheme('dark').typography;
-
-/** @deprecated static launch palette; consume `useTheme()` instead. */
-export const cardBase = createTheme('dark').cardBase;
