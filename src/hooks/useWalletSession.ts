@@ -1,0 +1,150 @@
+import { useCallback, useRef, useState } from 'react';
+
+import {
+  WalletSessionGateway,
+  WalletSessionSnapshot,
+  WalletSetupStep,
+  createWalletSessionGateway,
+} from '../services/metevo/wallet-gateway';
+import { speakAnnouncement } from '../services/spokenInteraction';
+
+/**
+ * Phases of the single METEVO flow, in the design's order: opening screen,
+ * language and theme onboarding, account setup, wallet selection, then the
+ * fixed home shell. There is no router by design; the phase alone decides
+ * what the app renders.
+ */
+export type SessionPhase =
+  | 'opening'
+  | 'language'
+  | 'theme'
+  | 'account'
+  | 'wallet'
+  | 'home';
+
+/** The seven design languages, in their listed order. */
+export type UiLanguage =
+  | 'english'
+  | 'italiano'
+  | 'turkce'
+  | 'francais'
+  | 'hindi'
+  | 'espanol'
+  | 'kiswahili';
+
+export type UiTheme = 'dark' | 'light';
+
+export interface WalletSession {
+  phase: SessionPhase;
+  language: UiLanguage | null;
+  theme: UiTheme;
+  setupStep: WalletSetupStep;
+  progressMessage: string | null;
+  errorMessage: string | null;
+  wallet: WalletSessionSnapshot | null;
+  continueOpening(): void;
+  chooseLanguage(language: UiLanguage): void;
+  continueLanguage(): void;
+  chooseTheme(theme: UiTheme): void;
+  continueTheme(): void;
+  createWallet(): Promise<void>;
+  requestSignIn(): void;
+  openWallet(): Promise<void>;
+  refreshWallet(): Promise<void>;
+}
+
+/**
+ * Owns the wallet journey from the opening screen to the connected home
+ * shell. Wallet work is delegated to the session gateway, so the same state
+ * machine runs the mock (Expo Go demos) and the real WDK node (debug APK
+ * with EXPO_PUBLIC_WALLET_MODE=wdk).
+ */
+export function useWalletSession(): WalletSession {
+  const gatewayRef = useRef<WalletSessionGateway | null>(null);
+
+  const [phase, setPhase] = useState<SessionPhase>('opening');
+  const [language, setLanguage] = useState<UiLanguage | null>(null);
+  const [theme, setTheme] = useState<UiTheme>('dark');
+  const [setupStep, setSetupStep] = useState<WalletSetupStep>('idle');
+  const [progressMessage, setProgressMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [wallet, setWallet] = useState<WalletSessionSnapshot | null>(null);
+
+  const withGateway = useCallback(
+    <T,>(run: (gateway: WalletSessionGateway) => Promise<T>): Promise<T> => {
+      gatewayRef.current ??= createWalletSessionGateway();
+      return run(gatewayRef.current);
+    },
+    [],
+  );
+
+  const continueOpening = useCallback(() => setPhase('language'), []);
+
+  const chooseLanguage = useCallback((selected: UiLanguage) => {
+    setLanguage(selected);
+    speakAnnouncement(`${selected} selected`);
+  }, []);
+
+  const continueLanguage = useCallback(() => {
+    setPhase((current) => (current === 'language' && language !== null ? 'theme' : current));
+  }, [language]);
+
+  const chooseTheme = useCallback((selected: UiTheme) => setTheme(selected), []);
+
+  const continueTheme = useCallback(() => setPhase('account'), []);
+
+  const createWallet = useCallback(async () => {
+    setErrorMessage(null);
+    setSetupStep('creating-secret');
+    try {
+      await withGateway((gateway) => gateway.createWallet());
+      setSetupStep('idle');
+      setPhase('wallet');
+    } catch (cause) {
+      setSetupStep('idle');
+      setErrorMessage(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, [withGateway]);
+
+  const requestSignIn = useCallback(() => setPhase('wallet'), []);
+
+  const openWallet = useCallback(async () => {
+    setErrorMessage(null);
+    try {
+      await withGateway((gateway) =>
+        gateway.openWallet((step, message) => {
+          setSetupStep(step);
+          setProgressMessage(message);
+        }),
+      );
+      setWallet(await withGateway((gateway) => gateway.readStatus()));
+      setPhase('home');
+    } catch (cause) {
+      setSetupStep('idle');
+      setErrorMessage(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, [withGateway]);
+
+  const refreshWallet = useCallback(async () => {
+    setWallet(await withGateway((gateway) => gateway.readStatus()));
+  }, [withGateway]);
+
+  return {
+    phase,
+    language,
+    theme,
+    setupStep,
+    progressMessage,
+    errorMessage,
+    wallet,
+    continueOpening,
+    chooseLanguage,
+    continueLanguage,
+    chooseTheme,
+    continueTheme,
+    createWallet,
+    requestSignIn,
+    openWallet,
+    refreshWallet,
+  };
+}
