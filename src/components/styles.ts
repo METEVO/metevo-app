@@ -64,6 +64,9 @@ export const layout = {
     MIN_TOUCH_TARGET,
     scale(metevoDesignTokens.layout.bottomControls.height),
   ),
+  /** tokens.accessibility.assetViewBox is "-8 -8 80 80": the voice assets
+   * render at their full viewport so the state outlines keep clearance. */
+  voiceViewport: scale(80),
 } as const;
 
 export const typography = {

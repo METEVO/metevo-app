@@ -6,7 +6,7 @@ import IdleVoice from '../assets/voice_idle_dark.svg';
 import ListeningVoice from '../assets/voice_listening_dark.svg';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
 import { chooseArchiveDirectory } from '../utils/recordingArchive';
-import { colors, layout, scale, typography } from './styles';
+import { colors, layout, typography } from './styles';
 
 interface RecordingControlsProps {
   /**
@@ -15,15 +15,6 @@ interface RecordingControlsProps {
    */
   onRecordingComplete: (recordingUri: string | null) => void;
 }
-
-/**
- * tokens.accessibility.assetViewBox is "-8 -8 80 80": the voice assets
- * render at their full viewport so the state outlines keep their clearance
- * instead of being shrunk into the old 64-unit box.
- */
-const VOICE_ASSET_VIEWPORT_REFERENCE = 80;
-
-const VOICE_SIZE = scale(VOICE_ASSET_VIEWPORT_REFERENCE);
 
 /**
  * Bottom shell region: the stateful voice control centered with a small
@@ -99,9 +90,15 @@ export function RecordingControls({ onRecordingComplete }: RecordingControlsProp
         accessibilityHint="Press once to talk to METEVO; press again or stay silent to stop."
       >
         {recording ? (
-          <ListeningVoice width={VOICE_SIZE} height={VOICE_SIZE} />
+          <ListeningVoice
+            width={layout.voiceViewport}
+            height={layout.voiceViewport}
+          />
         ) : (
-          <IdleVoice width={VOICE_SIZE} height={VOICE_SIZE} />
+          <IdleVoice
+            width={layout.voiceViewport}
+            height={layout.voiceViewport}
+          />
         )}
       </TouchableOpacity>
 
