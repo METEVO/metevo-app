@@ -45,6 +45,29 @@ export interface SubmittedPayment {
  */
 export type PaymentNetworkStatus = 'pending' | 'settled' | 'failed' | 'unknown';
 
+/**
+ * Thrown before a proposal reaches the node: nothing was submitted and no
+ * funds moved, so callers must not treat this as an ambiguous outcome.
+ */
+export class PaymentValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PaymentValidationError';
+  }
+}
+
+/** Lightning invoices carry an "ln" human-readable prefix; anything else is
+ * not payable and is rejected before the node is touched. */
+const BOLT11_INVOICE_PATTERN = /^ln[a-z0-9]{6,}/i;
+
+function assertPayableInvoice(invoice: string): void {
+  if (!BOLT11_INVOICE_PATTERN.test(invoice)) {
+    throw new PaymentValidationError(
+      'the proposal is not a payable lightning invoice; nothing was submitted',
+    );
+  }
+}
+
 export interface WalletSessionGateway {
   /** Whether this device already holds a stored wallet seed. */
   hasStoredWallet(): Promise<boolean>;
@@ -238,6 +261,9 @@ function createWdkWalletSessionGateway(): WalletSessionGateway {
       if (wallet === null) {
         throw new Error('the wallet is not open');
       }
+      // Real-node boundary: even a clearly-marked demo proposal must fail
+      // validation here instead of reaching sendPayment.
+      assertPayableInvoice(proposal.invoice);
       const response = (await wallet.account.sendPayment({
         invoice: proposal.invoice,
       })) as Record<string, unknown>;

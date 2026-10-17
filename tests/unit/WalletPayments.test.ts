@@ -91,7 +91,7 @@ describe('payment status mapping', () => {
     const gateway = await openGatewayWithAccount(makeAccount(nodeStatus));
 
     const submitted = await gateway.submitPayment({
-      invoice: 'rgb:test-invoice',
+      invoice: 'lnbcrt1000u1pmockfakeppayload-not-a-real-invoice',
     });
     expect(submitted.paymentHash).toBe(PAYMENT_HASH);
     await expect(gateway.checkPayment(PAYMENT_HASH)).resolves.toBe(expected);
@@ -102,7 +102,7 @@ describe('payment status mapping', () => {
     account.listPayments.mockResolvedValue({ payments: [] });
     const gateway = await openGatewayWithAccount(account);
 
-    await gateway.submitPayment({ invoice: 'rgb:test-invoice' });
+    await gateway.submitPayment({ invoice: 'lnbcrt1000u1pmockfakeppayload-not-a-real-invoice' });
     await expect(gateway.checkPayment(PAYMENT_HASH)).resolves.toBe('unknown');
   });
 

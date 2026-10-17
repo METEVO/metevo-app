@@ -46,6 +46,7 @@ function mockWdkAccount() {
     listAssets: jest.fn().mockResolvedValue({ ifa: [], nia: [] }),
     getNodeInfo: jest.fn().mockResolvedValue({ pubkey: 'test-node-pubkey' }),
     getBalanceDetails: jest.fn().mockResolvedValue({ vanilla: { spendable: 0 } }),
+    sendPayment: jest.fn().mockResolvedValue({ payment_hash: 'f'.repeat(64) }),
   };
   const manager = { getAccount: jest.fn().mockResolvedValue(account) };
   (WalletManagerRgbLightning as unknown as jest.Mock).mockImplementation(
@@ -53,6 +54,28 @@ function mockWdkAccount() {
   );
   return account;
 }
+
+describe('payment submission guard', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  test('rejects non-bolt11 proposals before touching the node', async () => {
+    const account = mockWdkAccount();
+    const { createWalletSessionGateway } = loadGatewayWithMode('wdk');
+    const gateway = createWalletSessionGateway();
+
+    jest.useFakeTimers();
+    const opening = gateway.openWallet(() => undefined);
+    await jest.advanceTimersByTimeAsync(60_000);
+    await opening;
+
+    await expect(
+      gateway.submitPayment({ invoice: 'rgb:mock-destination-invoice (demo only)' }),
+    ).rejects.toThrow('nothing was submitted');
+    expect(account.sendPayment).not.toHaveBeenCalled();
+  });
+});
 
 describe('wallet creation single-flight', () => {
   afterEach(() => {

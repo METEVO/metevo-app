@@ -10,7 +10,10 @@ import {
   useThemedStyles,
 } from '../../design/ThemeContext';
 import { useWalletSession } from '../../hooks/useWalletSession';
-import { PaymentNetworkStatus } from '../../services/metevo/wallet-gateway';
+import {
+  PaymentNetworkStatus,
+  PaymentValidationError,
+} from '../../services/metevo/wallet-gateway';
 import { layout } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
 
@@ -58,14 +61,22 @@ export function SendPaymentCard() {
   const { submitPayment, checkPayment } = useWalletSession();
 
   const [stage, setStage] = useState<PaymentStage>('review');
+  const [rejectionNote, setRejectionNote] = useState<string | null>(null);
   const paymentHashRef = useRef<string | null>(null);
 
   const confirm = useCallback(async () => {
+    setRejectionNote(null);
     setStage('pending');
     try {
       const submitted = await submitPayment({ invoice: DEMO_INVOICE });
       paymentHashRef.current = submitted.paymentHash;
-    } catch {
+    } catch (cause) {
+      if (cause instanceof PaymentValidationError) {
+        // Validation ran before the node was touched: nothing was sent.
+        setStage('review');
+        setRejectionNote('Nothing was submitted: this demo proposal is not a payable invoice.');
+        return;
+      }
       // Submission may or may not have reached the node; unknown keeps the
       // outcome honest instead of guessing.
       setStage('unknown');
@@ -183,6 +194,9 @@ export function SendPaymentCard() {
         </View>
       ))}
       <Text style={styles.caption}>{DEMO_NOTE}</Text>
+      {rejectionNote !== null && (
+        <Text style={styles.rejection}>{rejectionNote}</Text>
+      )}
       <View style={styles.actions}>
         <ActionButton label="Cancel" variant="outlined" onPress={() => setStage('review')} grow />
         <ActionButton label="Confirm payment" variant="primary" onPress={() => void confirm()} grow />
@@ -213,6 +227,10 @@ const makeStyles = (theme: MetevoTheme) => ({
   value: {
     ...theme.typography.body,
     fontWeight: '700' as const,
+  },
+  rejection: {
+    ...theme.typography.caption,
+    color: theme.voiceStates.attention.fill,
   },
   actions: {
     flexDirection: 'row' as const,
