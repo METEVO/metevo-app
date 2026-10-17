@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
@@ -6,6 +6,7 @@ import {
   useTheme,
   useThemedStyles,
 } from '../../design/ThemeContext';
+import { useWalletSession } from '../../hooks/useWalletSession';
 import { layout } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
 import { OnboardingFrame } from './OnboardingFrame';
@@ -37,9 +38,23 @@ export function AccountAccess({
 }: AccountAccessProps) {
   const theme = useTheme();
   const styles = useThemedStyles(makeStyles);
+  const { hasStoredWallet } = useWalletSession();
   const [stage, setStage] = useState<AccountStage>('welcome');
   const [fullName, setFullName] = useState('');
   const [contact, setContact] = useState('');
+  const [walletExists, setWalletExists] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void hasStoredWallet().then((exists) => {
+      if (!cancelled) {
+        setWalletExists(exists);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [hasStoredWallet]);
 
   if (stage === 'welcome') {
     return (
@@ -50,15 +65,21 @@ export function AccountAccess({
         onBack={onBack}
       >
         <Text style={theme.typography.body}>One account. Multiple wallets.</Text>
+        {walletExists && (
+          <Text style={styles.existingNote}>
+            A wallet already exists on this device - open it to continue.
+          </Text>
+        )}
         <ActionButton
           label="Create account"
-          variant="primary"
+          variant={walletExists ? 'outlined' : 'primary'}
           onPress={() => setStage('create')}
+          disabled={walletExists}
           grow
         />
         <ActionButton
           label="Sign in"
-          variant="outlined"
+          variant={walletExists ? 'primary' : 'outlined'}
           onPress={() => setStage('signIn')}
           grow
         />
@@ -145,6 +166,10 @@ function LabeledField({ label, value, onChangeText }: LabeledFieldProps) {
 }
 
 const makeStyles = (theme: MetevoTheme) => ({
+  existingNote: {
+    ...theme.typography.caption,
+    color: theme.voiceStates.attention.fill,
+  },
   field: {
     ...theme.cardBase,
     gap: layout.rowGap / 4,

@@ -63,6 +63,8 @@ export interface WalletSession {
   requestSignIn(): void;
   openWallet(): Promise<void>;
   refreshWallet(): Promise<void>;
+  /** Whether this device already holds a stored wallet seed. */
+  hasStoredWallet(): Promise<boolean>;
   /** Submit the current proposal exactly once (design payment.confirm). */
   submitPayment(proposal: PaymentProposal): Promise<SubmittedPayment>;
   /** Query an existing payment; never creates a replacement (payment.check). */
@@ -155,6 +157,11 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
     setWallet(await withGateway((gateway) => gateway.readStatus()));
   }, [withGateway]);
 
+  const hasStoredWallet = useCallback(
+    () => withGateway((gateway) => gateway.hasStoredWallet()),
+    [withGateway],
+  );
+
   const reopenPhase = useCallback((target: SessionPhase) => setPhase(target), []);
 
   const submitPayment = useCallback(
@@ -187,6 +194,7 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       requestSignIn,
       openWallet,
       refreshWallet,
+      hasStoredWallet,
       submitPayment,
       checkPayment,
       reopenPhase,
@@ -208,6 +216,7 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       requestSignIn,
       openWallet,
       refreshWallet,
+      hasStoredWallet,
       submitPayment,
       checkPayment,
       reopenPhase,

@@ -46,6 +46,8 @@ export interface SubmittedPayment {
 export type PaymentNetworkStatus = 'pending' | 'settled' | 'failed' | 'unknown';
 
 export interface WalletSessionGateway {
+  /** Whether this device already holds a stored wallet seed. */
+  hasStoredWallet(): Promise<boolean>;
   /** Generate the seed, gate it behind device biometrics and store it. */
   createWallet(): Promise<void>;
   /** Unlock the node, connect to the LSP and wait for channel provisioning. */
@@ -80,6 +82,9 @@ function createMockWalletSessionGateway(): WalletSessionGateway {
   let checkCount = 0;
 
   return {
+    async hasStoredWallet() {
+      return created;
+    },
     async createWallet() {
       await waitFor(MOCK_STEP_DELAY_MS);
       created = true;
@@ -167,6 +172,10 @@ function createWdkWalletSessionGateway(): WalletSessionGateway {
   }
 
   return {
+    async hasStoredWallet() {
+      const secureStore = loadSecureStore();
+      return secureStore.walletExistsOnDevice();
+    },
     async createWallet() {
       const secureStore = loadSecureStore();
       if (await secureStore.walletExistsOnDevice()) {
