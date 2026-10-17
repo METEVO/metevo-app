@@ -13,6 +13,7 @@ import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint
 
 import expo.modules.ApplicationLifecycleDispatcher
 import expo.modules.ExpoReactHostFactory
+import to.holepunch.bare.kit.react.BareKitPackage
 
 class MainApplication : Application(), ReactApplication {
 
@@ -23,6 +24,11 @@ class MainApplication : Application(), ReactApplication {
         PackageList(this).packages.apply {
           // Packages that cannot be autolinked yet can be added manually here, for example:
           // add(MyReactNativePackage())
+          // react-native-bare-kit has no Expo module config, so Expo's
+          // autolinking compiles its Gradle project but never registers its
+          // TurboModule - register it manually (BareKitPackage also loads
+          // libbare-kit.so from its static initializer).
+          add(BareKitPackage())
         }
     )
   }

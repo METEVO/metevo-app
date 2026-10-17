@@ -1,5 +1,4 @@
 import { Image } from 'react-native';
-import { Worklet } from 'react-native-bare-kit';
 
 import { ENV } from '../../config/env';
 import {
@@ -26,7 +25,13 @@ import walletBundleAsset from '../../../bare/wallet.rlnbundle';
 
 const WORKLET_ENTRY_NAME = '/wallet.rlnbundle';
 
-type WorkletInstance = InstanceType<typeof Worklet>;
+type WorkletInstance = {
+  IPC: {
+    on(event: string, handler: (chunk: Uint8Array) => void): void;
+    write(chunk: Uint8Array): void;
+  };
+  start(entry: string, source: string): void;
+};
 type PendingRequest = {
   resolve: (value: unknown) => void;
   reject: (cause: Error) => void;
@@ -55,6 +60,10 @@ export function createBareWalletSessionGateway(): WalletSessionGateway {
     const response = await fetch(source.uri);
     const bundleContent = await response.text();
 
+    // Lazy require: bare-kit's JS calls TurboModuleRegistry.getEnforcing at
+    // import time, which must never happen in runtimes without the native
+    // BareKit module (Expo Go, mock mode, Node tooling).
+    const { Worklet } = require('react-native-bare-kit') as typeof import('react-native-bare-kit');
     const started = new Worklet();
     started.IPC.on('data', (chunk: Uint8Array) => {
       receiveBuffer += new TextDecoder().decode(chunk);
