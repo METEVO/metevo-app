@@ -1,5 +1,5 @@
-import React from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import React, { useEffect } from 'react';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { BalancesCard } from '../components/BalancesCard';
 import { DynamicFrame } from '../components/DynamicFrame';
@@ -14,7 +14,12 @@ import { ThemeOptions } from '../components/onboarding/ThemeOptions';
 import { WalletSelector } from '../components/onboarding/WalletSelector';
 import { ActionButton } from '../components/ui/ActionButton';
 import { MOCK_TRANSACTIONS } from '../components/mocks';
-import { layout } from '../components/styles';
+import { layout, scale } from '../components/styles';
+import {
+  useTheme,
+  useThemedStyles,
+  type MetevoTheme,
+} from '../design/ThemeContext';
 import { useIntents } from '../hooks/useIntents';
 import { WalletSession, useWalletSession } from '../hooks/useWalletSession';
 import { archiveRecording } from '../utils/recordingArchive';
@@ -32,6 +37,7 @@ import { archiveRecording } from '../utils/recordingArchive';
  */
 export function HomeScreen() {
   const session = useWalletSession();
+  const styles = useThemedStyles(makeStyles);
 
   switch (session.phase) {
     case 'opening':
@@ -96,7 +102,21 @@ export function HomeScreen() {
  * the resulting intent id.
  */
 function HomeShell({ session }: { session: WalletSession }) {
+  const theme = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const { intent, simulateIntent } = useIntents(null);
+  const channelProvisioning =
+    session.wallet !== null && !session.wallet.channelReady;
+
+  // While the LSP has not provisioned the USDm channel yet, keep polling:
+  // readiness lands asynchronously after "Wallet connected".
+  useEffect(() => {
+    if (!channelProvisioning) {
+      return undefined;
+    }
+    const refreshTimer = setInterval(() => void session.refreshWallet(), CHANNEL_REFRESH_INTERVAL_MS);
+    return () => clearInterval(refreshTimer);
+  }, [channelProvisioning, session]);
 
   return (
     <View style={styles.shell}>
@@ -107,11 +127,21 @@ function HomeShell({ session }: { session: WalletSession }) {
         style={styles.canvas}
         contentContainerStyle={styles.canvasContent}
       >
+        {channelProvisioning && (
+          <View style={styles.provisioningNote}>
+            <Text style={styles.provisioningTitle}>Opening your USDm channel…</Text>
+            <Text style={styles.provisioningBody}>
+              Sending and receiving unlock when it is ready.
+            </Text>
+          </View>
+        )}
+
         <View style={styles.quickActions}>
           <ActionButton
             label="Receive money"
             variant="primary"
             onPress={() => simulateIntent('create-usdm-invoice')}
+            disabled={channelProvisioning}
             grow
           />
           <ActionButton
@@ -138,6 +168,9 @@ function HomeShell({ session }: { session: WalletSession }) {
     </View>
   );
 }
+
+/** Background poll cadence while the LSP provisions the USDm channel. */
+const CHANNEL_REFRESH_INTERVAL_MS = 5_000;
 
 const USDM_PRECISION_DIGITS = 8;
 
@@ -179,7 +212,7 @@ function handleRecordingComplete(recordingUri: string | null): void {
   });
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: MetevoTheme) => ({
   fill: {
     flex: 1,
   },
@@ -195,8 +228,18 @@ const styles = StyleSheet.create({
     gap: layout.sectionGap,
     paddingBottom: layout.sectionGap,
   },
+  provisioningNote: {
+    ...theme.cardBase,
+    borderColor: theme.voiceStates.attention.fill,
+    gap: layout.rowGap / 4,
+  },
+  provisioningTitle: {
+    ...theme.typography.body,
+    fontWeight: '700' as const,
+  },
+  provisioningBody: theme.typography.caption,
   quickActions: {
-    flexDirection: 'row',
+    flexDirection: 'row' as const,
     gap: layout.rowGap,
   },
   bottomRegion: {
