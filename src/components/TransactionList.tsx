@@ -1,7 +1,7 @@
 import React from 'react';
 import { FlatList, StyleSheet, Text, View } from 'react-native';
 
-import { cardBase, typography } from './styles';
+import { cardBase, colors, typography } from './styles';
 import { MockTransaction } from './mocks';
 
 interface TransactionListProps {
@@ -45,5 +45,5 @@ const styles = StyleSheet.create({
   },
   main: { gap: 2 },
   title: { ...typography.body, fontWeight: '600' },
-  amount: { ...typography.body, color: '#666666' },
+  amount: { ...typography.body, color: colors.textMuted },
 });

@@ -3,7 +3,7 @@ import { StyleSheet, View } from 'react-native';
 
 import { IntentCard } from './intent-cards';
 import { IntentId } from '../types/intents';
-import { cardBase } from './styles';
+import { cardBase, layout } from './styles';
 
 interface DynamicFrameProps {
   /** Current intent id; null shows the idle placeholder. */
@@ -29,7 +29,7 @@ export function DynamicFrame({ intent }: DynamicFrameProps) {
 
 const styles = StyleSheet.create({
   frame: {
-    minHeight: 120,
+    minHeight: layout.cardMinHeight,
     alignItems: 'center',
     justifyContent: 'center',
   },
