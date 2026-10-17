@@ -111,25 +111,32 @@ npx expo start --tunnel
 
 ### Debug APK with the real WDK node (`EXPO_PUBLIC_WALLET_MODE=wdk`)
 
-Prerequisites: JDK 17, Android SDK/platform tools, and a running regtest
-stack (bitcoind + RGB indexer + proxy + `utexo-lsp` with the METEVO
-bootstrap issued). Then:
+Connectivity secrets are **not** in the bundle: the debug APK loads them
+at runtime from `metevo-wallet-config.json`, provisioned into the app's
+internal storage. Prerequisites: JDK 17, Android SDK/platform tools, adb,
+and a running regtest stack (bitcoind + RGB indexer + proxy + `utexo-lsp`
+with the METEVO bootstrap issued).
 
 ```bash
-# 1. Fill .env.local (never committed):
-#    EXPO_PUBLIC_WALLET_MODE=wdk
-#    EXPO_PUBLIC_WALLET_NETWORK=regtest
-#    EXPO_PUBLIC_BITCOIND_RPC_*  (regtest credentials)
-#    EXPO_PUBLIC_RGB_INDEXER_URL, EXPO_PUBLIC_RGB_PROXY_ENDPOINT
-#    METEVO_LSP_URL, METEVO_LSP_BEARER_TOKEN (= LSP APAY_BEARER_TOKEN)
+# 1. Prepare the device config (gitignored once filled):
+cp scripts/device-wallet-config.example.json scripts/device-wallet-config.json
+#    ...fill in regtest values (LSP URL/token, bitcoind RPC, RGB endpoints)
 
 # 2. Build and install the debug APK (native modules autolinked):
+#    set EXPO_PUBLIC_WALLET_MODE=wdk in .env.local first
 npx expo run:android --variant debug
 
-# 3. On device: create account -> biometric prompt -> wallet selection ->
-#    Open wallet -> watch node opening, LSP connection and channel
-#    provisioning -> home shows "Wallet connected" and the real balance.
+# 3. Provision the runtime config onto the device (adb + run-as):
+node scripts/push-device-config.cjs
+
+# 4. Fully close and relaunch METEVO, then:
+#    create account -> biometric prompt -> wallet selection -> Open wallet
+#    -> node opens, connects to the LSP, channel provisioning is polled
+#    -> home shows "Wallet connected" and the real balance.
 ```
+
+Re-run step 3 (and relaunch) whenever the config changes; the config file
+never touches the APK bundle, so no rebuild is needed after changing it.
 
 ### Voice/AI insertion points (no AI implemented here)
 
@@ -163,13 +170,13 @@ Mechanical findings fixed in this branch:
 
 Open decisions that need product input (not mechanical):
 
-- **M-1**: `EXPO_PUBLIC_BITCOIND_RPC_PASSWORD` is embedded into any
-  distributed APK bundle. Do not ship real values in distributed builds;
-  the device should not talk raw bitcoind RPC at all long-term.
-- **M-5**: `METEVO_LSP_URL`/`METEVO_LSP_BEARER_TOKEN` cannot reach the
-  device (correctly not `EXPO_PUBLIC_`), so wdk-mode LSP features need a
-  decision: dev-client env bridge, runtime-issued per-device token, or a
-  documented LAN-only demo with rotated credentials.
+- **M-1**: RESOLVED (`e98b9b3`) — bitcoind RPC credentials and RGB
+  endpoints are no longer bundle-embedded; wdk mode loads them at runtime
+  from the provisioned device config file.
+- **M-5**: RESOLVED for the demo path (`788099d`, `e0de3e8`) — the chosen
+  transport is a runtime-provisioned device config (debug APK + adb push
+  via `run-as`; `scripts/push-device-config.cjs`). The long-term direction
+  remains runtime-issued per-device LSP tokens issued by the account layer.
 - **M-2**: `fundMetevoWallet` still pays the LSP invoice without decoding
   and verifying the invoice against the quote (amount, payment hash). It
   must gain that check plus an explicit approval card before it is wired
