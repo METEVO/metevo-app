@@ -285,6 +285,24 @@ describe('hostile buy quote payloads', () => {
   });
 });
 
+describe('request timeouts', () => {
+  it('rejects with a timeout error when the endpoint never responds', async () => {
+    const client = new MetevoLspClient({
+      baseUrl: 'http://127.0.0.1:8080',
+      bearerToken: 'test-token',
+      // Ignores the abort signal on purpose: the timeout must win the race
+      // regardless of the transport honoring it.
+      fetchImpl: jest.fn(() => new Promise<Response>(() => undefined)),
+      timeoutMs: 25,
+    });
+
+    const error = await client.buy(100).then(() => null, (e: unknown) => e);
+
+    expect(error).toBeInstanceOf(MetevoLspError);
+    expect((error as MetevoLspError).message).toContain('timed out');
+  });
+});
+
 describe('hostile claim payloads', () => {
   it('rejects a malformed payment hash and empty asset id', async () => {
     const client = makeClientResponding(

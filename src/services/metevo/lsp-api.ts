@@ -2,6 +2,8 @@ export interface MetevoLspConfig {
   baseUrl: string;
   bearerToken: string;
   fetchImpl?: typeof fetch;
+  /** Per-request timeout in ms; the default keeps the flow fail-fast. */
+  timeoutMs?: number;
 }
 
 export interface MetevoBuyQuote {
@@ -45,6 +47,7 @@ export class MetevoLspClient {
   private readonly baseUrl: string;
   private readonly bearerToken: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly timeoutMs: number;
 
   constructor(config: MetevoLspConfig) {
     const baseUrl = config.baseUrl.replace(/\/+$/, '');
@@ -57,6 +60,7 @@ export class MetevoLspClient {
     this.baseUrl = baseUrl;
     this.bearerToken = config.bearerToken;
     this.fetchImpl = config.fetchImpl ?? globalThis.fetch;
+    this.timeoutMs = config.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   }
 
   async buy(usdAmount: number): Promise<MetevoBuyQuote> {
@@ -81,34 +85,61 @@ export class MetevoLspClient {
   }
 
   private async request(method: 'POST', endpoint: string, payload: unknown): Promise<unknown> {
-    let response: Response;
+    const controller = new AbortController();
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        controller.abort();
+        reject(new MetevoLspError(endpoint, 0, 'request timed out'));
+      }, this.timeoutMs);
+    });
+
     try {
-      response = await this.fetchImpl(`${this.baseUrl}${endpoint}`, {
-        method,
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.bearerToken}`,
-        },
-        body: JSON.stringify(payload),
-      });
+      const work = (async () => {
+        const response = await this.fetchImpl(`${this.baseUrl}${endpoint}`, {
+          method,
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${this.bearerToken}`,
+          },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        const text = await response.text();
+        if (!response.ok) {
+          throw new MetevoLspError(endpoint, response.status, text.trim());
+        }
+        if (text.length === 0) {
+          throw new MetevoLspError(endpoint, response.status, 'empty response body');
+        }
+        try {
+          return JSON.parse(text) as unknown;
+        } catch (cause) {
+          throw new MetevoLspError(endpoint, response.status, `invalid JSON: ${text.slice(0, 200)}`, cause);
+        }
+      })();
+      // A rejection after the timeout won the race must not surface as an
+      // unhandled promise rejection.
+      void work.catch(() => undefined);
+      return await Promise.race([work, timeoutPromise]);
     } catch (cause) {
+      if (cause instanceof MetevoLspError) {
+        throw cause;
+      }
+      if (controller.signal.aborted) {
+        throw new MetevoLspError(endpoint, 0, 'request timed out', cause);
+      }
       throw new MetevoLspError(endpoint, 0, 'request failed', cause);
-    }
-    const text = await response.text();
-    if (!response.ok) {
-      throw new MetevoLspError(endpoint, response.status, text.trim());
-    }
-    if (text.length === 0) {
-      throw new MetevoLspError(endpoint, response.status, 'empty response body');
-    }
-    try {
-      return JSON.parse(text);
-    } catch (cause) {
-      throw new MetevoLspError(endpoint, response.status, `invalid JSON: ${text.slice(0, 200)}`, cause);
+    } finally {
+      if (timeoutHandle !== undefined) {
+        clearTimeout(timeoutHandle);
+      }
     }
   }
 }
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 
 /**
  * Strict validators for untrusted LSP responses: a malicious or buggy LSP
