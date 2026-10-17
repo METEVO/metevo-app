@@ -285,8 +285,22 @@ function createWdkWalletSessionGateway(): WalletSessionGateway {
 }
 
 export function createWalletSessionGateway(): WalletSessionGateway {
-  if (ENV.EXPO_PUBLIC_WALLET_MODE === 'wdk') {
-    return createWdkWalletSessionGateway();
-  }
-  return createMockWalletSessionGateway();
+  const gateway =
+    ENV.EXPO_PUBLIC_WALLET_MODE === 'wdk'
+      ? createWdkWalletSessionGateway()
+      : createMockWalletSessionGateway();
+
+  // Single-flight guard: concurrent createWallet calls (double-tap before
+  // the UI disables the button) must not race the check-then-act seed
+  // storage and silently overwrite one generated mnemonic.
+  let creation: Promise<void> | null = null;
+  return {
+    ...gateway,
+    createWallet() {
+      creation ??= gateway.createWallet().finally(() => {
+        creation = null;
+      });
+      return creation;
+    },
+  };
 }

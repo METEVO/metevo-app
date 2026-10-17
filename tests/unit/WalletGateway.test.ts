@@ -54,6 +54,29 @@ function mockWdkAccount() {
   return account;
 }
 
+describe('wallet creation single-flight', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  test('concurrent createWallet calls share one run', async () => {
+    const { createWalletSessionGateway } = loadGatewayWithMode('mock');
+    const gateway = createWalletSessionGateway();
+
+    jest.useFakeTimers();
+    const first = gateway.createWallet();
+    const second = gateway.createWallet();
+    expect(second).toBe(first);
+    await jest.advanceTimersByTimeAsync(5_000);
+    await Promise.all([first, second]);
+
+    const third = gateway.createWallet();
+    expect(third).not.toBe(first);
+    await jest.advanceTimersByTimeAsync(5_000);
+    await third;
+  });
+});
+
 describe('wallet gateway open path', () => {
   beforeEach(() => {
     jest.useFakeTimers();
