@@ -1,4 +1,12 @@
-import { useCallback, useRef, useState } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 
 import { ThemeMode, useThemePreference } from '../design/ThemeContext';
 import {
@@ -56,13 +64,16 @@ export interface WalletSession {
   reopenPhase(phase: SessionPhase): void;
 }
 
+const WalletSessionContext = createContext<WalletSession | null>(null);
+
 /**
  * Owns the wallet journey from the opening screen to the connected home
- * shell. Wallet work is delegated to the session gateway, so the same state
- * machine runs the mock (Expo Go demos) and the real WDK node (debug APK
- * with EXPO_PUBLIC_WALLET_MODE=wdk).
+ * shell. Wallet work is delegated to the session gateway, so the same
+ * state machine runs the mock (Expo Go demos) and the real WDK node
+ * (debug APK with EXPO_PUBLIC_WALLET_MODE=wdk). The provider makes the
+ * session reachable from task cards without prop drilling.
  */
-export function useWalletSession(): WalletSession {
+export function WalletSessionProvider({ children }: { children: ReactNode }) {
   const gatewayRef = useRef<WalletSessionGateway | null>(null);
   const { theme, setThemeMode } = useThemePreference();
 
@@ -89,7 +100,9 @@ export function useWalletSession(): WalletSession {
   }, []);
 
   const continueLanguage = useCallback(() => {
-    setPhase((current) => (current === 'language' && language !== null ? 'theme' : current));
+    setPhase((current) =>
+      current === 'language' && language !== null ? 'theme' : current,
+    );
   }, [language]);
 
   const chooseTheme = useCallback(
@@ -137,23 +150,59 @@ export function useWalletSession(): WalletSession {
 
   const reopenPhase = useCallback((target: SessionPhase) => setPhase(target), []);
 
-  return {
-    phase,
-    language,
-    theme: theme.mode,
-    setupStep,
-    progressMessage,
-    errorMessage,
-    wallet,
-    continueOpening,
-    chooseLanguage,
-    continueLanguage,
-    chooseTheme,
-    continueTheme,
-    createWallet,
-    requestSignIn,
-    openWallet,
-    refreshWallet,
-    reopenPhase,
-  };
+  const session = useMemo(
+    () => ({
+      phase,
+      language,
+      theme: theme.mode,
+      setupStep,
+      progressMessage,
+      errorMessage,
+      wallet,
+      continueOpening,
+      chooseLanguage,
+      continueLanguage,
+      chooseTheme,
+      continueTheme,
+      createWallet,
+      requestSignIn,
+      openWallet,
+      refreshWallet,
+      reopenPhase,
+    }),
+    [
+      phase,
+      language,
+      theme,
+      setupStep,
+      progressMessage,
+      errorMessage,
+      wallet,
+      continueOpening,
+      chooseLanguage,
+      continueLanguage,
+      chooseTheme,
+      continueTheme,
+      createWallet,
+      requestSignIn,
+      openWallet,
+      refreshWallet,
+      reopenPhase,
+    ],
+  );
+
+  return (
+    <WalletSessionContext.Provider value={session}>
+      {children}
+    </WalletSessionContext.Provider>
+  );
+}
+
+/** The app's single wallet session (provider-scoped). */
+export function useWalletSession(): WalletSession {
+  const session = useContext(WalletSessionContext);
+  if (session === null) {
+    throw new Error('useWalletSession requires WalletSessionProvider');
+  }
+  return session;
 }

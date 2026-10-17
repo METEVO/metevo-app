@@ -3,6 +3,7 @@ import { StyleSheet } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemePreferenceProvider, useThemePreference } from './src/design/ThemeContext';
+import { WalletSessionProvider } from './src/hooks/useWalletSession';
 import { HomeScreen } from './src/screens/HomeScreen';
 
 /**
@@ -18,7 +19,9 @@ import { HomeScreen } from './src/screens/HomeScreen';
 export default function App() {
   return (
     <ThemePreferenceProvider>
-      <AppRoot />
+      <WalletSessionProvider>
+        <AppRoot />
+      </WalletSessionProvider>
     </ThemePreferenceProvider>
   );
 }
