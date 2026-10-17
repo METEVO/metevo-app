@@ -2,7 +2,12 @@ import React from 'react';
 import { Pressable, StyleSheet, Text } from 'react-native';
 
 import LogoLockup from '../../assets/logo_lockup_dark.svg';
-import { layout, scale, typography } from '../styles';
+import {
+  MetevoTheme,
+  useTheme,
+  useThemedStyles,
+} from '../../design/ThemeContext';
+import { layout, scale } from '../styles';
 
 /** Intrinsic reference size of the logo lockup asset viewBox. */
 const LOGO_LOCKUP_REFERENCE = { width: 117.04, height: 68.78 } as const;
@@ -19,6 +24,9 @@ interface OpeningSplashProps {
  * continue into onboarding.
  */
 export function OpeningSplash({ onContinue }: OpeningSplashProps) {
+  const theme = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   return (
     <Pressable
       style={styles.fill}
@@ -30,17 +38,17 @@ export function OpeningSplash({ onContinue }: OpeningSplashProps) {
         width={scale(LOGO_LOCKUP_REFERENCE.width)}
         height={scale(LOGO_LOCKUP_REFERENCE.height)}
       />
-      <Text style={styles.tagline}>{TAGLINE}</Text>
+      <Text style={theme.typography.title}>{TAGLINE}</Text>
     </Pressable>
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: MetevoTheme) => ({
   fill: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
     gap: layout.sectionGap,
   },
-  tagline: typography.title,
+  tagline: theme.typography.title,
 });

@@ -1,7 +1,12 @@
 import React, { useState } from 'react';
 import { StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { cardBase, colors, layout, typography, voiceStates } from '../styles';
+import {
+  MetevoTheme,
+  useTheme,
+  useThemedStyles,
+} from '../../design/ThemeContext';
+import { layout } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
 import { OnboardingFrame } from './OnboardingFrame';
 
@@ -30,6 +35,8 @@ export function AccountAccess({
   onSignIn,
   onBack,
 }: AccountAccessProps) {
+  const theme = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const [stage, setStage] = useState<AccountStage>('welcome');
   const [fullName, setFullName] = useState('');
   const [contact, setContact] = useState('');
@@ -42,7 +49,7 @@ export function AccountAccess({
         hearOptionCount={2}
         onBack={onBack}
       >
-        <Text style={typography.body}>One account. Multiple wallets.</Text>
+        <Text style={theme.typography.body}>One account. Multiple wallets.</Text>
         <ActionButton
           label="Create account"
           variant="primary"
@@ -80,7 +87,7 @@ export function AccountAccess({
           onChangeText={setContact}
         />
         {creating && (
-          <Text style={typography.caption}>Creating your wallet…</Text>
+          <Text style={theme.typography.caption}>Creating your wallet…</Text>
         )}
         {errorMessage !== null && (
           <Text style={styles.error}>{errorMessage}</Text>
@@ -120,9 +127,12 @@ interface LabeledFieldProps {
 }
 
 function LabeledField({ label, value, onChangeText }: LabeledFieldProps) {
+  const theme = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   return (
     <View style={styles.field}>
-      <Text style={typography.caption}>{label}</Text>
+      <Text style={theme.typography.caption}>{label}</Text>
       <TextInput
         style={styles.input}
         value={value}
@@ -134,18 +144,18 @@ function LabeledField({ label, value, onChangeText }: LabeledFieldProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: MetevoTheme) => ({
   field: {
-    ...cardBase,
+    ...theme.cardBase,
     gap: layout.rowGap / 4,
   },
   input: {
-    ...typography.body,
-    color: colors.text,
+    ...theme.typography.body,
+    color: theme.colors.text,
     padding: 0,
   },
   error: {
-    ...typography.caption,
-    color: voiceStates.attention.fill,
+    ...theme.typography.caption,
+    color: theme.voiceStates.attention.fill,
   },
 });

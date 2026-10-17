@@ -2,11 +2,16 @@ import React, { useCallback, useState, type ReactNode } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import {
+  MetevoTheme,
+  useThemedStyles,
+  useTheme,
+} from '../../design/ThemeContext';
+import {
   SpokenHighlightListener,
   startSpokenOptionHighlight,
   stopSpokenOptionHighlight,
 } from '../../services/spokenInteraction';
-import { layout, typography } from '../styles';
+import { layout } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
 import { OnboardingVoice } from './OnboardingVoice';
 
@@ -45,6 +50,8 @@ export function OnboardingFrame({
   onConfirm,
   onBack,
 }: OnboardingFrameProps) {
+  const theme = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const [hearing, setHearing] = useState(false);
   const [voiceListening, setVoiceListening] = useState(false);
 
@@ -63,15 +70,15 @@ export function OnboardingFrame({
       {onBack && (
         <ActionButton label="Back" variant="outlined" onPress={onBack} />
       )}
-      <Text style={typography.title}>{title}</Text>
-      <Text style={typography.body}>{subtitle}</Text>
+      <Text style={theme.typography.title}>{title}</Text>
+      <Text style={theme.typography.body}>{subtitle}</Text>
 
       <ScrollView contentContainerStyle={styles.canvas}>{children}</ScrollView>
 
       {voiceListening && (
         <View style={styles.listeningBlock}>
-          <Text style={typography.body}>{LISTENING_MESSAGE}</Text>
-          <Text style={typography.caption}>{LISTENING_HINT}</Text>
+          <Text style={theme.typography.body}>{LISTENING_MESSAGE}</Text>
+          <Text style={theme.typography.caption}>{LISTENING_HINT}</Text>
         </View>
       )}
 
@@ -99,7 +106,7 @@ export function OnboardingFrame({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: MetevoTheme) => ({
   fill: {
     flex: 1,
     gap: layout.rowGap,
@@ -107,14 +114,14 @@ const styles = StyleSheet.create({
   canvas: {
     gap: layout.rowGap,
     flexGrow: 1,
-    justifyContent: 'center',
+    justifyContent: 'center' as const,
   },
   listeningBlock: {
-    alignItems: 'center',
+    alignItems: 'center' as const,
     gap: layout.rowGap / 4,
   },
   actions: {
-    flexDirection: 'row',
+    flexDirection: 'row' as const,
     gap: layout.rowGap,
   },
 });

@@ -1,8 +1,13 @@
 import React, { useMemo, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity } from 'react-native';
 
+import {
+  MetevoTheme,
+  useTheme,
+  useThemedStyles,
+} from '../../design/ThemeContext';
 import { UiLanguage } from '../../hooks/useWalletSession';
-import { cardBase, colors, layout, scale, typography, voiceStates } from '../styles';
+import { layout, scale } from '../styles';
 import { OnboardingFrame } from './OnboardingFrame';
 
 const VISIBLE_OPTION_COUNT = 4;
@@ -31,6 +36,8 @@ interface LanguageOptionsProps {
  * phase never selects. Continue accepts the selection explicitly.
  */
 export function LanguageOptions({ selected, onSelect, onContinue }: LanguageOptionsProps) {
+  const theme = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const [spokenIndex, setSpokenIndex] = useState<number | null>(null);
 
   const windowStart = useMemo(() => {
@@ -78,19 +85,19 @@ export function LanguageOptions({ selected, onSelect, onContinue }: LanguageOpti
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: MetevoTheme) => ({
   option: {
-    ...cardBase,
+    ...theme.cardBase,
     minHeight: scale(14.16),
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   },
   optionSelected: {
     borderWidth: 2,
-    borderColor: colors.text,
+    borderColor: theme.colors.text,
   },
   optionSpoken: {
-    borderColor: voiceStates.idle.fill,
+    borderColor: theme.voiceStates.idle.fill,
   },
-  optionLabel: typography.body,
+  optionLabel: theme.typography.body,
 });

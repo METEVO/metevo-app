@@ -5,11 +5,16 @@ import AttentionVoice from '../../assets/voice_attention_dark.svg';
 import IdleVoice from '../../assets/voice_idle_dark.svg';
 import ProcessingVoice from '../../assets/voice_processing_dark.svg';
 import {
+  MetevoTheme,
+  useTheme,
+  useThemedStyles,
+} from '../../design/ThemeContext';
+import {
   startSpokenOptionHighlight,
   stopSpokenOptionHighlight,
 } from '../../services/spokenInteraction';
 import { WalletSetupStep } from '../../services/metevo/wallet-gateway';
-import { cardBase, colors, layout, scale, typography, voiceStates } from '../styles';
+import { layout, scale } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
 import { OnboardingFrame } from './OnboardingFrame';
 
@@ -42,6 +47,8 @@ export function WalletSelector({
   onOpen,
   onBack,
 }: WalletSelectorProps) {
+  const theme = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const [selected, setSelected] = useState<WalletChoice | null>(null);
   const [hearing, setHearing] = useState(false);
 
@@ -64,8 +71,8 @@ export function WalletSelector({
             height={layout.voiceViewport}
           />
         </View>
-        <Text style={typography.title}>{ATTENTION_TITLE}</Text>
-        <Text style={typography.body}>{errorMessage}</Text>
+        <Text style={theme.typography.title}>{ATTENTION_TITLE}</Text>
+        <Text style={theme.typography.body}>{errorMessage}</Text>
         <View style={styles.actions}>
           <ActionButton label="Back" variant="outlined" onPress={onBack} />
           <ActionButton label="Try again" variant="primary" onPress={onOpen} grow />
@@ -83,8 +90,8 @@ export function WalletSelector({
             height={layout.voiceViewport}
           />
         </View>
-        <Text style={typography.title}>{progressMessage ?? OPENING_TITLE}</Text>
-        <Text style={typography.caption}>{PLEASE_WAIT}</Text>
+        <Text style={theme.typography.title}>{progressMessage ?? OPENING_TITLE}</Text>
+        <Text style={theme.typography.caption}>{PLEASE_WAIT}</Text>
       </View>
     );
   }
@@ -99,8 +106,8 @@ export function WalletSelector({
       onConfirm={onOpen}
       onBack={onBack}
     >
-      <Text style={typography.caption}>No wallet open</Text>
-      <Text style={typography.body}>Your wallets</Text>
+      <Text style={theme.typography.caption}>No wallet open</Text>
+      <Text style={theme.typography.body}>Your wallets</Text>
 
       {WALLETS.map((wallet) => (
         <TouchableOpacity
@@ -122,28 +129,28 @@ export function WalletSelector({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: MetevoTheme) => ({
   fill: {
     flex: 1,
     gap: layout.rowGap,
-    justifyContent: 'center',
+    justifyContent: 'center' as const,
   },
   voiceAnchor: {
-    alignItems: 'center',
+    alignItems: 'center' as const,
   },
   option: {
-    ...cardBase,
+    ...theme.cardBase,
     minHeight: scale(14.16),
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   },
   optionSelected: {
     borderWidth: 2,
-    borderColor: colors.text,
+    borderColor: theme.colors.text,
   },
-  optionLabel: typography.body,
+  optionLabel: theme.typography.body,
   actions: {
-    flexDirection: 'row',
+    flexDirection: 'row' as const,
     gap: layout.rowGap,
   },
 });

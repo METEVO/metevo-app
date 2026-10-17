@@ -2,9 +2,14 @@ import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import { metevoDesignTokens } from '../../design/designTokens';
+import {
+  MetevoTheme,
+  useTheme,
+  useThemedStyles,
+} from '../../design/ThemeContext';
 import { UiTheme } from '../../hooks/useWalletSession';
 import { speakAnnouncement } from '../../services/spokenInteraction';
-import { cardBase, colors, layout, typography } from '../styles';
+import { layout } from '../styles';
 import { OnboardingFrame } from './OnboardingFrame';
 
 interface ThemeOptionsProps {
@@ -15,13 +20,18 @@ interface ThemeOptionsProps {
 
 /**
  * Design section 27: theme selection with a palette preview per option and
- * an explicit confirmation. The selection is read back before Continue
- * accepts it.
+ * an explicit confirmation. Selecting applies the preference immediately,
+ * so the whole screen previews the candidate palette live (design rule:
+ * preview text, surfaces, outlines and symbols while preserving geometry);
+ * Continue accepts what is already on screen.
  */
 export function ThemeOptions({ selected, onSelect, onContinue }: ThemeOptionsProps) {
-  function selectTheme(theme: UiTheme) {
-    onSelect(theme);
-    speakAnnouncement(`${theme} theme selected.`);
+  const theme = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
+  function selectTheme(candidate: UiTheme) {
+    onSelect(candidate);
+    speakAnnouncement(`${candidate} theme selected.`);
   }
 
   return (
@@ -43,7 +53,7 @@ export function ThemeOptions({ selected, onSelect, onContinue }: ThemeOptionsPro
           onSelect={() => selectTheme('light')}
         />
       </View>
-      <Text style={typography.caption}>{selected} theme selected.</Text>
+      <Text style={theme.typography.caption}>{selected} theme selected.</Text>
     </OnboardingFrame>
   );
 }
@@ -56,6 +66,8 @@ interface ThemePreviewCardProps {
 
 /** Palette preview from the design tokens: background, surface, accent. */
 function ThemePreviewCard({ theme, selected, onSelect }: ThemePreviewCardProps) {
+  const appTheme = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const palette = metevoDesignTokens[theme];
   const label = theme.charAt(0).toUpperCase() + theme.slice(1);
 
@@ -79,45 +91,44 @@ function ThemePreviewCard({ theme, selected, onSelect }: ThemePreviewCardProps) 
           />
         </View>
       </View>
-      <Text style={styles.previewLabel}>{label}</Text>
+      <Text style={appTheme.typography.body}>{label}</Text>
     </TouchableOpacity>
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: MetevoTheme) => ({
   previewRow: {
-    flexDirection: 'row',
+    flexDirection: 'row' as const,
     gap: layout.rowGap,
   },
   previewCard: {
-    ...cardBase,
+    ...theme.cardBase,
     flex: 1,
-    alignItems: 'center',
+    alignItems: 'center' as const,
     gap: layout.rowGap,
   },
   previewSelected: {
     borderWidth: 2,
-    borderColor: colors.text,
+    borderColor: theme.colors.text,
   },
   swatchBackground: {
-    width: '100%',
+    width: '100%' as const,
     aspectRatio: 2,
     borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   },
   swatchSurface: {
-    width: '60%',
+    width: '60%' as const,
     aspectRatio: 2,
     borderRadius: 6,
     borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   },
   swatchAccent: {
     width: 12,
     height: 12,
     borderRadius: 6,
   },
-  previewLabel: typography.body,
 });

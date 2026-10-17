@@ -1,7 +1,12 @@
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity } from 'react-native';
 
-import { colors, layout, scale, typography, voiceStates } from '../styles';
+import {
+  MetevoTheme,
+  useTheme,
+  useThemedStyles,
+} from '../../design/ThemeContext';
+import { layout, scale } from '../styles';
 
 export type ActionButtonVariant = 'primary' | 'outlined';
 
@@ -32,6 +37,9 @@ export function ActionButton({
   disabled = false,
   grow = false,
 }: ActionButtonProps) {
+  const theme = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   return (
     <TouchableOpacity
       style={[
@@ -61,28 +69,28 @@ export function ActionButton({
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: MetevoTheme) => ({
   base: {
     minHeight: layout.secondaryButton,
     borderRadius: scale(5),
     paddingHorizontal: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   },
   primary: {
-    backgroundColor: colors.accent,
+    backgroundColor: theme.colors.accent,
   },
   outlined: {
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface,
   },
   attention: {
-    borderColor: voiceStates.attention.fill,
+    borderColor: theme.voiceStates.attention.fill,
   },
   selected: {
     borderWidth: 2,
-    borderColor: colors.text,
+    borderColor: theme.colors.text,
   },
   disabled: {
     opacity: 0.4,
@@ -91,13 +99,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   label: {
-    ...typography.body,
-    fontWeight: '700',
+    ...theme.typography.body,
+    fontWeight: '700' as const,
   },
   primaryLabel: {
-    color: colors.accentText,
+    color: theme.colors.accentText,
   },
   disabledLabel: {
-    color: colors.textMuted,
+    color: theme.colors.textMuted,
   },
 });
