@@ -15,7 +15,8 @@ import * as LocalAuthentication from 'expo-local-authentication';
  */
 
 const MNEMONIC_KEY = 'metevo.wallet.mnemonic';
-const WALLET_PASSWORD_KEY = 'metevo.wallet.password';
+/** Presence marker: existence checks must not pull the seed into JS. */
+const WALLET_PRESENT_KEY = 'metevo.wallet.present';
 const BIOMETRIC_OPTIONS: SecureStore.SecureStoreOptions = {
   keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
 };
@@ -53,23 +54,15 @@ export async function storeWalletMnemonic(mnemonic: string): Promise<void> {
     throw new SecureWalletStoreError('a wallet already exists on this device');
   }
   await SecureStore.setItemAsync(MNEMONIC_KEY, mnemonic, BIOMETRIC_OPTIONS);
+  await SecureStore.setItemAsync(WALLET_PRESENT_KEY, 'true', BIOMETRIC_OPTIONS);
 }
 
 export async function readWalletMnemonic(): Promise<string | null> {
   return SecureStore.getItemAsync(MNEMONIC_KEY, BIOMETRIC_OPTIONS);
 }
 
-export async function storeWalletPassword(password: string): Promise<void> {
-  await SecureStore.setItemAsync(WALLET_PASSWORD_KEY, password, BIOMETRIC_OPTIONS);
-}
-
-export async function readWalletPassword(): Promise<string | null> {
-  return SecureStore.getItemAsync(WALLET_PASSWORD_KEY, BIOMETRIC_OPTIONS);
-}
-
 export async function walletExistsOnDevice(): Promise<boolean> {
-  const mnemonic = await SecureStore.getItemAsync(MNEMONIC_KEY);
-  return mnemonic !== null;
+  return (await SecureStore.getItemAsync(WALLET_PRESENT_KEY)) !== null;
 }
 
 /**
