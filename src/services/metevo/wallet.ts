@@ -28,7 +28,7 @@ export interface MetevoWalletStatus {
   unlocked: boolean;
 }
 
-const DEFAULT_USDM_TICKER = 'USDm';
+const DEFAULT_USDM_TICKER = 'USDM';
 
 export async function createMetevoWallet(
   mnemonic: string,

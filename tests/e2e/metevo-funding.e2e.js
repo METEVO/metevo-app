@@ -3,13 +3,13 @@
  *
  * MODELS the exact flow that runs against the real stack:
  *   1. WDK wallet is created and unlocked (regtest).
- *   2. Wallet connects to the LSP peer; the LSP cron opens the USDm channel.
+ *   2. Wallet connects to the LSP peer; the LSP cron opens the USDM channel.
  *   3. POST /metevo/buy  -> invoice in sats (3000 sats/USD default).
  *   4. Wallet pays the invoice over the channel; we poll for settlement.
  *   5. Wallet creates a RGB receive invoice - blind if it does not yet know
- *      the USDm asset, witness if it does.
- *   6. POST /metevo/claim -> LSP sends USDm to the wallet via sendrgb.
- *   7. Wallet refreshes transfers; USDm balance appears.
+ *      the USDM asset, witness if it does.
+ *   6. POST /metevo/claim -> LSP sends USDM to the wallet via sendrgb.
+ *   7. Wallet refreshes transfers; USDM balance appears.
  *
  * HOW TO RUN (requires a regtest stack: bitcoind, electrs, proxy, RLN LSP node
  * and the utexo-lsp process; see the utexo-lsp repo .env.example):
@@ -76,7 +76,7 @@ async function pollUsdmBalance(account, assetId, baseline, timeoutMs = 300_000) 
     process.stdout.write('.');
     await sleep(10_000);
   }
-  throw new Error('USDm balance did not increase within timeout');
+  throw new Error('USDM balance did not increase within timeout');
 }
 
 (async () => {
@@ -87,7 +87,7 @@ async function pollUsdmBalance(account, assetId, baseline, timeoutMs = 300_000) 
     ...(process.env.METEVO_ALLOW_HTTP === '1' ? {} : {}),
   });
 
-  // --- Step 0: LSP must already have issued USDm (POST /metevo/bootstrap by operator)
+  // --- Step 0: LSP must already have issued USDM (POST /metevo/bootstrap by operator)
   const wallet = await createMetevoWallet(process.env.METEVO_WALLET_MNEMONIC, {
     network: 'regtest',
     dataDir: process.env.METEVO_DATA_DIR || './data_metevo_test',
@@ -108,21 +108,21 @@ async function pollUsdmBalance(account, assetId, baseline, timeoutMs = 300_000) 
     assert.ok(statusBefore.pubkey, 'wallet pubkey missing');
     console.log('\n[1] Wallet unlocked. pubkey:', statusBefore.pubkey);
 
-    const usdmAssetId = await findAssetIdByTicker(account, 'USDm');
-    console.log('[1] Wallet aware of USDm asset?', usdmAssetId ?? 'NO (blind invoices will be used)');
+    const usdmAssetId = await findAssetIdByTicker(account, 'USDM');
+    console.log('[1] Wallet aware of USDM asset?', usdmAssetId ?? 'NO (blind invoices will be used)');
 
-    // --- Step 2: connect to the LSP peer and wait for the USDm channel
+    // --- Step 2: connect to the LSP peer and wait for the USDM channel
     if (LSP_PEER_PUBKEY) {
       await account.connectPeer(LSP_PEER_PUBKEY);
-      console.log('[2] Connected to LSP peer. Waiting for USDm channel (LSP cron opens it)...');
+      console.log('[2] Connected to LSP peer. Waiting for USDM channel (LSP cron opens it)...');
       const ready = await waitForChannel(account, usdmAssetId);
-      assert.ok(ready, 'USDm channel did not become usable before timeout');
-      console.log('[2] USDm channel usable.');
+      assert.ok(ready, 'USDM channel did not become usable before timeout');
+      console.log('[2] USDM channel usable.');
     } else {
       console.log('[2] METEVO_LSP_PEER_PUBKEY not set - assuming channel already open (LSP cron).');
       if (usdmAssetId) {
         const ready = await waitForChannel(account, usdmAssetId);
-        if (!ready) console.log('[2] WARNING: no usable USDm channel yet; continuing anyway.');
+        if (!ready) console.log('[2] WARNING: no usable USDM channel yet; continuing anyway.');
       }
     }
 
@@ -137,12 +137,12 @@ async function pollUsdmBalance(account, assetId, baseline, timeoutMs = 300_000) 
     assert.strictEqual(result.quote.sats, 300_000, 'quote should be 3000 sats per USD');
     assert.strictEqual(result.claimed.status, 'delivered');
     console.log(`[4] Bought $100 for ${result.quote.sats} sats; claim delivered via ${result.invoiceKind} invoice.`);
-    // --- Step 5: USDm arrives (blind receive settles only after the wallet refreshes)
+    // --- Step 5: USDM arrives (blind receive settles only after the wallet refreshes)
     if (usdmAssetId) {
       const finalUsdm = await pollUsdmBalance(account, usdmAssetId, baselineUsdm);
-      console.log(`[5] USDm balance: ${baselineUsdm} -> ${finalUsdm} base units.`);
+      console.log(`[5] USDM balance: ${baselineUsdm} -> ${finalUsdm} base units.`);
     } else {
-      console.log('[5] Wallet was blind to USDm; after this first transfer it should appear in listAssets on next sync. '
+      console.log('[5] Wallet was blind to USDM; after this first transfer it should appear in listAssets on next sync. '
         + 'Re-run the script to exercise the witness-invoice path.');
     }
 

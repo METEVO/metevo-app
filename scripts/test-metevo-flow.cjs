@@ -9,7 +9,7 @@
  * Usage (Debian WSL):
  *   node --env-file=.env scripts/test-metevo-flow.cjs --level 1
  *
- * Level 3 pays a real invoice and claims real USDm — run it against
+ * Level 3 pays a real invoice and claims real USDM — run it against
  * regtest or signet only, with an amount you intend to spend.
  */
 
@@ -126,15 +126,15 @@ async function level3() {
     assert.ok(status.pubkey, 'wallet pubkey missing');
     ok(`wallet unlocked, pubkey ${status.pubkey}`);
 
-    const usdmAssetId = await findAssetIdByTicker(account, 'USDm');
-    console.log(`   wallet aware of USDm: ${usdmAssetId ?? 'no (blind invoice path)'}`);
+    const usdmAssetId = await findAssetIdByTicker(account, 'USDM');
+    console.log(`   wallet aware of USDM: ${usdmAssetId ?? 'no (blind invoice path)'}`);
 
     if (process.env.METEVO_LSP_PEER_PUBKEY) {
       step('Connecting wallet to our LSP peer');
       await account.connectPeer(process.env.METEVO_LSP_PEER_PUBKEY);
       ok(`connected to ${process.env.METEVO_LSP_PEER_PUBKEY.slice(0, 20)}...`);
       if (usdmAssetId) {
-        step('Waiting for a usable USDm channel (LSP cron opens it)');
+        step('Waiting for a usable USDM channel (LSP cron opens it)');
         const deadline = Date.now() + 300_000;
         let ready = false;
         while (Date.now() < deadline && !ready) {
@@ -144,14 +144,14 @@ async function level3() {
           ready = list.some((c) => (c.is_usable ?? c.ready) === true && (c.asset_id ?? null) === usdmAssetId);
           if (!ready) { process.stdout.write('.'); await new Promise((r) => setTimeout(r, 10_000)); }
         }
-        assert.ok(ready, 'USDm channel did not become usable in 5 minutes');
-        ok('USDm channel usable');
+        assert.ok(ready, 'USDM channel did not become usable in 5 minutes');
+        ok('USDM channel usable');
       }
     } else {
       console.log('   METEVO_LSP_PEER_PUBKEY not set; assuming the channel already exists (LSP cron).');
     }
 
-    step(`Funding: buy $${BUY_USD} of USDm`);
+    step(`Funding: buy $${BUY_USD} of USDM`);
     const baseline = usdmAssetId ? Number(await account.getTokenBalance(usdmAssetId)) : 0;
     const result = await fundMetevoWallet(wallet, lsp, {
       usdAmount: BUY_USD,
@@ -161,7 +161,7 @@ async function level3() {
     assert.strictEqual(result.claimed.status, 'delivered');
     ok(`claimed via ${result.invoiceKind} invoice`);
 
-    step('Checking USDm balance');
+    step('Checking USDM balance');
     if (usdmAssetId) {
       const deadline = Date.now() + 600_000;
       let final = baseline;
@@ -172,13 +172,13 @@ async function level3() {
         process.stdout.write('.');
         await new Promise((r) => setTimeout(r, 15_000));
       }
-      assert.ok(final > baseline, 'USDm balance did not increase');
-      ok(`USDm balance ${baseline} -> ${final} base units`);
+      assert.ok(final > baseline, 'USDM balance did not increase');
+      ok(`USDM balance ${baseline} -> ${final} base units`);
     } else {
-      ok('wallet was blind to USDm; re-run after this transfer to exercise the witness path');
+      ok('wallet was blind to USDM; re-run after this transfer to exercise the witness path');
     }
 
-    console.log('\nPASSED: WDK wallet connects, pays, claims and holds USDm.');
+    console.log('\nPASSED: WDK wallet connects, pays, claims and holds USDM.');
   } finally {
     await shutdownMetevoWallet(wallet);
   }
