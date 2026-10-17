@@ -46,8 +46,6 @@ export const colors = {
   textMuted: palettes.dark.muted,
   accent: palettes.dark.states.idle.fill,
   accentText: palettes.dark.onAccent,
-  /** Wireframe alias; superseded by the semantic `voiceStates` colors. */
-  danger: palettes.dark.states.attention.fill,
 } as const;
 
 /** Per-state colors from the launch palette: fill, ink and soft surface. */
@@ -83,13 +81,6 @@ export const typography = {
     fontSize: scale(metevoDesignTokens.typography.label.size),
     fontWeight: textStyleWeight(metevoDesignTokens.typography.label.weight),
     color: colors.textMuted,
-  },
-  primaryLabel: {
-    fontSize: scale(metevoDesignTokens.typography.languageOption.size),
-    fontWeight: textStyleWeight(
-      metevoDesignTokens.typography.languageOption.weight,
-    ),
-    color: colors.accentText,
   },
 } as const;
 
