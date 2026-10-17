@@ -15,6 +15,8 @@
     "expo": "^57.0.29",
     "expo-audio": "~57.0.5",
     "expo-file-system": "~57.0.7",
+    "expo-local-authentication": "~58.0.2",
+    "expo-secure-store": "~58.0.2",
     "react": "19.2.3",
     "react-native": "0.86.3",
     "react-native-safe-area-context": "~5.7.0",

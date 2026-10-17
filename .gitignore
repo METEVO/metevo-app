@@ -19,3 +19,4 @@ ios/
 *.sh
 *.ps1
 
+build/n
