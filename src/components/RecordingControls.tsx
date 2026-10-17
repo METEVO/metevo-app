@@ -4,9 +4,14 @@ import { createAudioPlayer, type AudioPlayer } from 'expo-audio';
 
 import IdleVoice from '../assets/voice_idle_dark.svg';
 import ListeningVoice from '../assets/voice_listening_dark.svg';
+import {
+  MetevoTheme,
+  useTheme,
+  useThemedStyles,
+} from '../design/ThemeContext';
 import { useAudioRecorder } from '../hooks/useAudioRecorder';
 import { chooseArchiveDirectory } from '../utils/recordingArchive';
-import { colors, layout, typography } from './styles';
+import { layout } from './styles';
 
 interface RecordingControlsProps {
   /**
@@ -37,6 +42,8 @@ interface RecordingControlsProps {
  * result through `onRecordingComplete`.
  */
 export function RecordingControls({ onRecordingComplete }: RecordingControlsProps) {
+  const theme = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const lastUriRef = useRef<string | null>(null);
   const playerRef = useRef<AudioPlayer | null>(null);
 
@@ -82,6 +89,7 @@ export function RecordingControls({ onRecordingComplete }: RecordingControlsProp
         <Text style={styles.sideLabel}>▶</Text>
       </TouchableOpacity>
 
+
       <TouchableOpacity
         style={styles.voiceButton}
         onPress={recording ? stop : start}
@@ -107,29 +115,29 @@ export function RecordingControls({ onRecordingComplete }: RecordingControlsProp
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: MetevoTheme) => ({
   row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    width: '100%',
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'space-between' as const,
+    width: '100%' as const,
   },
   voiceButton: {
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   },
   sideButton: {
     width: layout.secondaryButton,
     height: layout.secondaryButton,
     borderRadius: layout.secondaryButton / 2,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
     paddingHorizontal: 4,
     paddingVertical: 4,
   },
-  sideLabel: { ...typography.caption, textAlign: 'center' },
+  sideLabel: { ...theme.typography.caption, textAlign: 'center' as const },
   sideSpacer: { width: layout.secondaryButton },
 });

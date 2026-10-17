@@ -1,7 +1,12 @@
 import React, { useState } from 'react';
 import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
-import { cardBase, colors, layout, scale, typography, voiceStates } from '../styles';
+import {
+  MetevoTheme,
+  useTheme,
+  useThemedStyles,
+} from '../../design/ThemeContext';
+import { layout, scale } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
 
 /**
@@ -37,6 +42,8 @@ interface ContactsPanelProps {
  * Name is required; payment fields are pasted, never dictated.
  */
 export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
+  const theme = useTheme();
+  const styles = useThemedStyles(makeStyles);
   const [contacts, setContacts] = useState<MockContact[]>(INITIAL_CONTACTS);
   const [stage, setStage] = useState<ContactsStage>('list');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -108,7 +115,7 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
   if (stage === 'add') {
     return (
       <View style={styles.canvas}>
-        <Text style={typography.title}>Add a contact</Text>
+        <Text style={theme.typography.title}>Add a contact</Text>
         <LabeledField label="Full name" value={nameDraft} onChangeText={setNameDraft} />
         <LabeledField label="Bitcoin address (paste only)" value={bitcoinDraft} onChangeText={setBitcoinDraft} />
         <LabeledField label="Lightning key (paste only)" value={lightningDraft} onChangeText={setLightningDraft} />
@@ -125,8 +132,8 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
   if (stage === 'alias') {
     return (
       <View style={styles.canvas}>
-        <Text style={typography.title}>Save the contact?</Text>
-        <Text style={typography.body}>{nameDraft.trim()}</Text>
+        <Text style={theme.typography.title}>Save the contact?</Text>
+        <Text style={theme.typography.body}>{nameDraft.trim()}</Text>
         <View style={styles.actions}>
           <ActionButton label="Try again" variant="outlined" onPress={() => setStage('add')} />
           <ActionButton label="Yes" variant="primary" onPress={confirmAlias} grow />
@@ -138,11 +145,13 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
   if (stage === 'delete' && selected !== null) {
     return (
       <View style={styles.canvas}>
-        <Text style={typography.title}>Delete {selected.name}?</Text>
-        <Text style={typography.body}>
+        <Text style={theme.typography.title}>Delete {selected.name}?</Text>
+        <Text style={theme.typography.body}>
           You have {selected.paymentCount} payments with this contact. Delete anyway?
         </Text>
-        <Text style={typography.caption}>Transaction records stay linked and history is preserved.</Text>
+        <Text style={theme.typography.caption}>
+          Transaction records stay linked and history is preserved.
+        </Text>
         <View style={styles.actions}>
           <ActionButton label="Keep" variant="outlined" onPress={() => setStage('details')} grow />
           <ActionButton label="Delete" variant="primary" attention onPress={removeSelected} grow />
@@ -154,19 +163,25 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
   if (stage === 'details' && selected !== null) {
     return (
       <View style={styles.canvas}>
-        <Text style={typography.title}>{selected.name}</Text>
+        <Text style={theme.typography.title}>{selected.name}</Text>
         {selected.bitcoinAddress !== undefined && (
-          <Text style={typography.body}>Bitcoin: {selected.bitcoinAddress}</Text>
+          <Text style={theme.typography.body}>Bitcoin: {selected.bitcoinAddress}</Text>
         )}
         {selected.lightningKey !== undefined && (
-          <Text style={typography.body}>Lightning: {selected.lightningKey}</Text>
+          <Text style={theme.typography.body}>Lightning: {selected.lightningKey}</Text>
         )}
         {selected.phone !== undefined && (
-          <Text style={typography.body}>Phone: {selected.phone}</Text>
+          <Text style={theme.typography.body}>Phone: {selected.phone}</Text>
         )}
         <View style={styles.actions}>
           <ActionButton label="Back" variant="outlined" onPress={() => setStage('list')} />
-          <ActionButton label="Delete" variant="primary" attention onPress={() => requestDelete(selected)} grow />
+          <ActionButton
+            label="Delete"
+            variant="primary"
+            attention
+            onPress={() => requestDelete(selected)}
+            grow
+          />
         </View>
       </View>
     );
@@ -175,7 +190,7 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
   return (
     <View style={styles.canvas}>
       <View style={styles.headerRow}>
-        <Text style={typography.title}>Contacts</Text>
+        <Text style={theme.typography.title}>Contacts</Text>
         <ActionButton label="Done" variant="outlined" onPress={() => onClearIntent?.()} />
       </View>
       {contacts.map((contact) => (
@@ -190,7 +205,7 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
           accessibilityLabel={contact.name}
         >
           <Text style={styles.rowTitle}>{contact.name}</Text>
-          <Text style={typography.caption}>{contact.phone ?? 'No details yet'}</Text>
+          <Text style={theme.typography.caption}>{contact.phone ?? 'No details yet'}</Text>
         </TouchableOpacity>
       ))}
       <ActionButton label="Add contact" variant="primary" onPress={startAdd} />
@@ -205,9 +220,12 @@ interface LabeledFieldProps {
 }
 
 function LabeledField({ label, value, onChangeText }: LabeledFieldProps) {
+  const theme = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
   return (
     <View style={styles.field}>
-      <Text style={typography.caption}>{label}</Text>
+      <Text style={theme.typography.caption}>{label}</Text>
       <TextInput
         style={styles.input}
         value={value}
@@ -229,40 +247,40 @@ function normalizePhoneNumber(raw: string): string | null {
   return /^\+\d{8,15}$/.test(stripped) ? stripped : null;
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: MetevoTheme) => ({
   canvas: {
-    width: '100%',
+    width: '100%' as const,
     gap: layout.rowGap,
   },
   headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'space-between' as const,
   },
   rowCard: {
-    ...cardBase,
+    ...theme.cardBase,
     minHeight: scale(14.16),
     gap: layout.rowGap / 4,
   },
   rowTitle: {
-    ...typography.body,
-    fontWeight: '700',
+    ...theme.typography.body,
+    fontWeight: '700' as const,
   },
   field: {
-    ...cardBase,
+    ...theme.cardBase,
     gap: layout.rowGap / 4,
   },
   input: {
-    ...typography.body,
-    color: colors.text,
+    ...theme.typography.body,
+    color: theme.colors.text,
     padding: 0,
   },
   error: {
-    ...typography.caption,
-    color: voiceStates.attention.fill,
+    ...theme.typography.caption,
+    color: theme.voiceStates.attention.fill,
   },
   actions: {
-    flexDirection: 'row',
+    flexDirection: 'row' as const,
     gap: layout.rowGap,
   },
 });

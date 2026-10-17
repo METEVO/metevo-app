@@ -1,8 +1,14 @@
 import React from 'react';
 import { StyleSheet, TouchableOpacity, View } from 'react-native';
 
-import ProfileIcon from '../assets/profile_dark.svg';
-import { colors, layout, scale } from './styles';
+import ProfileDark from '../assets/profile_dark.svg';
+import ProfileLight from '../assets/profile_light.svg';
+import {
+  MetevoTheme,
+  useTheme,
+  useThemedStyles,
+} from '../design/ThemeContext';
+import { layout, scale } from './styles';
 
 /** Intrinsic reference size from the profile asset SVG viewBox. */
 const PROFILE_ICON_REFERENCE = { width: 15, height: 17 } as const;
@@ -12,6 +18,10 @@ const PROFILE_ICON_REFERENCE = { width: 15, height: 17 } as const;
  * TODO(phase 2): profile / settings flow (likely spoken, not visual).
  */
 export function ProfileLink() {
+  const theme = useTheme();
+  const styles = useThemedStyles(makeStyles);
+  const ProfileIcon = theme.mode === 'dark' ? ProfileDark : ProfileLight;
+
   return (
     <View style={styles.row}>
       <TouchableOpacity
@@ -29,18 +39,18 @@ export function ProfileLink() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: MetevoTheme) => ({
   row: {
-    alignItems: 'flex-start',
+    alignItems: 'flex-start' as const,
   },
   avatar: {
     width: layout.avatar,
     height: layout.avatar,
     borderRadius: layout.avatar / 2,
-    backgroundColor: colors.surface,
+    backgroundColor: theme.colors.surface,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderColor: theme.colors.border,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   },
 });

@@ -3,7 +3,11 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import ProcessingVoice from '../../assets/voice_processing_dark.svg';
 import SuccessVoice from '../../assets/voice_success_dark.svg';
-import { layout, typography } from '../styles';
+import {
+  MetevoTheme,
+  useThemedStyles,
+} from '../../design/ThemeContext';
+import { layout } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
 
 type PaymentStage = 'review' | 'pending' | 'settled';
@@ -30,6 +34,7 @@ const MOCK_SETTLEMENT_DELAY_MS = 3_000;
  * displayed as success.
  */
 export function SendPaymentCard() {
+  const styles = useThemedStyles(makeStyles);
   const [stage, setStage] = useState<PaymentStage>('review');
 
   useEffect(() => {
@@ -44,8 +49,8 @@ export function SendPaymentCard() {
     return (
       <View style={styles.centered}>
         <ProcessingVoice width={64} height={64} />
-        <Text style={typography.title}>Pending</Text>
-        <Text style={typography.caption}>The payment is not confirmed yet.</Text>
+        <Text style={styles.title}>Pending</Text>
+        <Text style={styles.caption}>The payment is not confirmed yet.</Text>
       </View>
     );
   }
@@ -54,8 +59,8 @@ export function SendPaymentCard() {
     return (
       <View style={styles.centered}>
         <SuccessVoice width={64} height={64} />
-        <Text style={typography.title}>Settled</Text>
-        <Text style={typography.body}>10.00 USDm sent to Maria.</Text>
+        <Text style={styles.title}>Settled</Text>
+        <Text style={styles.body}>10.00 USDm sent to Maria.</Text>
         <ActionButton label="Done" variant="primary" onPress={() => setStage('review')} />
       </View>
     );
@@ -63,14 +68,14 @@ export function SendPaymentCard() {
 
   return (
     <View style={styles.canvas}>
-      <Text style={typography.title}>Send USDm</Text>
+      <Text style={styles.title}>Send USDm</Text>
       {MOCK_PROPOSAL.map((row) => (
         <View key={row.label} style={styles.row}>
-          <Text style={typography.caption}>{row.label}</Text>
+          <Text style={styles.caption}>{row.label}</Text>
           <Text style={styles.value}>{row.value}</Text>
         </View>
       ))}
-      <Text style={typography.caption}>{DEMO_NOTE}</Text>
+      <Text style={styles.caption}>{DEMO_NOTE}</Text>
       <View style={styles.actions}>
         <ActionButton label="Cancel" variant="outlined" onPress={() => setStage('review')} grow />
         <ActionButton label="Confirm payment" variant="primary" onPress={() => setStage('pending')} grow />
@@ -79,28 +84,31 @@ export function SendPaymentCard() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: MetevoTheme) => ({
   canvas: {
-    width: '100%',
+    width: '100%' as const,
     gap: layout.rowGap,
   },
   centered: {
-    width: '100%',
-    alignItems: 'center',
+    width: '100%' as const,
+    alignItems: 'center' as const,
     gap: layout.rowGap,
   },
+  title: theme.typography.title,
+  body: theme.typography.body,
+  caption: theme.typography.caption,
   row: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    justifyContent: 'space-between',
+    flexDirection: 'row' as const,
+    alignItems: 'baseline' as const,
+    justifyContent: 'space-between' as const,
     gap: layout.rowGap,
   },
   value: {
-    ...typography.body,
-    fontWeight: '700',
+    ...theme.typography.body,
+    fontWeight: '700' as const,
   },
   actions: {
-    flexDirection: 'row',
+    flexDirection: 'row' as const,
     gap: layout.rowGap,
   },
 });

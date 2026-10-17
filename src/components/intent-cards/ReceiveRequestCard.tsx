@@ -2,7 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import SuccessVoice from '../../assets/voice_success_dark.svg';
-import { cardBase, layout, typography } from '../styles';
+import {
+  MetevoTheme,
+  useThemedStyles,
+} from '../../design/ThemeContext';
+import { layout } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
 
 type ReceiveStage = 'compose' | 'waiting' | 'received';
@@ -20,6 +24,7 @@ const MOCK_SETTLEMENT_DELAY_MS = 3_000;
  * wallet-confirmed transition shows the success state.
  */
 export function ReceiveRequestCard() {
+  const styles = useThemedStyles(makeStyles);
   const [stage, setStage] = useState<ReceiveStage>('compose');
 
   useEffect(() => {
@@ -34,7 +39,7 @@ export function ReceiveRequestCard() {
     return (
       <View style={styles.centered}>
         <SuccessVoice width={64} height={64} />
-        <Text style={typography.title}>Received {MOCK_RECEIVE_AMOUNT}</Text>
+        <Text style={styles.title}>Received {MOCK_RECEIVE_AMOUNT}</Text>
         <ActionButton label="Done" variant="primary" onPress={() => setStage('compose')} />
       </View>
     );
@@ -43,12 +48,14 @@ export function ReceiveRequestCard() {
   if (stage === 'waiting') {
     return (
       <View style={styles.canvas}>
-        <Text style={typography.title}>Request ready</Text>
-        <Text style={typography.body}>Share your request to receive {MOCK_RECEIVE_AMOUNT}.</Text>
+        <Text style={styles.title}>Request ready</Text>
+        <Text style={styles.body}>
+          Share your request to receive {MOCK_RECEIVE_AMOUNT}.
+        </Text>
         <View style={styles.invoiceBox}>
           <Text style={styles.invoice}>{MOCK_INVOICE}</Text>
         </View>
-        <Text style={typography.caption}>{WAITING_NOTE}</Text>
+        <Text style={styles.caption}>{WAITING_NOTE}</Text>
         <ActionButton label="Back" variant="outlined" onPress={() => setStage('compose')} />
       </View>
     );
@@ -56,8 +63,8 @@ export function ReceiveRequestCard() {
 
   return (
     <View style={styles.canvas}>
-      <Text style={typography.title}>Receive money</Text>
-      <Text style={typography.body}>Create a request to receive.</Text>
+      <Text style={styles.title}>Receive money</Text>
+      <Text style={styles.body}>Create a request to receive.</Text>
       <ActionButton
         label="Create request"
         variant="primary"
@@ -67,22 +74,22 @@ export function ReceiveRequestCard() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: MetevoTheme) => ({
   canvas: {
-    width: '100%',
+    width: '100%' as const,
     gap: layout.rowGap,
   },
   centered: {
-    width: '100%',
-    alignItems: 'center',
+    width: '100%' as const,
+    alignItems: 'center' as const,
     gap: layout.rowGap,
   },
+  title: theme.typography.title,
+  body: theme.typography.body,
+  caption: theme.typography.caption,
   invoiceBox: {
-    ...cardBase,
+    ...theme.cardBase,
     padding: 8,
   },
-  invoice: {
-    ...typography.caption,
-    fontVariant: ['tabular-nums'],
-  },
+  invoice: theme.typography.caption,
 });

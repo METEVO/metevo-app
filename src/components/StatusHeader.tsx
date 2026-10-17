@@ -1,9 +1,16 @@
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-import AudioOnIcon from '../assets/audio_on_dark.svg';
-import LogoMark from '../assets/logo_mark_dark.svg';
-import { layout, scale, typography } from './styles';
+import AudioOnDark from '../assets/audio_on_dark.svg';
+import AudioOnLight from '../assets/audio_on_light.svg';
+import LogoMarkDark from '../assets/logo_mark_dark.svg';
+import LogoMarkLight from '../assets/logo_mark_light.svg';
+import {
+  MetevoTheme,
+  useTheme,
+  useThemedStyles,
+} from '../design/ThemeContext';
+import { layout, scale } from './styles';
 import { ProfileLink } from './ProfileLink';
 
 /** Intrinsic reference sizes from the design asset SVG viewBoxes. */
@@ -27,6 +34,12 @@ interface StatusHeaderProps {
  * pipeline and forbids silently overriding the user's audio setting.
  */
 export function StatusHeader({ walletConnected }: StatusHeaderProps) {
+  const theme = useTheme();
+  const styles = useThemedStyles(makeStyles);
+
+  const AudioOnIcon = theme.mode === 'dark' ? AudioOnDark : AudioOnLight;
+  const LogoMark = theme.mode === 'dark' ? LogoMarkDark : LogoMarkLight;
+
   return (
     <View style={styles.stack}>
       <View style={styles.row}>
@@ -55,24 +68,24 @@ export function StatusHeader({ walletConnected }: StatusHeaderProps) {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: MetevoTheme) => ({
   stack: {
     gap: layout.rowGap / 4,
   },
   row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'space-between' as const,
   },
   audioToggle: {
     width: layout.secondaryButton,
     height: layout.secondaryButton,
     borderRadius: layout.secondaryButton / 2,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   },
   connectionState: {
-    ...typography.caption,
-    textAlign: 'center',
+    ...theme.typography.caption,
+    textAlign: 'center' as const,
   },
 });

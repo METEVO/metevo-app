@@ -1,9 +1,10 @@
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
 
+import { useThemedStyles, type MetevoTheme } from '../design/ThemeContext';
 import { IntentCard } from './intent-cards';
 import { IntentId } from '../types/intents';
-import { cardBase, layout } from './styles';
+import { layout } from './styles';
 
 interface DynamicFrameProps {
   /** Current intent id; null shows the idle placeholder. */
@@ -22,17 +23,20 @@ interface DynamicFrameProps {
  * voice-to-intent pipeline.
  */
 export function DynamicFrame({ intent, onClearIntent }: DynamicFrameProps) {
+  const styles = useThemedStyles(makeStyles);
+
   return (
-    <View style={[styles.frame, cardBase]}>
+    <View style={styles.frame}>
       <IntentCard id={intent} onClearIntent={onClearIntent} />
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (theme: MetevoTheme) => ({
   frame: {
+    ...theme.cardBase,
     minHeight: layout.cardMinHeight,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   },
 });
