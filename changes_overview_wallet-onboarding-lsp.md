@@ -1,0 +1,152 @@
+# Changes overview — wallet onboarding, WDK integration and LSP setup
+
+Second task on `metevo-app-redesign`, branch `feat/wallet-onboarding-lsp`
+stacked on `feat/metevo-design-update` (design layer from the previous task).
+Nothing pushed; `main` untouched.
+
+## What this delivers
+
+1. The prepared WDK implementation (from the other checkout's
+   `feat/usdm-buy-flow`) is merged in verbatim: the RGB-Lightning wallet
+   service, the METEVO LSP API client, the funding state machine and the
+   biometric-gated secure store.
+2. The design's wallet journey is implemented as a phase-driven flow:
+   Opening (00) -> Language (25/26) -> Theme (27) -> Account (28) ->
+   Wallet select & open (29, with recovery from 35) -> connected home shell.
+3. The task cards are prepared per the design and mocked where the backend
+   is not ready: receive request -> waiting -> receipt (19), payment review
+   -> pending -> settled (20/21), contacts list/details/add/alias/delete
+   (30-34) with the spec's phone-normalization and soft-delete rules.
+4. Two runtime modes behind one state machine, selected only through
+   validated environment configuration:
+   - `EXPO_PUBLIC_WALLET_MODE=mock` (default): the full flow runs with
+     deterministic demo data - works in Expo Go and debug APKs.
+   - `EXPO_PUBLIC_WALLET_MODE=wdk`: the real `@utexo/wdk-rgb-lightning`
+     node runs on-device (debug APK builds). The native module is required
+     lazily, so mock mode never loads it.
+
+## Wallet + LSP flow (real mode)
+
+`createWallet()` -> BIP-39 256-bit mnemonic from the platform CSPRNG
+(`expo-crypto`), biometric gate, stored in the device secure store only
+(never in env, never logged) -> `openWallet()` -> `createMetevoWallet`
+(WDK manager configured with `METEVO_LSP_URL` + bearer token so the node
+connects to the LSP as a peer) -> channel provisioning is polled via
+`getMetevoWalletStatus` until the USDm channel is usable (30 s window; the
+LSP provisions channels for connected peers) -> home shows the real
+balance and "Wallet connected". The `fundMetevoWallet` prepared flow
+(quote -> pay -> claim) is available for the USDm buy step.
+
+## Environment variables (all via .env / .env.local, zod-validated)
+
+| Key | Purpose |
+| --- | --- |
+| `EXPO_PUBLIC_WALLET_MODE` | `mock` (default) or `wdk` |
+| `EXPO_PUBLIC_WALLET_NETWORK` | `regtest` (default) / testnet / signet / mainnet |
+| `EXPO_PUBLIC_BITCOIND_RPC_HOST` / `_PORT` / `_USERNAME` / `_PASSWORD` | wdk-mode chain sync (regtest values; password only in `.env.local`, never committed) |
+| `EXPO_PUBLIC_RGB_INDEXER_URL` / `EXPO_PUBLIC_RGB_PROXY_ENDPOINT` | wdk-mode RGB endpoints |
+| `METEVO_LSP_URL` / `METEVO_LSP_BEARER_TOKEN` | METEVO LSP `/metevo/*` routes (token equals LSP `APAY_BEARER_TOKEN`; never behind `EXPO_PUBLIC_`) |
+| `LSP_PEER_URI` | now validated as `pubkey@host:port` (schema TODO fulfilled) |
+| `METEVO_WALLET_MNEMONIC` / `METEVO_WALLET_PASSWORD` | Node-side test scripts only; the app never reads a seed from env |
+
+No key, seed or token is hardcoded anywhere; the app generates its seed on
+device and keeps it in `expo-secure-store` behind biometrics.
+
+## Created files
+
+| File | Purpose |
+| --- | --- |
+| `src/services/metevo/*` (ported) | `wallet.ts`, `lsp-api.ts`, `lsp-client-instance.ts`, `funding.ts`, `secure-store.ts`, `index.ts` |
+| `src/services/metevo/wallet-gateway.ts` | One session interface; mock + lazy-WDK implementations |
+| `src/services/spokenInteraction.ts` | Insertion seams for the audio/AI phase (read-back, option highlighting) |
+| `src/hooks/useWalletSession.ts` | Opening -> language -> theme -> account -> wallet -> home state machine |
+| `src/components/onboarding/OpeningSplash.tsx` | Design 00 (vector lockup + tagline) |
+| `src/components/onboarding/OnboardingFrame.tsx` | Shared onboarding shell: canvas, voice orb, Hear options seam, actions |
+| `src/components/onboarding/LanguageOptions.tsx` | Design 25/26: 7 languages, 4 visible, highlight-vs-select |
+| `src/components/onboarding/ThemeOptions.tsx` | Design 27: palette previews + explicit confirm |
+| `src/components/onboarding/AccountAccess.tsx` | Design 28: welcome / create (biometric seed setup) / sign-in |
+| `src/components/onboarding/WalletSelector.tsx` | Design 29/35: select -> opening -> ready / attention + retry |
+| `src/components/ui/ActionButton.tsx` | Design ActionButton: primary/outlined/selected/disabled |
+| `src/components/intent-cards/ReceiveRequestCard.tsx` | Design 19 (mocked settlement) |
+| `src/components/intent-cards/SendPaymentCard.tsx` | Design 20/21 (mocked proposal + settlement) |
+| `src/components/contacts/ContactsPanel.tsx` | Design 30-34 (local mock store) |
+| `tests/unit/*`, `tests/e2e/*`, `scripts/test-metevo-flow.cjs`, `jest.config.js` | Ported prepared tests + Node-side LSP flow script |
+| `src/assets/logo_lockup_dark.svg`, `back_dark.svg` | Opening + back navigation assets |
+
+## Modified files
+
+`src/config/schema.ts` (wallet/LSP env keys + peer-URI relaxation),
+`.env.example`, `package.json`/`package-lock.json`
+(`@utexo/wdk-rgb-lightning`, `expo-secure-store`, `expo-local-authentication`,
+`expo-crypto`, `@scure/bip39`, jest devDeps, `test` script), `tsconfig.json`
+(tests excluded), `src/types/intents.ts` + `src/hooks/useIntents.ts` +
+`src/components/intent-cards/IntentCard.tsx` (registry),
+`src/components/DynamicFrame.tsx` (clear-intent seam),
+`src/screens/HomeScreen.tsx` (phase gate + quick actions + formatted
+balances), `src/components/StatusHeader.tsx` (connection state),
+`src/components/styles.ts` (`voiceViewport`), `src/components/RecordingControls.tsx`
+(single-sourced voice viewport).
+
+Removed: `SendRgbCard.tsx`, `CreateRgbInvoiceCard.tsx` (TODO shells
+superseded by the designed cards).
+
+## Testing instructions (Open Code)
+
+From the repository root, with the design package at `../design`:
+
+```bash
+# 1. TypeScript gate
+npm run typecheck
+
+# 2. Unit tests (18 tests: LSP client + funding flow, native module mocked)
+npm test
+
+# 3. Branch hygiene
+git log --oneline origin/main..HEAD
+git status --short   # must be empty
+
+# 4. Demo in mock mode (Expo Go or any build; the default)
+npx expo start --tunnel
+```
+
+### Debug APK with the real WDK node (`EXPO_PUBLIC_WALLET_MODE=wdk`)
+
+Prerequisites: JDK 17, Android SDK/platform tools, and a running regtest
+stack (bitcoind + RGB indexer + proxy + `utexo-lsp` with the METEVO
+bootstrap issued). Then:
+
+```bash
+# 1. Fill .env.local (never committed):
+#    EXPO_PUBLIC_WALLET_MODE=wdk
+#    EXPO_PUBLIC_WALLET_NETWORK=regtest
+#    EXPO_PUBLIC_BITCOIND_RPC_*  (regtest credentials)
+#    EXPO_PUBLIC_RGB_INDEXER_URL, EXPO_PUBLIC_RGB_PROXY_ENDPOINT
+#    METEVO_LSP_URL, METEVO_LSP_BEARER_TOKEN (= LSP APAY_BEARER_TOKEN)
+
+# 2. Build and install the debug APK (native modules autolinked):
+npx expo run:android --variant debug
+
+# 3. On device: create account -> biometric prompt -> wallet selection ->
+#    Open wallet -> watch node opening, LSP connection and channel
+#    provisioning -> home shows "Wallet connected" and the real balance.
+```
+
+### Voice/AI insertion points (no AI implemented here)
+
+- Recording hand-off: `HomeScreen.handleRecordingComplete` (feeds QVAC
+  voice-to-intent, which then calls `useIntents().simulateIntent`).
+- Spoken read-back / "Hear options": `src/services/spokenInteraction.ts`
+  (no-op seams already wired into every onboarding screen).
+- Onboarding voice controls render idle/listening states only; recognition
+  stays with the audio phase.
+
+## Open items
+
+- Failed / unknown payment status views exist in the interaction spec but
+  arrive with the real payment wiring (the mock settles deterministically).
+- Whole-screen theme preview: ThemeOptions previews palettes per card; a
+  live full-shell theme switch needs the style layer to become theme-aware.
+- Sign in / passkey are design states; the account contract is team-owned.
+- Real-mode channel provisioning depends on the LSP cron; if the channel
+  is not ready within 30 s the home shell still opens with
+  `channelReady: false` (no fake balance is ever shown).
