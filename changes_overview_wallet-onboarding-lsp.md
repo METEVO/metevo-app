@@ -194,26 +194,30 @@ Open decisions that need product input (not mechanical):
 
 ## Open items
 
-- **In-app node hosting: the JS layer is DONE, the native pairing is the
-  remaining blocker.** Landed: `bare/wallet-worklet.js` (Bare worklet RPC
-  server over the prepared services), `EXPO_PUBLIC_WALLET_TRANSPORT=bare`
-  device path, the RN-side IPC gateway (`bareGateway.ts`, same
-  `WalletSessionGateway` contract), framing/progress tests, and the
-  emit-compatible `.js` import extensions. Blocked upstream:
-  `@utexo/wdk-rgb-lightning@0.1.0-beta.15` (latest) peers with
-  `rgb-lightning-node-bare <0.2.0`, and the 0.1.x line ships NO prebuilt
-  Android artifacts (its postinstall falls back to a Rust source build
-  needing rustup + NDK + CMake). The `0.2.0-beta.4` line has the Android
-  prebuilds + staging recipe but is rejected by the published WDK peer
-  range and is itself "fresh-wallet only, not approved for production
-  rollout". Unblocks when a WDK release widens the peer range to the
-  0.2.x runtime (watch `npm view @utexo/wdk-rgb-lightning peerDependencies`).
-  Alternative if the demo demands it: source-build the 0.1.x Android
-  prebuilds (rustup + NDK 27.1 + CMake) — hours of toolchain work with an
-  unqualified-ELF risk the upstream staging step was designed to prevent.
+- **In-app node hosting: LANDED (Android), pending on-device verification.**
+  The wallet runs inside a Bare worklet: `bare/wallet-worklet.js` hosts the
+  prepared services behind a JSON-line IPC protocol; `bareGateway.ts` (RN
+  side) implements the same `WalletSessionGateway` over that bridge;
+  `npm run bundle:wallet` packs the graph into `bare/wallet.rlnbundle`
+  (committed); the native RLN addon ships as `@utexo/rgb-lightning-node-bare`
+  prebuilds and is staged into the APK by the upstream Gradle hook
+  (`android/build.gradle` -> `stageUtexoBareAddons`, ELF verification +
+  byte-for-byte copy for Bare's `linked:` resolver). The worklet bootstraps
+  the LSP via the module's designed `bootstrapLsp` call (connect + peer
+  visibility + APay provisioning), with `connectPeer` as fallback.
+- **Forced runtime pairing (accepted for the hackathon demo):** the app runs
+  `@utexo/wdk-rgb-lightning@0.1.0-beta.15` against
+  `rgb-lightning-node-bare@0.2.0-beta.4` via `.npmrc legacy-peer-deps=true`,
+  although the published WDK peer range says `<0.2.0` and the runtime is
+  "fresh-wallet only, not approved for production rollout". Consequences to
+  respect: demo/regtest funds only; a first on-device run may surface
+  API-surface mismatches between the WDK wrapper and the 0.2.x runtime -
+  failures surface through the sanitized error path. Long-term: wait for a
+  WDK release qualified against the 0.2.x runtime.
 - iOS: prebuilt artifacts exist upstream (`ios-arm64`, simulator targets)
   but no documented React Native integration recipe yet; the app code needs
   no changes when it lands (same gateway seam).
+- M-2 and M-4 from the audit remain open (see the audit record below).
 
 - ~~Failed / unknown payment status views~~ **resolved** (see follow-up).
 - ~~Whole-screen theme preview~~ **resolved** (see follow-up).
