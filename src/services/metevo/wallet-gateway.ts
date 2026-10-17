@@ -106,6 +106,7 @@ async function connectLspPeer(
 }
 
 function createMockWalletSessionGateway(): WalletSessionGateway {
+  const loadSecureStore = (): SecureStoreModule => require('./secure-store');
   let created = false;
   let opened = false;
   let submittedHash: string | null = null;
@@ -116,6 +117,13 @@ function createMockWalletSessionGateway(): WalletSessionGateway {
       return created;
     },
     async createWallet() {
+      // Demo fidelity: run the real biometric prompt when the device has
+      // enrolled credentials, without storing anything (mock mode never
+      // touches the secure store).
+      const secureStore = loadSecureStore();
+      if (await secureStore.deviceSupportsBiometrics()) {
+        await secureStore.authenticateToAccessSecrets('Set up your METEVO wallet');
+      }
       await waitFor(MOCK_STEP_DELAY_MS);
       created = true;
     },
