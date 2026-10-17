@@ -45,7 +45,7 @@ balance and "Wallet connected". The `fundMetevoWallet` prepared flow
 | `EXPO_PUBLIC_WALLET_NETWORK` | `regtest` (default) / testnet / signet / mainnet |
 | `EXPO_PUBLIC_BITCOIND_RPC_HOST` / `_PORT` / `_USERNAME` / `_PASSWORD` | wdk-mode chain sync (regtest values; password only in `.env.local`, never committed) |
 | `EXPO_PUBLIC_RGB_INDEXER_URL` / `EXPO_PUBLIC_RGB_PROXY_ENDPOINT` | wdk-mode RGB endpoints |
-| `METEVO_LSP_URL` / `METEVO_LSP_BEARER_TOKEN` | METEVO LSP `/metevo/*` routes (token equals LSP `APAY_BEARER_TOKEN`; never behind `EXPO_PUBLIC_`) |
+| `METEVO_LSP_URL` / `METEVO_LSP_BEARER_TOKEN` | Node-side regtest script only (`scripts/test-metevo-flow.env.example`); the device gets LSP auth via the provisioned device config file |
 | `LSP_PEER_URI` | now validated as `pubkey@host:port` (schema TODO fulfilled) |
 | `METEVO_WALLET_MNEMONIC` / `METEVO_WALLET_PASSWORD` | Node-side test scripts only; the app never reads a seed from env |
 

@@ -98,13 +98,6 @@ export const appEnvSchema = z.object({
    * readiness is reported through the wallet status afterwards). */
   EXPO_PUBLIC_CHANNEL_PROVISION_TIMEOUT_MS: intFromEnv(120_000, 5_000, 600_000),
 
-  // --- METEVO LSP (utexo-lsp serving the USDm asset) ---------------------------
-  /** METEVO LSP API base URL for the /metevo/* buy and claim routes. */
-  METEVO_LSP_URL: optionalUrlFromEnv,
-  /** Bearer token for the METEVO LSP /metevo/* routes. The same value is
-   * configured on the LSP as APAY_BEARER_TOKEN. Never behind EXPO_PUBLIC_. */
-  METEVO_LSP_BEARER_TOKEN: emptyToUndefined,
-
   // --- Reserved for future functional phases (validated when present) ----------
   /** Lightning Service Provider peer as pubkey@host:port for direct peer
    * connects outside the LSP API base URL flow. */
