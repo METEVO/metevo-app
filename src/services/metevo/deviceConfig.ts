@@ -1,6 +1,8 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { z } from 'zod';
 
+import { ENV } from '../../config/env';
+
 /**
  * Device-provisioned wallet configuration for wdk mode.
  *
@@ -86,4 +88,28 @@ export async function loadDeviceWalletConfig(): Promise<DeviceWalletConfig> {
     );
   }
   return parsed.data;
+}
+
+/** The full wallet-node configuration, ready to pass across the IPC bridge
+ * or straight into the WDK manager (network comes from the app env). */
+export function walletConfigFromDevice(
+  device: DeviceWalletConfig,
+): import('./wallet').MetevoWalletConfig {
+  return {
+    network: ENV.EXPO_PUBLIC_WALLET_NETWORK,
+    dataDir: deviceDataDirectory(),
+    lspBaseUrl: device.lspApiUrl,
+    lspBearerToken: device.lspBearerToken,
+    bitcoindRpcHost: device.bitcoindRpcHost,
+    bitcoindRpcPort: device.bitcoindRpcPort,
+    bitcoindRpcUsername: device.bitcoindRpcUsername,
+    bitcoindRpcPassword: device.bitcoindRpcPassword,
+    indexerUrl: device.rgbIndexerUrl,
+    proxyEndpoint: device.rgbProxyEndpoint,
+  };
+}
+
+function deviceDataDirectory(): string {
+  const base = FileSystem.documentDirectory ?? FileSystem.cacheDirectory ?? '';
+  return `${base}wdk-wallet`;
 }

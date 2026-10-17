@@ -1,5 +1,5 @@
-import { MetevoLspClient, MetevoBuyQuote, MetevoClaimResult } from './lsp-api';
-import { createUsdmReceiveInvoice, ensureColorableUtxos, MetevoWallet } from './wallet';
+import { MetevoLspClient, MetevoBuyQuote, MetevoClaimResult } from './lsp-api.js';
+import { createUsdmReceiveInvoice, ensureColorableUtxos, MetevoWallet } from './wallet.js';
 
 export interface FundOptions {
   usdAmount: number;

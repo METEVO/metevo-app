@@ -17,4 +17,10 @@ module.exports = {
   },
   testPathIgnorePatterns: ['/node_modules/'],
   testMatch: ['**/*.test.ts'],
+  setupFiles: ['<rootDir>/tests/setup.ts'],
+  moduleNameMapper: {
+    '^.+\\.rlnbundle$': '<rootDir>/tests/__mocks__/wallet-bundle.cjs',
+    // Explicit .js specifiers (emitted-worklet style) resolve to .ts sources
+    '^(\\.{1,2}/.*)\\.js$': '$1',
+  },
 };
