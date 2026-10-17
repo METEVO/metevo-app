@@ -98,6 +98,25 @@ function waitFor(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * The regtest flow script connects the LSP peer explicitly before the LSP's
+ * cron provisions the channel; do the same on-device when a peer URI is
+ * provisioned. The call is optional on the beta module surface, so a
+ * missing method skips the step instead of breaking the open flow.
+ */
+async function connectLspPeer(
+  account: unknown,
+  peerUri: string,
+): Promise<void> {
+  const connectable = account as {
+    connectPeer?: (uri: string) => Promise<unknown>;
+  };
+  if (typeof connectable.connectPeer !== 'function') {
+    return;
+  }
+  await connectable.connectPeer(peerUri);
+}
+
 function createMockWalletSessionGateway(): WalletSessionGateway {
   let created = false;
   let opened = false;
@@ -237,6 +256,9 @@ function createWdkWalletSessionGateway(): WalletSessionGateway {
 
       onProgress('connecting-lsp', 'Connecting to the METEVO LSP…');
       usdmAssetId = await findAssetIdByTicker(wallet.account);
+      if (device.lspPeerUri) {
+        await connectLspPeer(wallet.account, device.lspPeerUri);
+      }
       await waitFor(CHANNEL_POLL_INTERVAL_MS);
 
       onProgress('provisioning-channel', 'Opening your USDm channel…');

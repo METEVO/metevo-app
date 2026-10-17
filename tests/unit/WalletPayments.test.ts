@@ -12,6 +12,7 @@ jest.mock('expo-file-system/legacy', () => ({
 const DEVICE_CONFIG_FIXTURE = {
   metevoLspUrl: 'http://127.0.0.1:8080',
   metevoLspBearerToken: 'test-token',
+  lspPeerUri: `02${'b'.repeat(64)}@127.0.0.1:9735`,
   bitcoindRpcHost: '127.0.0.1',
   bitcoindRpcPort: 18443,
   bitcoindRpcUsername: 'regtest',

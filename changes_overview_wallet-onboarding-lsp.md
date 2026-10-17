@@ -120,7 +120,10 @@ with the METEVO bootstrap issued).
 ```bash
 # 1. Prepare the device config (gitignored once filled):
 cp scripts/device-wallet-config.example.json scripts/device-wallet-config.json
-#    ...fill in regtest values (LSP URL/token, bitcoind RPC, RGB endpoints)
+#    ...fill in regtest values (LSP URL/token, optional lspPeerUri as
+#    pubkey@host:port from the LSP's GET /get_info, bitcoind RPC, RGB
+#    endpoints). lspPeerUri makes the gateway connect the LSP peer
+#    explicitly before waiting for the channel-provisioning cron.
 
 # 2. Build and install the debug APK (native modules autolinked):
 #    set EXPO_PUBLIC_WALLET_MODE=wdk in .env.local first

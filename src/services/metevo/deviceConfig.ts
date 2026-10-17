@@ -20,12 +20,19 @@ export class WalletConfigError extends Error {
 
 const DEVICE_CONFIG_FILE = 'metevo-wallet-config.json';
 
+/** Lightning peer URI: compressed pubkey (66 hex chars) @ host : port. */
+const LSP_PEER_URI_PATTERN = /^[0-9a-f]{66}@[a-z0-9.\-]+:[0-9]{1,5}$/i;
+
 const deviceConfigSchema = z
   .object({
     /** METEVO LSP API base URL (utexo-lsp serving the USDm asset). */
     metevoLspUrl: z.string().url(),
     /** Bearer token for the LSP /metevo/* routes and the node peer link. */
     metevoLspBearerToken: z.string().min(1),
+    /** Lightning peer URI of the LSP (pubkey@host:port, from GET /get_info).
+     * When present, the gateway connects the peer explicitly before waiting
+     * for the LSP's channel-provisioning cron. */
+    lspPeerUri: z.string().regex(LSP_PEER_URI_PATTERN).optional(),
     bitcoindRpcHost: z.string().min(1),
     bitcoindRpcPort: z.number().int().min(1).max(65_535),
     bitcoindRpcUsername: z.string().min(1),

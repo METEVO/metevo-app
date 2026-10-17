@@ -14,6 +14,7 @@ jest.mock('expo-file-system/legacy', () => ({
 const DEVICE_CONFIG_FIXTURE = {
   metevoLspUrl: 'http://127.0.0.1:8080',
   metevoLspBearerToken: 'test-token',
+  lspPeerUri: `02${'a'.repeat(64)}@127.0.0.1:9735`,
   bitcoindRpcHost: '127.0.0.1',
   bitcoindRpcPort: 18443,
   bitcoindRpcUsername: 'regtest',
@@ -62,6 +63,7 @@ function mockWdkAccount() {
     getNodeInfo: jest.fn().mockResolvedValue({ pubkey: 'test-node-pubkey' }),
     getBalanceDetails: jest.fn().mockResolvedValue({ vanilla: { spendable: 0 } }),
     sendPayment: jest.fn().mockResolvedValue({ payment_hash: 'f'.repeat(64) }),
+    connectPeer: jest.fn().mockResolvedValue(undefined),
   };
   const manager = { getAccount: jest.fn().mockResolvedValue(account) };
   (WalletManagerRgbLightning as unknown as jest.Mock).mockImplementation(
@@ -128,7 +130,7 @@ describe('wallet gateway open path', () => {
   });
 
   test('requires biometric authentication before reading the seed', async () => {
-    mockWdkAccount();
+    const account = mockWdkAccount();
     const { createWalletSessionGateway } = loadGatewayWithMode('wdk');
     const gateway = createWalletSessionGateway();
 
@@ -143,5 +145,8 @@ describe('wallet gateway open path', () => {
     expect(authOrder).toBeDefined();
     expect(readOrder).toBeDefined();
     expect(authOrder).toBeLessThan(readOrder);
+    expect(account.connectPeer).toHaveBeenCalledWith(
+      DEVICE_CONFIG_FIXTURE.lspPeerUri,
+    );
   });
 });

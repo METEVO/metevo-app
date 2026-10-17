@@ -11,6 +11,7 @@ jest.mock('expo-file-system/legacy', () => ({
 const VALID_CONFIG = {
   metevoLspUrl: 'http://127.0.0.1:8080',
   metevoLspBearerToken: 'test-token',
+  lspPeerUri: `02${'c'.repeat(64)}@127.0.0.1:9735`,
   bitcoindRpcHost: '127.0.0.1',
   bitcoindRpcPort: 18443,
   bitcoindRpcUsername: 'regtest',
@@ -63,6 +64,7 @@ describe('loadDeviceWalletConfig', () => {
       ...VALID_CONFIG,
       metevoLspUrl: 'not-a-url',
       metevoLspBearerToken: 'super-secret-regtest-token-value',
+      lspPeerUri: 'not-a-peer-uri',
       unexpectedKey: true,
     });
 
