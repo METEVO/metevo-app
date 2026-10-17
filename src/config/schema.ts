@@ -90,17 +90,9 @@ export const appEnvSchema = z.object({
   EXPO_PUBLIC_WALLET_MODE: z.enum(['mock', 'wdk']).default('mock'),
   /** Bitcoin network for the embedded wallet node. */
   EXPO_PUBLIC_WALLET_NETWORK: z.enum(['regtest', 'testnet', 'signet', 'mainnet']).default('regtest'),
-  /** bitcoind RPC for the wdk mode chain sync. Regtest dev values only. */
-  EXPO_PUBLIC_BITCOIND_RPC_HOST: z.string().min(1).default('127.0.0.1'),
-  EXPO_PUBLIC_BITCOIND_RPC_PORT: intFromEnv(18443, 1, 65_535),
-  EXPO_PUBLIC_BITCOIND_RPC_USERNAME: emptyToUndefined,
-  /** Regtest-only RPC credential. Provide via .env.local; never commit a
-   * value and never reuse a mainnet/testnet password here. */
-  EXPO_PUBLIC_BITCOIND_RPC_PASSWORD: emptyToUndefined,
-  /** RGB indexer (must match the wallet network) for the wdk mode. */
-  EXPO_PUBLIC_RGB_INDEXER_URL: optionalUrlFromEnv,
-  /** RGB proxy endpoint used for blinded receive invoices. */
-  EXPO_PUBLIC_RGB_PROXY_ENDPOINT: optionalUrlFromEnv,
+  /** Connectivity secrets (LSP token, bitcoind RPC, RGB endpoints) are NOT
+   * bundle-embedded: wdk mode loads them at runtime from the provisioned
+   * device config file (src/services/metevo/deviceConfig.ts). */
   /** How long the wallet setup waits for the LSP to provision the USDm
    * channel before continuing without one (the LSP provisions on a cron;
    * readiness is reported through the wallet status afterwards). */
