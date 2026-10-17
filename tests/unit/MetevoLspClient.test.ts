@@ -11,11 +11,11 @@ function jsonResponse(status: number, body: unknown): Response {
 const SAMPLE_QUOTE = {
   payment_hash: 'a24672c1b3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0',
   invoice: 'lnbcrt300000n1...',
-  amount_msat: 3_000_000,
-  sats: 3000,
-  usd_amount: 1,
+  amount_msat: 300_000_000,
+  sats: 300_000,
+  usd_amount: 100,
   asset_id: 'rgb:usdm-contract-id',
-  asset_amount: 100_000_000,
+  asset_amount: 10_000_000_000,
   sats_per_usd: 3000,
   expires_at: 1_787_164_542,
 };
@@ -23,7 +23,7 @@ const SAMPLE_QUOTE = {
 const SAMPLE_CLAIM = {
   payment_hash: 'a24672c1b3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0',
   asset_id: 'rgb:usdm-contract-id',
-  asset_amount: 100_000_000,
+  asset_amount: 10_000_000_000,
   status: 'delivered',
 };
 
@@ -72,13 +72,13 @@ describe('MetevoLspClient', () => {
         fetchImpl: fetchImpl,
       });
 
-      await client.buy(10);
+      await client.buy(100);
 
       const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
       expect(url).toBe('http://127.0.0.1:8080/metevo/buy');
       expect(init.method).toBe('POST');
       expect(init.headers).toMatchObject({ Authorization: 'Bearer test-token' });
-      expect(JSON.parse(String(init.body))).toEqual({ usd_amount: 10 });
+      expect(JSON.parse(String(init.body))).toEqual({ usd_amount: 100 });
     });
 
     it('maps the wire fields onto the quote', async () => {
@@ -88,11 +88,11 @@ describe('MetevoLspClient', () => {
 
       expect(quote.paymentHash).toBe(SAMPLE_QUOTE.payment_hash);
       expect(quote.invoice).toBe(SAMPLE_QUOTE.invoice);
-      expect(quote.amountMsat).toBe(3_000_000);
-      expect(quote.sats).toBe(3000);
-      expect(quote.usdAmount).toBe(1);
+      expect(quote.amountMsat).toBe(300_000_000);
+      expect(quote.sats).toBe(300_000);
+      expect(quote.usdAmount).toBe(100);
       expect(quote.assetId).toBe('rgb:usdm-contract-id');
-      expect(quote.assetAmount).toBe(100_000_000);
+      expect(quote.assetAmount).toBe(10_000_000_000);
       expect(quote.satsPerUsd).toBe(3000);
       expect(quote.expiresAt).toBe(1_787_164_542);
     });

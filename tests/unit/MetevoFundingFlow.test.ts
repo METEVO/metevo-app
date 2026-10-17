@@ -13,11 +13,11 @@ const FUNDING_PREIMAGE = 'aabbccddeeff00112233445566778899aabbccddeeff0011223344
 const FUNDING_QUOTE = {
   payment_hash: 'a24672c1b3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0',
   invoice: 'lnbcrt300000n1...',
-  amount_msat: 3_000_000,
-  sats: 3000,
-  usd_amount: 1,
+  amount_msat: 300_000_000,
+  sats: 300_000,
+  usd_amount: 100,
   asset_id: 'rgb:usdm-contract-id',
-  asset_amount: 100_000_000,
+  asset_amount: 10_000_000_000,
   sats_per_usd: 3000,
   expires_at: 1_787_164_542,
 };
@@ -25,11 +25,11 @@ const FUNDING_QUOTE = {
 const FUNDING_QUOTE_EXPECTED = {
   paymentHash: FUNDING_QUOTE.payment_hash,
   invoice: FUNDING_QUOTE.invoice,
-  amountMsat: 3_000_000,
-  sats: 3000,
-  usdAmount: 1,
+  amountMsat: 300_000_000,
+  sats: 300_000,
+  usdAmount: 100,
   assetId: 'rgb:usdm-contract-id',
-  assetAmount: 100_000_000,
+  assetAmount: 10_000_000_000,
   satsPerUsd: 3000,
   expiresAt: 1_787_164_542,
 };
@@ -37,7 +37,7 @@ const FUNDING_QUOTE_EXPECTED = {
 const FUNDING_CLAIM = {
   payment_hash: FUNDING_QUOTE.payment_hash,
   asset_id: 'rgb:usdm-contract-id',
-  asset_amount: 100_000_000,
+  asset_amount: 10_000_000_000,
   status: 'delivered',
 };
 
@@ -95,7 +95,7 @@ describe('fundMetevoWallet', () => {
     stubWallet(account);
     const lsp = makeLsp(FUNDING_QUOTE, FUNDING_CLAIM);
 
-    const result = await fundMetevoWallet(wallet, lsp, { usdAmount: 1, usdmAssetId: 'rgb:usdm-contract-id' });
+    const result = await fundMetevoWallet(wallet, lsp, { usdAmount: 100, usdmAssetId: 'rgb:usdm-contract-id' });
 
     expect(result.quote).toEqual(FUNDING_QUOTE_EXPECTED);
     expect(result.invoiceKind).toBe('witness');
@@ -119,7 +119,7 @@ describe('fundMetevoWallet', () => {
       });
     const lsp = makeLsp(FUNDING_QUOTE, FUNDING_CLAIM);
 
-    const result = await fundMetevoWallet(wallet, lsp, { usdAmount: 1, usdmAssetId: 'rgb:usdm-contract-id' });
+    const result = await fundMetevoWallet(wallet, lsp, { usdAmount: 100, usdmAssetId: 'rgb:usdm-contract-id' });
 
     expect(result.invoiceKind).toBe('witness');
     const [, init] = (lsp as any).fetchImpl.mock.calls[1];
@@ -135,7 +135,7 @@ describe('fundMetevoWallet', () => {
     account.createRgbInvoice = jest.fn().mockResolvedValue({ invoice: 'rgb1blind...' });
     const lsp = makeLsp(FUNDING_QUOTE, FUNDING_CLAIM);
 
-    const result = await fundMetevoWallet(wallet, lsp, { usdAmount: 1, usdmAssetId: null });
+    const result = await fundMetevoWallet(wallet, lsp, { usdAmount: 100, usdmAssetId: null });
 
     expect(result.invoiceKind).toBe('blind');
     expect(account.createRgbInvoice).toHaveBeenCalledWith({
@@ -150,7 +150,7 @@ describe('fundMetevoWallet', () => {
     stubWallet(account);
     const lsp = makeLsp(FUNDING_QUOTE, FUNDING_CLAIM);
 
-    const result = await fundMetevoWallet(wallet, lsp, { usdAmount: 1, usdmAssetId: 'rgb:usdm-contract-id' });
+    const result = await fundMetevoWallet(wallet, lsp, { usdAmount: 100, usdmAssetId: 'rgb:usdm-contract-id' });
 
     expect(result.invoiceKind).toBe('witness');
     expect(account.createRgbInvoice).toHaveBeenCalledWith({
@@ -159,7 +159,7 @@ describe('fundMetevoWallet', () => {
       duration_seconds: 3600,
       asset_id: 'rgb:usdm-contract-id',
       assignment_kind: 'Fungible',
-      assignment_amount: 100_000_000,
+      assignment_amount: 10_000_000_000,
     });
   });
 
@@ -169,7 +169,7 @@ describe('fundMetevoWallet', () => {
     const lsp = makeLsp(FUNDING_QUOTE, FUNDING_CLAIM);
 
     await expect(
-      fundMetevoWallet(wallet, lsp, { usdAmount: 1, usdmAssetId: 'rgb:other-asset' }),
+      fundMetevoWallet(wallet, lsp, { usdAmount: 100, usdmAssetId: 'rgb:other-asset' }),
     ).rejects.toThrow('LSP quoted asset rgb:usdm-contract-id but the wallet expects rgb:other-asset');
     expect(account.sendPayment).not.toHaveBeenCalled();
   });
@@ -185,7 +185,7 @@ describe('fundMetevoWallet', () => {
 
     await expect(
       fundMetevoWallet(wallet, lsp, {
-        usdAmount: 1,
+        usdAmount: 100,
         usdmAssetId: 'rgb:usdm-contract-id',
         paymentTimeoutMs: 100,
       }),

@@ -126,18 +126,17 @@ async function pollUsdmBalance(account, assetId, baseline, timeoutMs = 300_000) 
       }
     }
 
-    // --- Step 3-4: buy $10, pay the invoice, wait for settlement
+    // --- Step 3-4: buy $100, pay the invoice, wait for settlement
     const baselineUsdm = usdmAssetId ? Number(await account.getTokenBalance(usdmAssetId)) : 0;
     const result = await fundMetevoWallet(wallet, lsp, {
-      usdAmount: 10,
+      usdAmount: 100,
       usdmAssetId,
       onProgress: (s) => console.log('   ...', s),
     });
-    assert.strictEqual(result.quote.usdAmount, 10);
-    assert.strictEqual(result.quote.sats, 30_000, 'quote should be 3000 sats per USD');
+    assert.strictEqual(result.quote.usdAmount, 100);
+    assert.strictEqual(result.quote.sats, 300_000, 'quote should be 3000 sats per USD');
     assert.strictEqual(result.claimed.status, 'delivered');
-    console.log(`[4] Bought $10 for ${result.quote.sats} sats; claim delivered via ${result.invoiceKind} invoice.`);
-
+    console.log(`[4] Bought $100 for ${result.quote.sats} sats; claim delivered via ${result.invoiceKind} invoice.`);
     // --- Step 5: USDm arrives (blind receive settles only after the wallet refreshes)
     if (usdmAssetId) {
       const finalUsdm = await pollUsdmBalance(account, usdmAssetId, baselineUsdm);
