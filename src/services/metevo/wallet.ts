@@ -68,14 +68,14 @@ export async function getMetevoWalletStatus(
   account: MetevoWallet['account'],
   usdmAssetId: string | null,
 ): Promise<MetevoWalletStatus> {
-  const info = await account.getNodeInfo();
-  const balance = await account.getBalanceDetails(false);
+  const info = (await account.getNodeInfo()) as any;
+  const balance = (await account.getBalanceDetails(false)) as any;
 
   let usdmBaseUnits: number | null = null;
   let usdmChannelReady = false;
   if (usdmAssetId) {
     usdmBaseUnits = Number(await account.getTokenBalance(usdmAssetId));
-    const channels = await account.listChannels();
+    const channels = (await account.listChannels()) as any;
     const list = Array.isArray(channels) ? channels : channels?.channels ?? [];
     usdmChannelReady = list.some(
       (c: any) => c?.peer_pubkey && (c.is_usable ?? c.ready) === true &&
@@ -127,7 +127,7 @@ export async function createUsdmReceiveInvoice(
       request.assignment_amount = options.amountBaseUnits;
     }
   }
-  const response = await account.createRgbInvoice(request);
+  const response = (await account.createRgbInvoice(request)) as any;
   const invoice = response?.invoice ?? response?.recipient_id;
   if (typeof invoice !== 'string' || invoice.length === 0) {
     throw new Error('createRgbInvoice returned no invoice');
@@ -139,7 +139,7 @@ export async function findAssetIdByTicker(
   account: MetevoWallet['account'],
   ticker: string = DEFAULT_USDM_TICKER,
 ): Promise<string | null> {
-  const assets = await account.listAssets(['Ifa', 'Nia']);
+  const assets = (await account.listAssets(['Ifa', 'Nia'])) as any;
   const groups = [assets?.ifa ?? [], assets?.nia ?? []];
   for (const group of groups) {
     for (const asset of group) {

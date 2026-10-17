@@ -29,7 +29,7 @@ export async function awaitInvoiceSettlement(
 
   while (Date.now() < deadline) {
     await account.sync();
-    const payments = await account.listPayments();
+    const payments = (await account.listPayments()) as any;
     const list = Array.isArray(payments) ? payments : payments?.payments ?? [];
     const match = list.find((p: any) => {
       const hash = String(p?.payment_hash ?? p?.paymentHash ?? '').toLowerCase();
