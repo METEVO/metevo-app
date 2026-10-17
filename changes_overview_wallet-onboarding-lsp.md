@@ -194,6 +194,19 @@ Open decisions that need product input (not mechanical):
 
 ## Open items
 
+- **Bare runtime hosting (blocks in-app wdk mode on BOTH platforms):** the
+  prepared service layer was validated Node-side only
+  (`@utexo/rgb-lightning-node-nodejs` + scripts/e2e). The in-app path
+  requires `@utexo/rgb-lightning-node-bare` (optional peer, not installed
+  in any checkout). Upstream: the published wrapper is a 0.2.0-beta.4
+  candidate ("fresh-wallet only, not approved for production rollout");
+  Android additionally needs the documented staging integration
+  (`react-native-bare-kit@0.15.5` + Gradle hook + NDK 27.1.12297006 -
+  installing the npm package alone does not apply the hook); iOS prebuilt
+  artifacts exist (`ios-arm64`, simulator targets) but no documented RN
+  app integration recipe yet. Until this lands, the proven real-flow demo
+  is the Node-side script; the in-app node is the next integration project.
+
 - ~~Failed / unknown payment status views~~ **resolved** (see follow-up).
 - ~~Whole-screen theme preview~~ **resolved** (see follow-up).
 - ~~Sign-in is design-only~~ **partially resolved**: existing wallets now
