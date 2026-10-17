@@ -13,11 +13,14 @@ import { useIntents } from '../hooks/useIntents';
 import { archiveRecording } from '../utils/recordingArchive';
 
 /**
- * Main (only) screen: the wireframe sketch, top to bottom.
+ * Main (only) screen: the design's fixed shell.
  *
- * Component boundaries follow the sketch sections so later phases can swap
- * mock data behind each component without touching the others. No router
- * exists by design (see SPEC.md).
+ * Header and balance stay anchored at the top, the task canvas scrolls in
+ * the middle, and the voice control plus History/Spending actions stay
+ * anchored at the bottom, so the voice anchor never moves (see the design
+ * handoff's fixed-shell rule). Component boundaries follow the design's
+ * shell regions so later phases can swap mock data behind each component
+ * without touching the others. No router exists by design.
  *
  * Test seam: to preview a specific intent card, pass its id instead of null
  * below, e.g. useIntents('send-usdm'). See changes_overview_metevo_mockup.md.
@@ -26,7 +29,7 @@ export function HomeScreen() {
   const { intent } = useIntents(null);
 
   return (
-    <ScrollView contentContainerStyle={styles.content}>
+    <View style={styles.shell}>
       <StatusHeader />
       <BalancesCard
         balances={[
@@ -35,14 +38,21 @@ export function HomeScreen() {
         ]}
       />
 
-      <TransactionList transactions={MOCK_TRANSACTIONS} />
+      <ScrollView
+        style={styles.canvas}
+        contentContainerStyle={styles.canvasContent}
+      >
+        <TransactionList transactions={MOCK_TRANSACTIONS} />
 
-      <DynamicFrame intent={intent} />
+        <DynamicFrame intent={intent} />
+      </ScrollView>
 
-      <RecordingControls onRecordingComplete={handleRecordingComplete} />
+      <View style={styles.bottomRegion}>
+        <RecordingControls onRecordingComplete={handleRecordingComplete} />
 
-      <HistorySpendingLinks />
-    </ScrollView>
+        <HistorySpendingLinks />
+      </View>
+    </View>
   );
 }
 
@@ -67,8 +77,20 @@ function handleRecordingComplete(recordingUri: string | null): void {
 }
 
 const styles = StyleSheet.create({
-  content: {
-    padding: layout.screenPadding,
+  shell: {
+    flex: 1,
+    paddingHorizontal: layout.screenPadding,
     gap: layout.sectionGap,
+  },
+  canvas: {
+    flex: 1,
+  },
+  canvasContent: {
+    gap: layout.sectionGap,
+    paddingBottom: layout.sectionGap,
+  },
+  bottomRegion: {
+    gap: layout.rowGap,
+    paddingBottom: layout.rowGap,
   },
 });
