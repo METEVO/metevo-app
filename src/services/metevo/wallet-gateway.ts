@@ -24,12 +24,37 @@ export interface WalletSessionSnapshot {
 
 export type WalletProgressListener = (step: WalletSetupStep, message: string) => void;
 
+/**
+ * A payment proposal ready for one-shot submission. The payable invoice is
+ * produced by the resolver/wallet contract; the mockup's demo proposal
+ * carries a clearly-marked fake invoice and never reaches a real node.
+ */
+export interface PaymentProposal {
+  invoice: string;
+}
+
+export interface SubmittedPayment {
+  /** Trackable payment hash; null when the node did not report one. */
+  paymentHash: string | null;
+}
+
+/**
+ * Network settlement status per the design rules: pending is not success,
+ * failed requires a confirmed failure, and a timeout after possible
+ * submission is unknown - never guessed.
+ */
+export type PaymentNetworkStatus = 'pending' | 'settled' | 'failed' | 'unknown';
+
 export interface WalletSessionGateway {
   /** Generate the seed, gate it behind device biometrics and store it. */
   createWallet(): Promise<void>;
   /** Unlock the node, connect to the LSP and wait for channel provisioning. */
   openWallet(onProgress: WalletProgressListener): Promise<void>;
   readStatus(): Promise<WalletSessionSnapshot>;
+  /** Submit the proposal exactly once; the caller owns confirmation UX. */
+  submitPayment(proposal: PaymentProposal): Promise<SubmittedPayment>;
+  /** Query an existing payment; never creates a replacement payment. */
+  checkPayment(paymentHash: string): Promise<PaymentNetworkStatus>;
   shutdown(): Promise<void>;
 }
 
@@ -39,6 +64,10 @@ const MOCK_NODE_PUBKEY =
 const MOCK_BALANCE_USDM_BASE_UNITS = 2_000_000_000; // 20.00 USDm at precision 8
 
 const MOCK_STEP_DELAY_MS = 700;
+const MOCK_PAYMENT_HASH =
+  'a24672c1b3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0';
+/** The mock settles on the second status check, so demos show both states. */
+const MOCK_SETTLE_AFTER_CHECKS = 2;
 
 function waitFor(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -47,6 +76,8 @@ function waitFor(ms: number): Promise<void> {
 function createMockWalletSessionGateway(): WalletSessionGateway {
   let created = false;
   let opened = false;
+  let submittedHash: string | null = null;
+  let checkCount = 0;
 
   return {
     async createWallet() {
@@ -73,6 +104,19 @@ function createMockWalletSessionGateway(): WalletSessionGateway {
         balanceUsdmBaseUnits: opened ? MOCK_BALANCE_USDM_BASE_UNITS : null,
         channelReady: opened,
       };
+    },
+    async submitPayment() {
+      await waitFor(MOCK_STEP_DELAY_MS);
+      submittedHash = MOCK_PAYMENT_HASH;
+      checkCount = 0;
+      return { paymentHash: submittedHash };
+    },
+    async checkPayment(paymentHash) {
+      if (submittedHash === null || paymentHash !== submittedHash) {
+        return 'unknown';
+      }
+      checkCount += 1;
+      return checkCount >= MOCK_SETTLE_AFTER_CHECKS ? 'settled' : 'pending';
     },
     async shutdown() {
       opened = false;
@@ -178,6 +222,46 @@ function createWdkWalletSessionGateway(): WalletSessionGateway {
         balanceUsdmBaseUnits: status.usdmBaseUnits,
         channelReady: status.usdmChannelReady,
       };
+    },
+    async submitPayment(proposal) {
+      if (wallet === null) {
+        throw new Error('the wallet is not open');
+      }
+      const response = (await wallet.account.sendPayment({
+        invoice: proposal.invoice,
+      })) as Record<string, unknown>;
+      const paymentHash = String(response?.payment_hash ?? response?.paymentHash ?? '');
+      return { paymentHash: paymentHash.length > 0 ? paymentHash : null };
+    },
+    async checkPayment(paymentHash) {
+      if (wallet === null || paymentHash.length === 0) {
+        return 'unknown';
+      }
+      await wallet.account.sync();
+      const payments = (await wallet.account.listPayments()) as unknown;
+      const list = Array.isArray(payments) ? payments : (payments as Record<string, unknown>)?.payments;
+      if (!Array.isArray(list)) {
+        return 'unknown';
+      }
+      const match = list.find((entry: unknown) => {
+        const hash = String(
+          (entry as Record<string, unknown>)?.payment_hash ??
+            (entry as Record<string, unknown>)?.paymentHash ??
+            '',
+        ).toLowerCase();
+        return hash === paymentHash.toLowerCase();
+      });
+      if (match === undefined) {
+        return 'unknown';
+      }
+      const status = String((match as Record<string, unknown>)?.status ?? 'Pending');
+      if (status === 'Succeeded') {
+        return 'settled';
+      }
+      if (status === 'Failed') {
+        return 'failed';
+      }
+      return 'pending';
     },
     async shutdown() {
       if (wallet !== null) {
