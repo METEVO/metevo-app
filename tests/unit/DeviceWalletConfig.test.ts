@@ -9,8 +9,8 @@ jest.mock('expo-file-system/legacy', () => ({
 }));
 
 const VALID_CONFIG = {
-  metevoLspUrl: 'http://127.0.0.1:8080',
-  metevoLspBearerToken: 'test-token',
+  lspApiUrl: 'http://127.0.0.1:8080',
+  lspBearerToken: 'test-token',
   lspPeerUri: `02${'c'.repeat(64)}@127.0.0.1:9735`,
   bitcoindRpcHost: '127.0.0.1',
   bitcoindRpcPort: 18443,
@@ -62,8 +62,8 @@ describe('loadDeviceWalletConfig', () => {
   test('reports invalid fields by path without leaking values', async () => {
     mockFileContent = JSON.stringify({
       ...VALID_CONFIG,
-      metevoLspUrl: 'not-a-url',
-      metevoLspBearerToken: 'super-secret-regtest-token-value',
+      lspApiUrl: 'not-a-url',
+      lspBearerToken: 'super-secret-regtest-token-value',
       lspPeerUri: 'not-a-peer-uri',
       unexpectedKey: true,
     });
@@ -75,7 +75,7 @@ describe('loadDeviceWalletConfig', () => {
 
     expect(error).toBeInstanceOf(WalletConfigError);
     const message = (error as Error).message;
-    expect(message).toContain('metevoLspUrl');
+    expect(message).toContain('lspApiUrl');
     expect(message).toContain('unexpectedKey');
     expect(message).not.toContain('super-secret-regtest-token-value');
   });

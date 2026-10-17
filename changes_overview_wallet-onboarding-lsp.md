@@ -113,9 +113,13 @@ npx expo start --tunnel
 
 Connectivity secrets are **not** in the bundle: the debug APK loads them
 at runtime from `metevo-wallet-config.json`, provisioned into the app's
-internal storage. Prerequisites: JDK 17, Android SDK/platform tools, adb,
-and a running regtest stack (bitcoind + RGB indexer + proxy + `utexo-lsp`
-with the METEVO bootstrap issued).
+internal storage. There is one LSP in this architecture: the running
+`utexo-lsp` instance serves both the HTTP API (the /metevo/* buy and claim
+routes on its API port) and the Lightning peer interface (pubkey@host:port
+from GET /get_info) that provisions the USDm channels. Prerequisites:
+JDK 17, Android SDK/platform tools, adb, and a running regtest stack
+(bitcoind + RGB indexer + proxy + that same `utexo-lsp` with the METEVO
+bootstrap issued).
 
 ```bash
 # 1. Prepare the device config (gitignored once filled):

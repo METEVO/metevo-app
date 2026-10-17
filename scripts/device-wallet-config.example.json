@@ -1,6 +1,6 @@
 {
-  "metevoLspUrl": "http://192.168.1.10:8080",
-  "metevoLspBearerToken": "REPLACE-WITH-THE-LSP-APAY_BEARER_TOKEN",
+  "lspApiUrl": "http://192.168.1.10:8080",
+  "lspBearerToken": "REPLACE-WITH-THE-LSP-APAY_BEARER_TOKEN",
   "lspPeerUri": "REPLACE-WITH-LSP-PUBKEY@192.168.1.10:9735",
   "bitcoindRpcHost": "192.168.1.10",
   "bitcoindRpcPort": 18443,

@@ -4,6 +4,11 @@ import { z } from 'zod';
 /**
  * Device-provisioned wallet configuration for wdk mode.
  *
+ * There is one LSP in the METEVO architecture: the running utexo-lsp
+ * instance serves both the HTTP API (the /metevo/* buy and claim routes)
+ * and the Lightning peer interface (channel provisioning). The config
+ * below describes that single service's two connection facets.
+ *
  * Connectivity secrets (LSP bearer token, bitcoind RPC credentials) must
  * never ride the EXPO_PUBLIC_ prefix: Expo inlines those into the shipped
  * bundle, where they are recoverable by anyone holding the APK. Instead,
@@ -25,10 +30,10 @@ const LSP_PEER_URI_PATTERN = /^[0-9a-f]{66}@[a-z0-9.\-]+:[0-9]{1,5}$/i;
 
 const deviceConfigSchema = z
   .object({
-    /** METEVO LSP API base URL (utexo-lsp serving the USDm asset). */
-    metevoLspUrl: z.string().url(),
+    /** HTTP base URL of the LSP (the /metevo/* buy and claim routes). */
+    lspApiUrl: z.string().url(),
     /** Bearer token for the LSP /metevo/* routes and the node peer link. */
-    metevoLspBearerToken: z.string().min(1),
+    lspBearerToken: z.string().min(1),
     /** Lightning peer URI of the LSP (pubkey@host:port, from GET /get_info).
      * When present, the gateway connects the peer explicitly before waiting
      * for the LSP's channel-provisioning cron. */

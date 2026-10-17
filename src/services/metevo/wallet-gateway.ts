@@ -213,8 +213,8 @@ function createWdkWalletSessionGateway(): WalletSessionGateway {
     return {
       network: ENV.EXPO_PUBLIC_WALLET_NETWORK,
       dataDir: walletDataDirectory(),
-      lspBaseUrl: device.metevoLspUrl,
-      lspBearerToken: device.metevoLspBearerToken,
+      lspBaseUrl: device.lspApiUrl,
+      lspBearerToken: device.lspBearerToken,
       bitcoindRpcHost: device.bitcoindRpcHost,
       bitcoindRpcPort: device.bitcoindRpcPort,
       bitcoindRpcUsername: device.bitcoindRpcUsername,
