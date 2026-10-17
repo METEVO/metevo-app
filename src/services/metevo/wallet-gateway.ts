@@ -1,7 +1,4 @@
-import { entropyToMnemonic } from '@scure/bip39';
-import { wordlist } from '@scure/bip39/wordlists/english.js';
 import * as FileSystem from 'expo-file-system/legacy';
-import { getRandomValues } from 'expo-crypto';
 
 import { ENV } from '../../config/env';
 
@@ -85,15 +82,16 @@ function createMockWalletSessionGateway(): WalletSessionGateway {
 
 type WdkServiceModule = typeof import('./wallet');
 type SecureStoreModule = typeof import('./secure-store');
+type MnemonicModule = typeof import('./mnemonic');
 
 const CHANNEL_PROVISION_TIMEOUT_MS = 30_000;
 const CHANNEL_POLL_INTERVAL_MS = 2_000;
 
 /**
  * Real mode drives the prepared WDK service functions. The native
- * `@utexo/wdk-rgb-lightning` module is required lazily inside this module:
- * mock mode (Expo Go) never executes the require, so the missing native
- * module cannot crash the app there. Debug APK builds include the module
+ * `@utexo/wdk-rgb-lightning` module and the ESM-only BIP-39 source are
+ * required lazily inside this module: mock mode (Expo Go) and the unit
+ * tests never execute them. Debug APK builds include the native module
  * and can run `EXPO_PUBLIC_WALLET_MODE=wdk`.
  */
 function createWdkWalletSessionGateway(): WalletSessionGateway {
@@ -102,6 +100,7 @@ function createWdkWalletSessionGateway(): WalletSessionGateway {
 
   const loadSecureStore = (): SecureStoreModule => require('./secure-store');
   const loadWdkService = (): WdkServiceModule => require('./wallet');
+  const loadMnemonicSource = (): MnemonicModule => require('./mnemonic');
 
   function walletDataDirectory(): string {
     const base =
@@ -130,7 +129,9 @@ function createWdkWalletSessionGateway(): WalletSessionGateway {
       if (await secureStore.walletExistsOnDevice()) {
         throw new Error('a wallet already exists on this device');
       }
-      await secureStore.createWalletSecurely(generateMnemonicWithDeviceEntropy);
+      await secureStore.createWalletSecurely(
+        () => loadMnemonicSource().generateMnemonicWithDeviceEntropy(),
+      );
     },
     async openWallet(onProgress) {
       const { createMetevoWallet, findAssetIdByTicker, getMetevoWalletStatus } =
@@ -138,6 +139,9 @@ function createWdkWalletSessionGateway(): WalletSessionGateway {
       const secureStore = loadSecureStore();
 
       onProgress('opening-node', 'Opening…');
+      // Hardening rule: reading the stored seed requires a fresh biometric
+      // unlock, strictly before the secure store is touched.
+      await secureStore.authenticateToAccessSecrets('Open your METEVO wallet');
       const mnemonic = await secureStore.readWalletMnemonic();
       if (mnemonic === null) {
         throw new Error('no wallet seed is stored on this device');
@@ -183,11 +187,6 @@ function createWdkWalletSessionGateway(): WalletSessionGateway {
       }
     },
   };
-}
-
-/** 256-bit BIP-39 mnemonic from the platform CSPRNG (expo-crypto). */
-function generateMnemonicWithDeviceEntropy(): string {
-  return entropyToMnemonic(getRandomValues(new Uint8Array(32)), wordlist);
 }
 
 export function createWalletSessionGateway(): WalletSessionGateway {
