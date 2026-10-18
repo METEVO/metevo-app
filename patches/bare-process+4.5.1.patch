@@ -1,31 +1,28 @@
 diff --git a/node_modules/bare-process/index.js b/node_modules/bare-process/index.js
-index 0deb144..b98caf4 100644
+index 0deb144..447f0a8 100644
 --- a/node_modules/bare-process/index.js
 +++ b/node_modules/bare-process/index.js
-@@ -5,7 +5,25 @@ const os = require('bare-os')
+@@ -5,7 +5,22 @@ const os = require('bare-os')
  const env = require('bare-env')
  const hrtime = require('bare-hrtime')
  const stdio = require('bare-stdio')
 -const posix = require('bare-posix')
-+let posix
-+try {
-+  posix = require('bare-posix')
-+} catch {
-+  // bare-posix ships no Android prebuild, so the addon is unavailable on
-+  // the device worklet runtime. Only the uid/gid accessors below need it;
-+  // they fail with a clear error if ever called instead of killing the
-+  // process at startup.
-+  posix = new Proxy(
-+    {},
-+    {
-+      get() {
-+        return () => {
-+          throw new Error('bare-posix is not available on this platform')
-+        }
++// bare-posix ships no Android prebuild, so it cannot be packed or staged.
++// It is only used by the uid/gid accessors below, which the wallet never
++// calls. Do not require it at all (even lazily): a require statement here
++// would pull bare-posix into the packed worklet bundle, whose addon list
++// would then reference a .so that does not exist on device and abort the
++// worklet at link time.
++const posix = new Proxy(
++  {},
++  {
++    get() {
++      return () => {
++        throw new Error('bare-posix is not available on this platform')
 +      }
-+    }
-+  )
-+}
++    },
++  },
++)
  
  class Process extends EventEmitter {
    constructor() {
