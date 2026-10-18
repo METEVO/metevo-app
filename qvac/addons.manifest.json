@@ -1,10 +1,11 @@
 {
   "version": 1,
-  "bundleId": "89f5da15cdb7a5c894070d4c05fbad0f544f4ebab0437dcda55dc4944f085048",
+  "bundleId": "86a0fc6b481d0679e7c290f2cc0a9c8aabc4eb5feaa85d02dfd5a28d5d9f64da",
   "addons": [
     "@qvac/asr-ggml",
     "@qvac/fabric",
     "@qvac/llm-llamacpp",
+    "@qvac/translation-nmtcpp",
     "@qvac/tts-ggml",
     "bare-buffer",
     "bare-cpu-info",
