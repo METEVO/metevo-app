@@ -82,3 +82,108 @@ Before and alongside the hackathon we ran protocol tests in two dedicated reposi
 
 - [wdk-rgb-flow-testing](https://github.com/ABallarini/wdk-rgb-flow-testing) — end-to-end payment flows between an RGB Lightning Node (RLN, driven through its REST API) and Tether's WDK RGB Lightning library acting as an embedded mobile node, automated on regtest and extended to the public UTEXO Signet network: a basic Lightning payment (WDK invoice paid by RLN via REST), an on-chain BTC transfer a complete RGB NIA asset flow.
 - [bitcode](https://github.com/faktotum-project/bitcode) — a terminal coding and Bitcoin agent in Node. multi-provider LLMs (OpenAI, Anthropic, Groq, Ollama, LM Studio), MCP, local skills and custom commands, plus a first integration of QVAC local inference (qvac/bitcode-local), its Bitcoin payment tools are testnet-only and always require explicit human approval.
+
+## Run it: two phones on a local regtest network
+
+Each phone is backed by its own [rgb-lightning-node](https://github.com/RGB-Tools/rgb-lightning-node) (RLN) daemon, reached over its REST API (`EXPO_PUBLIC_WALLET_MODE=remote`). Both nodes, the bitcoind/electrs chain backend and the RGB proxy run in Docker. The app talks to the wallet only through `WalletSessionGateway`. Moving to the on-device node later (`EXPO_PUBLIC_WALLET_MODE=wdk`) changes the env only, not the screens.
+
+| `EXPO_PUBLIC_WALLET_MODE` | Keys live on | Use |
+| --- | --- | --- |
+| `mock` | nowhere (simulated) | Expo Go UI demos |
+| `remote` | the RLN daemon | real payments today, two phones on regtest |
+| `wdk` | the phone (WDK + Bare worklet) | on-device node, pending the upstream Android fix |
+
+### Prerequisites
+
+- Docker with Compose v2, `jq`, `openssl`, `curl` (Linux or WSL).
+- Node 22 and the Android SDK (`adb`). Two Android phones with USB debugging, or one phone plus an emulator.
+- An RLN Docker image built from the same sources as the `openapi.yaml` the app codes against. Images built from June 2026 sources never lock in RGB channels (they stay `Opening`). Sources from September 2026 (`af03c7f`) work:
+
+  ```bash
+  git clone --recurse-submodules https://github.com/RGB-Tools/rgb-lightning-node
+  cd rgb-lightning-node && docker build -t rgb-lightning-node:latest .
+  ```
+
+### 1. Start the regtest stack
+
+```bash
+cd infra/regtest
+./regtest.sh up          # first run writes .env with random secrets (gitignored, mode 600)
+./regtest.sh bootstrap   # init + unlock + fund alice and bob, issue USDM, open alice->bob channel
+./regtest.sh status      # balances, channel, and the adb lines for step 3
+```
+
+- `bootstrap` is idempotent, so a rerun changes nothing. Node mnemonics go to `infra/regtest/.secrets/` (gitignored, mode 600) and are never printed.
+- The channel starts with alice holding 400 USDm and bob 100 USDm, so both phones can pay. You can change this in `.env` (`CHANNEL_*`).
+- Only the two node APIs are published, on `127.0.0.1:3101` (alice) and `127.0.0.1:3102` (bob). They run without authentication, so do not expose them beyond localhost.
+- After a restart (`./regtest.sh down` then `up`), nodes come back locked. Run `./regtest.sh unlock`.
+- `./regtest.sh reset` wipes all chain and node data.
+
+### 2. Configure and install the app (one build for both phones)
+
+Create `.env.local` (gitignored):
+
+```bash
+EXPO_PUBLIC_WALLET_MODE=remote
+EXPO_PUBLIC_RLN_NODE_URL=http://localhost:3001
+EXPO_PUBLIC_WALLET_NETWORK=regtest
+```
+
+Both phones use the same URL. `adb reverse` decides which node each one reaches. Build and install the debug APK on both devices:
+
+```bash
+cd android && NODE_ENV=development ./gradlew :app:assembleDebug -PreactNativeArchitectures=arm64-v8a
+adb -s <ALICE_SERIAL> install -r app/build/outputs/apk/debug/app-debug.apk
+adb -s <BOB_SERIAL>   install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+(An x86_64 emulator needs `-PreactNativeArchitectures=x86_64`.)
+
+### 3. Wire each phone to its own node
+
+```bash
+adb -s <ALICE_SERIAL> reverse tcp:3001 tcp:3101
+adb -s <ALICE_SERIAL> reverse tcp:8081 tcp:8081
+adb -s <BOB_SERIAL>   reverse tcp:3001 tcp:3102
+adb -s <BOB_SERIAL>   reverse tcp:8081 tcp:8081
+```
+
+`adb devices` lists the serials. An emulator also works with `adb reverse`, so use the same lines with its serial.
+
+### 4. Start Metro and open the wallets
+
+```bash
+npx expo start --port 8081 --clear   # --clear after any .env.local change: EXPO_PUBLIC_* is inlined
+```
+
+On each phone, go through Language → Theme → **Sign in** → select "Remote node" → **Open wallet**, then pass the biometric prompt. The home shell shows that node's real balances. Alice starts at 400.00 USDm and bob at 100.00 USDm, with "Wallet connected" in the header.
+
+### 5. Pay between the two wallets
+
+```bash
+cd infra/regtest
+INVOICE=$(./regtest.sh invoice bob 100000000)   # 1 USDm (precision 8)
+./regtest.sh pay alice "$INVOICE"
+```
+
+Both phones show the new balances within one poll (`EXPO_PUBLIC_WALLET_STATUS_POLL_MS`, default 10 s). The same flow runs through the app's gateway code in an automated test:
+
+```bash
+METEVO_IT_ALICE_URL=http://127.0.0.1:3101 METEVO_IT_BOB_URL=http://127.0.0.1:3102 npx jest tests/integration
+```
+
+Phone-to-phone sending from inside the app is not wired for this two-node setup yet. The voice Send flow needs the LSP invoice relay, and the NFC in-person card has no trigger. Use `regtest.sh invoice`/`pay` to move funds for now.
+
+### 6. Offline behaviour
+
+When a phone's node is unreachable, for example after `docker compose stop rln-alice`, the header reads "Wallet node unreachable". The home screen keeps the last known balances and disables Receive. When the node is back (`start` + `./regtest.sh unlock`), the next poll restores everything without reopening the wallet.
+
+### Remote node with authentication (beyond local testing)
+
+Put the node behind HTTPS (required: the env schema rejects `http://` when `EXPO_PUBLIC_METEVO_ENV=prod`). Start it with `--root-public-key` and mint a biscuit token per phone. The token is never put in `.env`, because `EXPO_PUBLIC_*` values ship inside the APK. Provision it into the app sandbox instead:
+
+```bash
+RLN_NODE_BEARER_TOKEN=<token> ANDROID_SERIAL=<serial> node scripts/push-remote-node-token.cjs
+```
+
+The node holds the keys, so anyone who can reach its API controls the wallet.
