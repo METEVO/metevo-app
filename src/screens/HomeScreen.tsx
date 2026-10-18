@@ -13,7 +13,6 @@ import { OpeningSplash } from '../components/onboarding/OpeningSplash';
 import { ThemeOptions } from '../components/onboarding/ThemeOptions';
 import { WalletSelector } from '../components/onboarding/WalletSelector';
 import { ActionButton } from '../components/ui/ActionButton';
-import { MOCK_TRANSACTIONS } from '../components/mocks';
 import { layout, scale } from '../components/styles';
 import {
   useTheme,
@@ -184,7 +183,10 @@ function HomeShell({ session }: { session: WalletSession }) {
           />
         </View>
 
-        <TransactionList transactions={MOCK_TRANSACTIONS} />
+        {/* TODO: wire real transaction history once the gateway exposes
+            it; a freshly opened wallet has none, so this starts empty
+            rather than showing fixture data. */}
+        <TransactionList transactions={[]} />
 
         <DynamicFrame
           intent={intent}

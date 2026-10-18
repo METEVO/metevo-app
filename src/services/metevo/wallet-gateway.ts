@@ -89,10 +89,10 @@ export interface WalletSessionGateway {
 
 type SecureStoreModule = typeof import('./secure-store');
 
-/** Fixed demo values so mock-mode screens show the design's example data. */
+/** Deterministic demo pubkey; a freshly opened mock wallet is otherwise
+ * empty (0 USDm, 0 sats, no transactions) like a real first-time wallet. */
 const MOCK_NODE_PUBKEY =
   '020000000000000000000000000000000000000000000000000000000000000001';
-const MOCK_BALANCE_USDM_BASE_UNITS = 2_000_000_000; // 20.00 USDm at precision 8
 
 const MOCK_STEP_DELAY_MS = 700;
 const MOCK_PAYMENT_HASH =
@@ -156,8 +156,8 @@ function createMockWalletSessionGateway(): WalletSessionGateway {
     async readStatus() {
       return {
         nodePubkey: opened ? MOCK_NODE_PUBKEY : null,
-        btcSpendableSat: opened ? 0 : 0,
-        balanceUsdmBaseUnits: opened ? MOCK_BALANCE_USDM_BASE_UNITS : null,
+        btcSpendableSat: 0,
+        balanceUsdmBaseUnits: opened ? 0 : null,
         channelReady: opened,
       };
     },

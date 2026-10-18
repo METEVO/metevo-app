@@ -25,20 +25,26 @@ export function TransactionList({ transactions }: TransactionListProps) {
   return (
     <View style={styles.card}>
       <Text style={theme.typography.caption}>LAST TRANSACTIONS</Text>
-      <FlatList
-        data={transactions.slice(0, 3)}
-        keyExtractor={(item) => item.id}
-        scrollEnabled={false}
-        renderItem={({ item }) => (
-          <View style={styles.row}>
-            <View style={styles.main}>
-              <Text style={styles.title}>{item.title}</Text>
-              <Text style={theme.typography.caption}>{item.detail}</Text>
+      {transactions.length === 0 ? (
+        <Text style={theme.typography.caption}>
+          No transactions yet. Receive or send money to see activity here.
+        </Text>
+      ) : (
+        <FlatList
+          data={transactions.slice(0, 3)}
+          keyExtractor={(item) => item.id}
+          scrollEnabled={false}
+          renderItem={({ item }) => (
+            <View style={styles.row}>
+              <View style={styles.main}>
+                <Text style={styles.title}>{item.title}</Text>
+                <Text style={theme.typography.caption}>{item.detail}</Text>
+              </View>
+              <Text style={styles.amount}>{item.amount}</Text>
             </View>
-            <Text style={styles.amount}>{item.amount}</Text>
-          </View>
-        )}
-      />
+          )}
+        />
+      )}
     </View>
   );
 }
