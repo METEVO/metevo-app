@@ -17,6 +17,12 @@ export function describeWalletError(cause: unknown): string {
       return 'The wallet configuration has not been provisioned on this device.';
     case 'MetevoLspError':
       return 'The METEVO LSP could not be reached. Try again.';
+    case 'RlnUnreachableError':
+      return 'Your wallet node could not be reached. Check the connection and try again.';
+    case 'RlnApiError':
+      return (cause as { errorName?: string }).errorName === 'LockedNode'
+        ? 'Your wallet node is locked. Unlock it, then try again.'
+        : 'Your wallet node rejected the request. Try again.';
     default:
       return 'Something went wrong. Try again.';
   }

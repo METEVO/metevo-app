@@ -1,3 +1,4 @@
+import { RlnApiError, RlnUnreachableError } from '../../src/services/metevo/rlnRestClient';
 import { describeWalletError } from '../../src/utils/walletErrors';
 
 function errorNamed(name: string, message: string): Error {
@@ -20,6 +21,18 @@ describe('describeWalletError', () => {
     expect(
       describeWalletError(errorNamed('MetevoLspError', 'HTTP 500: raw server body')),
     ).toBe('The METEVO LSP could not be reached. Try again.');
+  });
+
+  test('maps remote node failures to fixed text', () => {
+    expect(
+      describeWalletError(new RlnUnreachableError('/nodeinfo', 'timed out')),
+    ).toBe('Your wallet node could not be reached. Check the connection and try again.');
+    expect(describeWalletError(new RlnApiError('/nodeinfo', 403, 'LockedNode'))).toBe(
+      'Your wallet node is locked. Unlock it, then try again.',
+    );
+    expect(describeWalletError(new RlnApiError('/sendpayment', 400, 'InsufficientAssets'))).toBe(
+      'Your wallet node rejected the request. Try again.',
+    );
   });
 
   test('never renders the raw error message', () => {
