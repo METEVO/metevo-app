@@ -4,6 +4,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import AttentionVoice from '../../assets/voice_attention_dark.svg';
 import ProcessingVoice from '../../assets/voice_processing_dark.svg';
 import SuccessVoice from '../../assets/voice_success_dark.svg';
+import { InPersonPaymentCard } from './InPersonPaymentCard';
 import {
   MetevoTheme,
   useTheme,
@@ -58,16 +59,27 @@ const NEW_REVIEW_ACTION = 'New review';
  * Design sections 20/21: full payment review, then an explicit one-shot
  * confirmation. Without a valid voice payload this renders the demo
  * proposal; with one, the remote LSP-relayed payment flow takes over.
+ * "Pay in person" switches to the NFC + Wi-Fi Direct local flow.
  */
 export function SendPaymentCard(props: IntentCardProps) {
+  const [inPerson, setInPerson] = useState(false);
   const voiceIntent = useMemo(
     () => parseVoicePaymentIntent(props.payload),
     [props.payload],
   );
-  if (voiceIntent === null) {
-    return <DemoSendPaymentCard {...props} />;
+  if (inPerson) {
+    return <InPersonPaymentCard {...props} />;
   }
-  return <VoiceSendPaymentCard intent={voiceIntent} {...props} />;
+  if (voiceIntent === null) {
+    return <DemoSendPaymentCard {...props} onPayInPerson={() => setInPerson(true)} />;
+  }
+  return (
+    <VoiceSendPaymentCard
+      intent={voiceIntent}
+      {...props}
+      onPayInPerson={() => setInPerson(true)}
+    />
+  );
 }
 
 /**
@@ -77,7 +89,8 @@ export function SendPaymentCard(props: IntentCardProps) {
 function VoiceSendPaymentCard({
   intent,
   onClearIntent,
-}: { intent: PaymentVoiceIntent } & IntentCardProps) {
+  onPayInPerson,
+}: { intent: PaymentVoiceIntent } & IntentCardProps & { onPayInPerson?: () => void }) {
   const styles = useThemedStyles(makeStyles);
   const { stage, proposal, note, start, confirm, cancel } = usePaymentFlow();
 
@@ -202,6 +215,11 @@ function VoiceSendPaymentCard({
             grow
           />
         </View>
+        <ActionButton
+          label="Pay in person instead"
+          variant="outlined"
+          onPress={() => onPayInPerson?.()}
+        />
       </View>
     );
   }
@@ -232,7 +250,10 @@ function shortenInvoice(invoice: string): string {
  * Demo path (no voice payload): the section 20/21 storyboard with the
  * clearly-marked fake proposal, polling checkPayment for the outcome.
  */
-function DemoSendPaymentCard({ onClearIntent }: IntentCardProps) {
+function DemoSendPaymentCard({
+  onClearIntent,
+  onPayInPerson,
+}: IntentCardProps & { onPayInPerson?: () => void }) {
   const theme = useTheme();
   const styles = useThemedStyles(makeStyles);
   const { submitPayment, checkPayment } = useWalletSession();
@@ -385,6 +406,11 @@ function DemoSendPaymentCard({ onClearIntent }: IntentCardProps) {
         <ActionButton label="Cancel" variant="outlined" onPress={() => setStage('review')} grow />
         <ActionButton label="Confirm payment" variant="primary" onPress={() => void confirm()} grow />
       </View>
+      <ActionButton
+        label="Pay in person"
+        variant="outlined"
+        onPress={() => onPayInPerson?.()}
+      />
     </View>
   );
 }
