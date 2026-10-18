@@ -11,6 +11,7 @@ import com.facebook.react.ReactHost
 import com.facebook.react.common.ReleaseLevel
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint
 
+import app.metevo.wallet.localelink.MetevoLocalLinkPackage
 import expo.modules.ApplicationLifecycleDispatcher
 import expo.modules.ExpoReactHostFactory
 import to.holepunch.bare.kit.react.BareKitPackage
@@ -29,6 +30,8 @@ class MainApplication : Application(), ReactApplication {
           // TurboModule - register it manually (BareKitPackage also loads
           // libbare-kit.so from its static initializer).
           add(BareKitPackage())
+          // METEVO local link (NFC tag + Wi-Fi Direct group + socket).
+          add(MetevoLocalLinkPackage())
         }
     )
   }
