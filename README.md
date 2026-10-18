@@ -17,7 +17,7 @@ Financial-inclusion tools often fail because they replicate desktop paradigms on
 
 - React Native + Expo
 - Working today: the complete single-screen wireframe app runs on Android through Expo Go, the TypeScript typecheck passes with zero errors and recordings are stored as .m4a.
-- Not yet wired (by design, seams are prepared): real RGB transfers, on-device QVAC voice-to-intent, TTS read-back
+- Not yet wired (by design, seams are prepared): real RGB transfers. The on-device QVAC voice pipeline (STT -> intent agents -> validation -> TTS read-back) is implemented on branch `feat/qvac-voice-pipeline` in `metevo-app-voice`; see `changes_overview_qvac-voice-pipeline.md`.
 
 ## RGB Lighting Stack used
 
