@@ -7,10 +7,12 @@ import {
 } from './deviceConfig';
 import {
   authenticateToAccessSecrets,
-  createWalletSecurely,
-  readWalletMnemonic,
+  createWalletEntry,
+  listWallets,
+  readWalletMnemonicById,
   walletExistsOnDevice,
 } from './secure-store';
+import type { StoredWalletMeta } from './wallet-gateway';
 import type { MetevoPaymentStatus } from './paymentGuard';
 import type {
   WalletProgressListener,
@@ -125,23 +127,25 @@ export function createBareWalletSessionGateway(): WalletSessionGateway {
   }
 
   return {
+    async listWallets(): Promise<StoredWalletMeta[]> {
+      return listWallets();
+    },
     async hasStoredWallet() {
       return walletExistsOnDevice();
     },
-    async createWallet() {
-      if (await walletExistsOnDevice()) {
-        throw new Error('a wallet already exists on this device');
-      }
+    async createWallet(name) {
       // Lazy require: the ESM-only BIP-39 source must never load at module
       // import time (mock mode, Expo Go and the unit tests skip it).
       const mnemonicSource = require('./mnemonic') as typeof import('./mnemonic');
-      await createWalletSecurely(() => mnemonicSource.generateMnemonicWithDeviceEntropy());
+      return createWalletEntry(name, () =>
+        mnemonicSource.generateMnemonicWithDeviceEntropy(),
+      );
     },
-    async openWallet(onProgress) {
+    async openWallet(walletId: string, onProgress) {
       progressListener = onProgress;
       try {
         await authenticateToAccessSecrets('Open your METEVO wallet');
-        const mnemonic = await readWalletMnemonic();
+        const mnemonic = await readWalletMnemonicById(walletId);
         if (mnemonic === null) {
           throw new Error('no wallet seed is stored on this device');
         }

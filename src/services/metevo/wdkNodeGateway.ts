@@ -38,20 +38,20 @@ export function createWdkWalletSessionGateway(): WalletSessionGateway {
   }
 
   return {
+    async listWallets() {
+      return loadSecureStore().listWallets();
+    },
     async hasStoredWallet() {
       const secureStore = loadSecureStore();
       return secureStore.walletExistsOnDevice();
     },
-    async createWallet() {
-      const secureStore = loadSecureStore();
-      if (await secureStore.walletExistsOnDevice()) {
-        throw new Error('a wallet already exists on this device');
-      }
-      await secureStore.createWalletSecurely(
+    async createWallet(name) {
+      return loadSecureStore().createWalletEntry(
+        name,
         () => loadMnemonicSource().generateMnemonicWithDeviceEntropy(),
       );
     },
-    async openWallet(onProgress: WalletProgressListener) {
+    async openWallet(walletId: string, onProgress: WalletProgressListener) {
       const { createMetevoWallet, findAssetIdByTicker, getMetevoWalletStatus } =
         loadWdkService();
       const secureStore = loadSecureStore();
@@ -61,7 +61,7 @@ export function createWdkWalletSessionGateway(): WalletSessionGateway {
       // Hardening rule: reading the stored seed requires a fresh biometric
       // unlock, strictly before the secure store is touched.
       await secureStore.authenticateToAccessSecrets('Open your METEVO wallet');
-      const mnemonic = await secureStore.readWalletMnemonic();
+      const mnemonic = await secureStore.readWalletMnemonicById(walletId);
       if (mnemonic === null) {
         throw new Error('no wallet seed is stored on this device');
       }

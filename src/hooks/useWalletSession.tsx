@@ -12,6 +12,7 @@ import { ThemeMode, useThemePreference } from '../design/ThemeContext';
 import {
   PaymentNetworkStatus,
   PaymentProposal,
+  StoredWalletMeta,
   SubmittedPayment,
   WalletSessionGateway,
   WalletSessionSnapshot,
@@ -55,12 +56,17 @@ export interface WalletSession {
   progressMessage: string | null;
   errorMessage: string | null;
   wallet: WalletSessionSnapshot | null;
+  /** The named wallets stored on this device (refreshed on the wallet phase). */
+  wallets: StoredWalletMeta[];
+  /** The wallet picked in the selector; null until chosen. */
+  selectedWalletId: string | null;
   continueOpening(): void;
   chooseLanguage(language: UiLanguage): void;
   continueLanguage(): void;
   chooseTheme(theme: UiTheme): void;
   continueTheme(): void;
-  createWallet(): Promise<void>;
+  createWallet(name: string): Promise<void>;
+  chooseWallet(id: string): void;
   requestSignIn(): void;
   openWallet(): Promise<void>;
   refreshWallet(): Promise<void>;
@@ -93,6 +99,8 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
   const [progressMessage, setProgressMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [wallet, setWallet] = useState<WalletSessionSnapshot | null>(null);
+  const [wallets, setWallets] = useState<StoredWalletMeta[]>([]);
+  const [selectedWalletId, setSelectedWalletId] = useState<string | null>(null);
 
   const withGateway = useCallback(
     <T,>(run: (gateway: WalletSessionGateway) => Promise<T>): Promise<T> => {
@@ -122,30 +130,42 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
 
   const continueTheme = useCallback(() => setPhase('account'), []);
 
-  const createWallet = useCallback(async () => {
-    setErrorMessage(null);
-    setSetupStep('creating-secret');
-    try {
-      await withGateway((gateway) => gateway.createWallet());
-      setSetupStep('idle');
-      setPhase('wallet');
-    } catch (cause) {
-      console.log(
-        '[metevo] wallet setup failed:',
-        cause instanceof Error ? cause.name : 'unknown',
-      );
-      setSetupStep('idle');
-      setErrorMessage(describeWalletError(cause));
-    }
+  const createWallet = useCallback(
+    async (name: string) => {
+      setErrorMessage(null);
+      setSetupStep('creating-secret');
+      try {
+        const entry = await withGateway((gateway) => gateway.createWallet(name));
+        setSelectedWalletId(entry.id);
+        setWallets(await withGateway((gateway) => gateway.listWallets()));
+        setSetupStep('idle');
+        setPhase('wallet');
+      } catch (cause) {
+        console.log(
+          '[metevo] wallet setup failed:',
+          cause instanceof Error ? cause.name : 'unknown',
+        );
+        setSetupStep('idle');
+        setErrorMessage(describeWalletError(cause));
+      }
+    },
+    [withGateway],
+  );
+
+  const requestSignIn = useCallback(() => {
+    void withGateway((gateway) => gateway.listWallets()).then((list) =>
+      setWallets(list),
+    );
+    setPhase('wallet');
   }, [withGateway]);
 
-  const requestSignIn = useCallback(() => setPhase('wallet'), []);
+  const chooseWallet = useCallback((id: string) => setSelectedWalletId(id), []);
 
   const openWallet = useCallback(async () => {
     setErrorMessage(null);
     try {
       await withGateway((gateway) =>
-        gateway.openWallet((step, message) => {
+        gateway.openWallet(selectedWalletId ?? '', (step, message) => {
           setSetupStep(step);
           setProgressMessage(message);
         }),
@@ -160,7 +180,7 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       setSetupStep('idle');
       setErrorMessage(describeWalletError(cause));
     }
-  }, [withGateway]);
+  }, [selectedWalletId, withGateway]);
 
   const refreshWallet = useCallback(async () => {
     setWallet(await withGateway((gateway) => gateway.readStatus()));
@@ -171,7 +191,14 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
     [withGateway],
   );
 
-  const reopenPhase = useCallback((target: SessionPhase) => setPhase(target), []);
+  const reopenPhase = useCallback((target: SessionPhase) => {
+    setPhase(target);
+    if (target === 'wallet') {
+      void withGateway((gateway) => gateway.listWallets()).then((list) =>
+        setWallets(list),
+      );
+    }
+  }, [withGateway]);
 
   const submitPayment = useCallback(
     (proposal: PaymentProposal) =>
@@ -194,12 +221,15 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       progressMessage,
       errorMessage,
       wallet,
+      wallets,
+      selectedWalletId,
       continueOpening,
       chooseLanguage,
       continueLanguage,
       chooseTheme,
       continueTheme,
       createWallet,
+      chooseWallet,
       requestSignIn,
       openWallet,
       refreshWallet,
@@ -216,12 +246,15 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       progressMessage,
       errorMessage,
       wallet,
+      wallets,
+      selectedWalletId,
       continueOpening,
       chooseLanguage,
       continueLanguage,
       chooseTheme,
       continueTheme,
       createWallet,
+      chooseWallet,
       requestSignIn,
       openWallet,
       refreshWallet,

@@ -25,8 +25,15 @@ let mockDeviceConfigContent = JSON.stringify(DEVICE_CONFIG_FIXTURE);
 jest.mock('../../src/services/metevo/secure-store', () => ({
   SecureWalletStoreError: class SecureWalletStoreError extends Error {},
   authenticateToAccessSecrets: jest.fn().mockResolvedValue(undefined),
-  createWalletSecurely: jest.fn().mockResolvedValue(undefined),
-  readWalletMnemonic: jest.fn().mockResolvedValue('fake test seed, never a real one'),
+  createWalletEntry: jest.fn(async (name: string) => ({
+    id: 'w-test',
+    name,
+    createdAt: new Date().toISOString(),
+  })),
+  readWalletMnemonicById: jest.fn().mockResolvedValue('fake test seed, never a real one'),
+  listWallets: jest.fn(async () => [
+    { id: 'w-test', name: 'Everyday wallet', createdAt: new Date().toISOString() },
+  ]),
   walletExistsOnDevice: jest.fn().mockResolvedValue(false),
   deviceSupportsBiometrics: jest.fn().mockResolvedValue(true),
 }));
@@ -97,7 +104,7 @@ async function openGatewayWithAccount(account: Record<string, jest.Mock>) {
   });
   const { createWalletSessionGateway } = loadGateway('wdk');
   const gateway = createWalletSessionGateway();
-  const opening = gateway.openWallet(() => undefined);
+  const opening = gateway.openWallet('w-test', () => undefined);
   await jest.advanceTimersByTimeAsync(60_000);
   await opening;
   return gateway;
@@ -153,7 +160,7 @@ describe('mock payment sequence', () => {
   test('stays pending first, then settles, never guessing', async () => {
     const { createWalletSessionGateway } = loadGateway('mock');
     const gateway = createWalletSessionGateway();
-    const creating = gateway.createWallet();
+    const creating = gateway.createWallet('Everyday wallet');
     await jest.advanceTimersByTimeAsync(5_000);
     await creating;
 

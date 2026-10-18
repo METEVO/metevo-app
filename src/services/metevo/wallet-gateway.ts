@@ -1,5 +1,8 @@
 import { ENV } from '../../config/env';
 import { createBareWalletSessionGateway } from './bareGateway';
+import type { StoredWalletMeta } from './secure-store';
+
+export type { StoredWalletMeta };
 
 // Single source of truth lives in paymentGuard.ts (the worklet imports the
 // same compiled module); re-exported here to keep the established import
@@ -50,12 +53,18 @@ export interface SubmittedPayment {
 export type PaymentNetworkStatus = 'pending' | 'settled' | 'failed' | 'unknown';
 
 export interface WalletSessionGateway {
-  /** Whether this device already holds a stored wallet seed. */
+  /** The named wallets stored on this device (metadata only, no seeds). */
+  listWallets(): Promise<StoredWalletMeta[]>;
+  /** Whether this device already holds at least one stored wallet seed. */
   hasStoredWallet(): Promise<boolean>;
-  /** Generate the seed, gate it behind device biometrics and store it. */
-  createWallet(): Promise<void>;
-  /** Unlock the node, connect to the LSP and wait for channel provisioning. */
-  openWallet(onProgress: WalletProgressListener): Promise<void>;
+  /** Generate a new seed behind device biometrics and store it by name. */
+  createWallet(name: string): Promise<StoredWalletMeta>;
+  /** Unlock the named wallet's node, connect to the LSP and wait for
+   * channel provisioning. */
+  openWallet(
+    walletId: string,
+    onProgress: WalletProgressListener,
+  ): Promise<void>;
   readStatus(): Promise<WalletSessionSnapshot>;
   /** Submit the proposal exactly once; the caller owns confirmation UX. */
   submitPayment(proposal: PaymentProposal): Promise<SubmittedPayment>;
@@ -83,16 +92,19 @@ function waitFor(ms: number): Promise<void> {
 
 function createMockWalletSessionGateway(): WalletSessionGateway {
   const loadSecureStore = (): SecureStoreModule => require('./secure-store');
-  let created = false;
+  const wallets: StoredWalletMeta[] = [];
   let opened = false;
   let submittedHash: string | null = null;
   let checkCount = 0;
 
   return {
-    async hasStoredWallet() {
-      return created;
+    async listWallets() {
+      return [...wallets];
     },
-    async createWallet() {
+    async hasStoredWallet() {
+      return wallets.length > 0;
+    },
+    async createWallet(name) {
       // Demo fidelity: run the real biometric prompt when the device has
       // enrolled credentials, without storing anything (mock mode never
       // touches the secure store).
@@ -101,11 +113,17 @@ function createMockWalletSessionGateway(): WalletSessionGateway {
         await secureStore.authenticateToAccessSecrets('Set up your METEVO wallet');
       }
       await waitFor(MOCK_STEP_DELAY_MS);
-      created = true;
+      const entry: StoredWalletMeta = {
+        id: `mock-${wallets.length + 1}`,
+        name: name.trim().length > 0 ? name.trim() : 'Everyday wallet',
+        createdAt: new Date().toISOString(),
+      };
+      wallets.push(entry);
+      return entry;
     },
-    async openWallet(onProgress) {
-      if (!created) {
-        throw new Error('no wallet was created on this device');
+    async openWallet(walletId, onProgress) {
+      if (!wallets.some((wallet) => wallet.id === walletId)) {
+        throw new Error('no wallet with that id exists on this device');
       }
       onProgress('opening-node', 'Opening…');
       await waitFor(MOCK_STEP_DELAY_MS);
@@ -164,11 +182,11 @@ export function createWalletSessionGateway(): WalletSessionGateway {
   // Single-flight guard: concurrent createWallet calls (double-tap before
   // the UI disables the button) must not race the check-then-act seed
   // storage and silently overwrite one generated mnemonic.
-  let creation: Promise<void> | null = null;
+  let creation: Promise<StoredWalletMeta> | null = null;
   return {
     ...gateway,
-    createWallet() {
-      creation ??= gateway.createWallet().finally(() => {
+    createWallet(name: string) {
+      creation ??= gateway.createWallet(name).finally(() => {
         creation = null;
       });
       return creation;

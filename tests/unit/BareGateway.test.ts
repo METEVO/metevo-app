@@ -5,8 +5,15 @@ jest.mock('expo-file-system/legacy', () => ({
 jest.mock('../../src/services/metevo/secure-store', () => ({
   SecureWalletStoreError: class SecureWalletStoreError extends Error {},
   authenticateToAccessSecrets: jest.fn().mockResolvedValue(undefined),
-  createWalletSecurely: jest.fn().mockResolvedValue(undefined),
-  readWalletMnemonic: jest.fn().mockResolvedValue('fake test seed, never a real one'),
+  createWalletEntry: jest.fn(async (name: string) => ({
+    id: 'w-test',
+    name,
+    createdAt: new Date().toISOString(),
+  })),
+  readWalletMnemonicById: jest.fn().mockResolvedValue('fake test seed, never a real one'),
+  listWallets: jest.fn(async () => [
+    { id: 'w-test', name: 'Everyday wallet', createdAt: new Date().toISOString() },
+  ]),
   walletExistsOnDevice: jest.fn().mockResolvedValue(false),
   deviceSupportsBiometrics: jest.fn().mockResolvedValue(true),
 }));
@@ -67,7 +74,7 @@ const originalFetch = global.fetch;
 beforeEach(() => {
   mockDeviceConfigContent = JSON.stringify(DEVICE_CONFIG_FIXTURE);
   mockedSecureStore.authenticateToAccessSecrets.mockClear();
-  mockedSecureStore.readWalletMnemonic.mockClear();
+  mockedSecureStore.readWalletMnemonicById.mockClear();
   // Scoped stub: jest.restoreAllMocks would also strip the implementations
   // of the global setup-file mocks (Worklet, resolveAssetSource).
   (global as { fetch: unknown }).fetch = jest.fn(async () => ({
@@ -84,7 +91,9 @@ describe('bare gateway ipc bridge', () => {
     const gateway = createBareWalletSessionGateway();
     const progressSteps: string[] = [];
 
-    const opening = gateway.openWallet((step) => progressSteps.push(step));
+    const opening = gateway.openWallet('w-test', (step) =>
+      progressSteps.push(step),
+    );
     await flushMicrotasks();
 
     const worklet = lastWorklet();

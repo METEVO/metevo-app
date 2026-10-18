@@ -30,8 +30,15 @@ jest.mock('expo-crypto', () => ({
 jest.mock('../../src/services/metevo/secure-store', () => ({
   SecureWalletStoreError: class SecureWalletStoreError extends Error {},
   authenticateToAccessSecrets: jest.fn().mockResolvedValue(undefined),
-  createWalletSecurely: jest.fn().mockResolvedValue(undefined),
-  readWalletMnemonic: jest.fn().mockResolvedValue('fake test seed, never a real one'),
+  createWalletEntry: jest.fn(async (name: string) => ({
+    id: 'w-test',
+    name,
+    createdAt: new Date().toISOString(),
+  })),
+  readWalletMnemonicById: jest.fn().mockResolvedValue('fake test seed, never a real one'),
+  listWallets: jest.fn(async () => [
+    { id: 'w-test', name: 'Everyday wallet', createdAt: new Date().toISOString() },
+  ]),
   walletExistsOnDevice: jest.fn().mockResolvedValue(false),
   deviceSupportsBiometrics: jest.fn().mockResolvedValue(true),
 }));
@@ -95,7 +102,7 @@ describe('payment submission guard', () => {
     const gateway = createWalletSessionGateway();
 
     jest.useFakeTimers();
-    const opening = gateway.openWallet(() => undefined);
+    const opening = gateway.openWallet('w-test', () => undefined);
     await jest.advanceTimersByTimeAsync(60_000);
     await opening;
 
@@ -116,13 +123,13 @@ describe('wallet creation single-flight', () => {
     const gateway = createWalletSessionGateway();
 
     jest.useFakeTimers();
-    const first = gateway.createWallet();
-    const second = gateway.createWallet();
+    const first = gateway.createWallet('Everyday wallet');
+    const second = gateway.createWallet('Everyday wallet');
     expect(second).toBe(first);
     await jest.advanceTimersByTimeAsync(5_000);
     await Promise.all([first, second]);
 
-    const third = gateway.createWallet();
+    const third = gateway.createWallet('Savings wallet');
     expect(third).not.toBe(first);
     await jest.advanceTimersByTimeAsync(5_000);
     await third;
@@ -133,7 +140,7 @@ describe('wallet gateway open path', () => {
   beforeEach(() => {
     jest.useFakeTimers();
     mockedSecureStore.authenticateToAccessSecrets.mockClear();
-    mockedSecureStore.readWalletMnemonic.mockClear();
+    mockedSecureStore.readWalletMnemonicById.mockClear();
     (WalletManagerRgbLightning as unknown as jest.Mock).mockClear();
   });
 
@@ -146,14 +153,14 @@ describe('wallet gateway open path', () => {
     const { createWalletSessionGateway } = loadGatewayWithMode('wdk');
     const gateway = createWalletSessionGateway();
 
-    const opening = gateway.openWallet(() => undefined);
+    const opening = gateway.openWallet('w-test', () => undefined);
     await jest.advanceTimersByTimeAsync(60_000);
     await opening;
 
     const authOrder =
       mockedSecureStore.authenticateToAccessSecrets.mock.invocationCallOrder[0];
     const readOrder =
-      mockedSecureStore.readWalletMnemonic.mock.invocationCallOrder[0];
+      mockedSecureStore.readWalletMnemonicById.mock.invocationCallOrder[0];
     expect(authOrder).toBeDefined();
     expect(readOrder).toBeDefined();
     expect(authOrder).toBeLessThan(readOrder);
