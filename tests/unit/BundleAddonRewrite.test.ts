@@ -4,7 +4,9 @@ const LIB_DIR = '/data/app/~~t/app.metevo.wallet-t/lib/arm64';
 
 function pack(header: Record<string, unknown>, blob = '{}'): string {
   const json = JSON.stringify(header);
-  return String(json.length + 1) + '\n' + json + blob;
+  // Match bare-bundle v0's real output: "<len>\n<JSON>\n<blob>", where the
+  // prefix length counts the leading newline + JSON + separator newline.
+  return String(json.length + 2) + '\n' + json + '\n' + blob;
 }
 
 function headerWithAddon(addon: string): Record<string, unknown> {
@@ -58,11 +60,47 @@ describe('rewriteLinkedAddons', () => {
     const { source } = rewriteLinkedAddons(original, LIB_DIR);
 
     expect(source.endsWith('BLOB-CONTENT')).toBe(true);
+    // The prefix counts the leading newline + JSON + separator newline,
+    // and the blob starts exactly after them.
     const newlineIndex = source.indexOf('\n');
     const headerLength = Number(source.slice(0, newlineIndex));
-    // The prefix counts the newline plus the header JSON, and the blob
-    // starts exactly after them.
     expect(source[newlineIndex + headerLength]).toBe('B');
+  });
+
+  test('round-trips a real bare-pack bundle without corrupting file bytes', () => {
+    // Simulate bare-bundle v0 exactly: files are byte-addressed slices of
+    // the blob, so a wrong blob start shifts every file by one byte.
+    const fileA = '{"name":"a","version":"1.0.0"}';
+    const fileB = '{"name":"b","version":"2.0.0"}';
+    const blob = fileA + fileB;
+    const header = {
+      version: 0,
+      id: null,
+      main: '/a.json',
+      imports: {},
+      resolutions: {
+        '/a.json': { '#package': '/package.json', 'bare-type': { addon: 'linked:libbare-type.1.4.0.so' } },
+      },
+      addons: ['linked:libbare-type.1.4.0.so'],
+      assets: [],
+      files: {
+        '/a.json': { offset: 0, length: fileA.length, mode: 420 },
+        '/b.json': { offset: fileA.length, length: fileB.length, mode: 420 },
+      },
+    };
+    const original = pack(header, blob);
+    const { source } = rewriteLinkedAddons(original, LIB_DIR);
+
+    // Re-read the rewritten bundle the way bare-bundle does and confirm
+    // both files still parse byte-for-byte.
+    const nl = source.indexOf('\n');
+    const len = Number(source.slice(0, nl));
+    const parsedHeader = JSON.parse(source.slice(nl, nl + len));
+    const blobStart = nl + len;
+    const read = (p: string) =>
+      source.slice(blobStart + parsedHeader.files[p].offset, blobStart + parsedHeader.files[p].offset + parsedHeader.files[p].length);
+    expect(read('/a.json')).toBe(fileA);
+    expect(read('/b.json')).toBe(fileB);
   });
 
   test('trims a trailing slash from the library dir', () => {

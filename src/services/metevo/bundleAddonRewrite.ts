@@ -114,10 +114,20 @@ export function rewriteLinkedAddons(
   }
 
   const newHeader = JSON.stringify(header)
+
+  // bare-bundle v0 stores a bundle as "<len>\n<JSON>\n<blob>", where the
+  // prefix length counts the leading newline, the JSON, and the separator
+  // newline before the blob (len = JSON.length + 2). Re-serializing the
+  // header changes its length, so recompute the prefix and re-emit the
+  // separator, slicing the blob from after it. Slicing from jsonEnd
+  // (instead of jsonEnd + 1) would leak the separator newline into the
+  // blob and shift every file offset by one byte.
+  const blobStart = bundleSource[jsonEnd] === '\n' ? jsonEnd + 1 : jsonEnd
   const source =
-    String(newHeader.length + 1) +
+    String(newHeader.length + 2) +
     '\n' +
     newHeader +
-    bundleSource.slice(jsonEnd)
+    '\n' +
+    bundleSource.slice(blobStart)
   return { source, rewritten }
 }
