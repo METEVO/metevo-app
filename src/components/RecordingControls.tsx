@@ -14,10 +14,8 @@ import { chooseArchiveDirectory } from '../utils/recordingArchive';
 import { layout } from './styles';
 
 interface RecordingControlsProps {
-  /**
-   * Called once per finished recording with its file uri (or null on
-   * failure). TODO(phase 2): hand over to the QVAC voice-to-intent pipeline.
-   */
+  /** Called once per finished recording with its file uri (or null on
+   * failure). The home shell hands it to the QVAC voice pipeline. */
   onRecordingComplete: (recordingUri: string | null) => void;
 }
 
