@@ -8,6 +8,7 @@ import {
   MetevoPaymentStatus,
   PaymentValidationError,
 } from './paymentGuard';
+import { TransferInfo } from './transferWatcher';
 
 export {
   assertPayableInvoice,
@@ -149,6 +150,58 @@ export async function createUsdmReceiveInvoice(
     throw new Error('createRgbInvoice returned no invoice');
   }
   return { invoice, kind: aware ? 'witness' : 'blind' };
+}
+
+/**
+ * Advance the node's RGB transfer state machine and report the current
+ * transfer list for the asset. The node requires periodic refreshTransfers
+ * calls to progress pending transfers (incoming and outgoing); the
+ * settlement watcher polls this until a transfer is Settled/Failed.
+ *
+ * Transfer entries come back untyped from the binding; only the verified
+ * fields are mapped, unknown shapes are skipped instead of guessed.
+ */
+export async function refreshWalletTransfers(
+  account: MetevoWallet['account'],
+  assetId: string | null,
+): Promise<TransferInfo[]> {
+  // skip_sync=false keeps the node honest about on-chain state before it
+  // settles transfers; filter=[] refreshes every pending transfer.
+  await account.refreshTransfers({ skip_sync: false, filter: [] });
+  if (assetId === null) {
+    return [];
+  }
+  const response = (await account.listTransfers(assetId)) as unknown;
+  const list = Array.isArray(response)
+    ? response
+    : (response as Record<string, unknown>)?.transfers;
+  if (!Array.isArray(list)) {
+    return [];
+  }
+  const mapped: TransferInfo[] = [];
+  for (const entry of list) {
+    if (typeof entry !== 'object' || entry === null) {
+      continue;
+    }
+    const record = entry as Record<string, unknown>;
+    const transferId = String(
+      record.transfer_id ?? record.transferId ?? record.txid ?? '',
+    );
+    if (transferId.length === 0) {
+      continue;
+    }
+    const amountRaw = record.receive_amount ?? record.amount ?? null;
+    mapped.push({
+      transferId,
+      kind: String(record.kind ?? ''),
+      status: String(record.status ?? ''),
+      amount:
+        typeof amountRaw === 'number' && Number.isFinite(amountRaw)
+          ? amountRaw
+          : null,
+    });
+  }
+  return mapped;
 }
 
 export async function findAssetIdByTicker(

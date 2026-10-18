@@ -1,5 +1,6 @@
 import { ENV } from '../../config/env';
 import { createBareWalletSessionGateway } from './bareGateway';
+import type { TransferInfo } from './transferWatcher';
 import type { StoredWalletMeta } from './secure-store';
 
 export type { StoredWalletMeta };
@@ -70,6 +71,10 @@ export interface WalletSessionGateway {
   submitPayment(proposal: PaymentProposal): Promise<SubmittedPayment>;
   /** Query an existing payment; never creates a replacement payment. */
   checkPayment(paymentHash: string): Promise<PaymentNetworkStatus>;
+  /** Advance the WDK transfer state machine (refreshTransfers) and return
+   * the current transfer list for the session asset (USDm). The settlement
+   * watcher polls this until a watched transfer is Settled/Failed. */
+  refreshTransfers(): Promise<TransferInfo[]>;
   shutdown(): Promise<void>;
 }
 
@@ -96,6 +101,8 @@ function createMockWalletSessionGateway(): WalletSessionGateway {
   let opened = false;
   let submittedHash: string | null = null;
   let checkCount = 0;
+  let transferRefreshCount = 0;
+  let mockTransfers: TransferInfo[] = [];
 
   return {
     async listWallets() {
@@ -146,6 +153,17 @@ function createMockWalletSessionGateway(): WalletSessionGateway {
       await waitFor(MOCK_STEP_DELAY_MS);
       submittedHash = MOCK_PAYMENT_HASH;
       checkCount = 0;
+      // The demo transfer follows the same settle-after-N rhythm as
+      // checkPayment so the watcher hook shows both pending and settled.
+      transferRefreshCount = 0;
+      mockTransfers = [
+        {
+          transferId: `mock-transfer-${MOCK_PAYMENT_HASH.slice(0, 8)}`,
+          kind: 'outbound',
+          status: 'Pending',
+          amount: null,
+        },
+      ];
       return { paymentHash: submittedHash };
     },
     async checkPayment(paymentHash) {
@@ -154,6 +172,15 @@ function createMockWalletSessionGateway(): WalletSessionGateway {
       }
       checkCount += 1;
       return checkCount >= MOCK_SETTLE_AFTER_CHECKS ? 'settled' : 'pending';
+    },
+    async refreshTransfers() {
+      transferRefreshCount += 1;
+      mockTransfers = mockTransfers.map((entry) =>
+        entry.status === 'Pending' && transferRefreshCount >= MOCK_SETTLE_AFTER_CHECKS
+          ? { ...entry, status: 'Settled' }
+          : entry,
+      );
+      return mockTransfers.map((entry) => ({ ...entry }));
     },
     async shutdown() {
       opened = false;

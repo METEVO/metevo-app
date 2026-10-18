@@ -117,6 +117,13 @@ export function createWdkWalletSessionGateway(): WalletSessionGateway {
       const paymentHash = String(response?.payment_hash ?? response?.paymentHash ?? '');
       return { paymentHash: paymentHash.length > 0 ? paymentHash : null };
     },
+    async refreshTransfers() {
+      if (wallet === null) {
+        return [];
+      }
+      const { refreshWalletTransfers } = loadWdkService();
+      return refreshWalletTransfers(wallet.account, usdmAssetId);
+    },
     async checkPayment(paymentHash) {
       if (wallet === null) {
         return 'unknown';

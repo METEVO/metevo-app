@@ -171,6 +171,9 @@ export function createBareWalletSessionGateway(): WalletSessionGateway {
     async checkPayment(paymentHash): Promise<MetevoPaymentStatus> {
       return (await request('checkPayment', { paymentHash })) as MetevoPaymentStatus;
     },
+    async refreshTransfers() {
+      return (await request('refreshTransfers')) as import('./transferWatcher').TransferInfo[];
+    },
     async shutdown() {
       if (worklet !== null) {
         await request('shutdown');

@@ -18,6 +18,7 @@ import {
   findAssetIdByTicker,
   getMetevoWalletStatus,
   getPaymentStatus,
+  refreshWalletTransfers,
   shutdownMetevoWallet,
 } from './compiled/services/metevo/wallet.js'
 
@@ -117,6 +118,12 @@ async function checkPayment({ paymentHash }) {
   return getPaymentStatus(requireOpenWallet().account, paymentHash)
 }
 
+async function refreshTransfers() {
+  // The node needs periodic refreshTransfers calls to settle pending RGB
+  // transfers; the settlement watcher in the app polls this handler.
+  return refreshWalletTransfers(requireOpenWallet().account, usdmAssetId)
+}
+
 async function shutdown() {
   if (wallet !== null) {
     await shutdownMetevoWallet(wallet)
@@ -129,6 +136,7 @@ const handlers = {
   readStatus,
   submitPayment,
   checkPayment,
+  refreshTransfers,
   shutdown,
 }
 

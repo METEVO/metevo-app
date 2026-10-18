@@ -19,6 +19,7 @@ import {
   WalletSetupStep,
   createWalletSessionGateway,
 } from '../services/metevo/wallet-gateway';
+import type { TransferInfo } from '../services/metevo/transferWatcher';
 import { speakAnnouncement } from '../services/spokenInteraction';
 import { describeWalletError } from '../utils/walletErrors';
 
@@ -76,6 +77,8 @@ export interface WalletSession {
   submitPayment(proposal: PaymentProposal): Promise<SubmittedPayment>;
   /** Query an existing payment; never creates a replacement (payment.check). */
   checkPayment(paymentHash: string): Promise<PaymentNetworkStatus>;
+  /** Advance the transfer state machine; polled by the settlement watcher. */
+  refreshTransfers(): Promise<TransferInfo[]>;
   /** Back navigation to a fixed earlier phase (account -> theme, etc.). */
   reopenPhase(phase: SessionPhase): void;
 }
@@ -212,6 +215,11 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
     [withGateway],
   );
 
+  const refreshTransfers = useCallback(
+    () => withGateway((gateway) => gateway.refreshTransfers()),
+    [withGateway],
+  );
+
   const session = useMemo(
     () => ({
       phase,
@@ -236,6 +244,7 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       hasStoredWallet,
       submitPayment,
       checkPayment,
+      refreshTransfers,
       reopenPhase,
     }),
     [
@@ -261,6 +270,7 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       hasStoredWallet,
       submitPayment,
       checkPayment,
+      refreshTransfers,
       reopenPhase,
     ],
   );
