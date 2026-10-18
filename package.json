@@ -54,5 +54,10 @@
     "react-native-svg-transformer": "^1.5.3",
     "ts-jest": "^29.4.15",
     "typescript": "~6.0.3"
+  },
+  "overrides": {
+    "@qvac/sdk": {
+      "bare-signals": "^5.0.0"
+    }
   }
 }
