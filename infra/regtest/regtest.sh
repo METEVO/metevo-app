@@ -99,7 +99,7 @@ init_node() {
     mkdir -p "$SECRETS_DIR" && chmod 700 "$SECRETS_DIR"
     (umask 077 && jq -r '.mnemonic' <<<"$response" >"$SECRETS_DIR/$node.mnemonic")
     log "$node initialized (mnemonic saved to infra/regtest/$SECRETS_DIR/$node.mnemonic)"
-  elif [ "$(jq -r '.name' <<<"$response")" = "AlreadyInitialized" ]; then
+  elif [[ "$(jq -r '.name' <<<"$response")" =~ ^(AlreadyInitialized|UnlockedNode)$ ]]; then
     log "$node already initialized"
   else
     die "$node /init failed: $response"
@@ -121,7 +121,7 @@ unlock_node() {
       announce_addresses: [], announce_alias: null}')
   if response=$(rln "$node" POST /unlock "$body"); then
     log "$node unlocked"
-  elif [ "$(jq -r '.name' <<<"$response")" = "UnlockedNode" ]; then
+  elif [ "$(jq -r '.name' <<<"$response")" = "AlreadyUnlocked" ]; then
     log "$node already unlocked"
   else
     die "$node /unlock failed: $response"
@@ -129,7 +129,12 @@ unlock_node() {
 }
 
 fund_node() {
-  local node=$1 address
+  local node=$1 address spendable
+  spendable=$(rln "$node" POST /btcbalance '{"skip_sync":false}' | jq -r '.vanilla.spendable')
+  if [ "$spendable" -ge 50000000 ]; then
+    log "$node already funded ($spendable sat)"
+    return
+  fi
   address=$(rln "$node" POST /address | jq -r '.address')
   bitcoin_cli -rpcwallet=miner sendtoaddress "$address" 1 >/dev/null
   log "sent 1 BTC to $node"
@@ -203,7 +208,16 @@ cmd_up() {
   fi
   wait_until "electrs" electrs_ready
   for node in "${NODES[@]}"; do wait_until "$node API" node_api_up "$node"; done
-  log "stack up; next: ./regtest.sh bootstrap"
+  log "stack up; next: ./regtest.sh bootstrap (first run) or ./regtest.sh unlock (restart)"
+}
+
+# Nodes come back locked after every container restart.
+cmd_unlock() {
+  ensure_env_file
+  for node in "${NODES[@]}"; do
+    unlock_node "$node"
+    wait_until "$node unlocked" node_unlocked "$node"
+  done
 }
 
 cmd_bootstrap() {
@@ -265,6 +279,7 @@ usage() {
 usage: ./regtest.sh <command>
   up                         start bitcoind, electrs, proxy and the alice/bob nodes
   bootstrap                  init/unlock/fund both nodes, issue $USDM_TICKER, open alice->bob channel
+  unlock                     unlock both nodes after a restart
   status                     balances, channels and the adb reverse lines
   mine [blocks]              mine blocks (default 1)
   invoice <node> <amount>    create a $USDM_TICKER lightning invoice (base units)
@@ -280,6 +295,7 @@ main() {
   case "$command" in
     up) cmd_up ;;
     bootstrap) cmd_bootstrap ;;
+    unlock) cmd_unlock ;;
     status) cmd_status ;;
     mine) ensure_env_file; mine "${1:-1}" ;;
     invoice) cmd_invoice "$@" ;;
