@@ -223,6 +223,21 @@ export function createBareWalletSessionGateway(): WalletSessionGateway {
     async checkPayment(paymentHash): Promise<MetevoPaymentStatus> {
       return (await request('checkPayment', { paymentHash })) as MetevoPaymentStatus;
     },
+    async refreshTransfers() {
+      return (await request('refreshTransfers')) as import('./transferWatcher').TransferInfo[];
+    },
+    async createUsdmInvoice(amountBaseUnits) {
+      return (await request('createUsdmInvoice', { amountBaseUnits })) as {
+        invoice: string;
+        paymentHash: string | null;
+      };
+    },
+    async hasUsableChannelWith(peerPubkey) {
+      return (await request('hasUsableChannelWith', { peerPubkey })) as boolean;
+    },
+    async connectPeer(peerUri) {
+      await request('connectPeer', { peerUri });
+    },
     async shutdown() {
       if (worklet !== null) {
         await request('shutdown');

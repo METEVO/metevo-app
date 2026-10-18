@@ -19,6 +19,7 @@ import {
   WalletSetupStep,
   createWalletSessionGateway,
 } from '../services/metevo/wallet-gateway';
+import type { TransferInfo } from '../services/metevo/transferWatcher';
 import { speakAnnouncement } from '../services/spokenInteraction';
 import { describeWalletError } from '../utils/walletErrors';
 
@@ -76,6 +77,16 @@ export interface WalletSession {
   submitPayment(proposal: PaymentProposal): Promise<SubmittedPayment>;
   /** Query an existing payment; never creates a replacement (payment.check). */
   checkPayment(paymentHash: string): Promise<PaymentNetworkStatus>;
+  /** Advance the transfer state machine; polled by the settlement watcher. */
+  refreshTransfers(): Promise<TransferInfo[]>;
+  /** Creates the receiver's USDm invoice (blind when the amount is null). */
+  createUsdmInvoice(
+    amountBaseUnits: number | null,
+  ): Promise<{ invoice: string; paymentHash: string | null }>;
+  /** Whether a usable channel exists with this peer (direct route). */
+  hasUsableChannelWith(peerPubkey: string): Promise<boolean>;
+  /** Opens the LDK peer session (pubkey@host:port) for a direct payment. */
+  connectPeer(peerUri: string): Promise<void>;
   /** Back navigation to a fixed earlier phase (account -> theme, etc.). */
   reopenPhase(phase: SessionPhase): void;
 }
@@ -212,6 +223,28 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
     [withGateway],
   );
 
+  const refreshTransfers = useCallback(
+    () => withGateway((gateway) => gateway.refreshTransfers()),
+    [withGateway],
+  );
+
+  const createUsdmInvoice = useCallback(
+    (amountBaseUnits: number | null) =>
+      withGateway((gateway) => gateway.createUsdmInvoice(amountBaseUnits)),
+    [withGateway],
+  );
+
+  const hasUsableChannelWith = useCallback(
+    (peerPubkey: string) =>
+      withGateway((gateway) => gateway.hasUsableChannelWith(peerPubkey)),
+    [withGateway],
+  );
+
+  const connectPeer = useCallback(
+    (peerUri: string) => withGateway((gateway) => gateway.connectPeer(peerUri)),
+    [withGateway],
+  );
+
   const session = useMemo(
     () => ({
       phase,
@@ -236,6 +269,10 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       hasStoredWallet,
       submitPayment,
       checkPayment,
+      refreshTransfers,
+      createUsdmInvoice,
+      hasUsableChannelWith,
+      connectPeer,
       reopenPhase,
     }),
     [
@@ -261,6 +298,10 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       hasStoredWallet,
       submitPayment,
       checkPayment,
+      refreshTransfers,
+      createUsdmInvoice,
+      hasUsableChannelWith,
+      connectPeer,
       reopenPhase,
     ],
   );

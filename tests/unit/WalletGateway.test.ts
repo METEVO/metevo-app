@@ -114,6 +114,27 @@ describe('payment submission guard', () => {
   });
 });
 
+describe('mock gateway transfer refresh', () => {
+  test('submitPayment opens a pending transfer that settles on a later refresh', async () => {
+    const { createWalletSessionGateway } = loadGatewayWithMode('mock');
+    const gateway = createWalletSessionGateway();
+
+    // Nothing to watch before any payment was submitted.
+    await expect(gateway.refreshTransfers()).resolves.toEqual([]);
+
+    await gateway.submitPayment({ invoice: 'lntb1demo' });
+
+    const pending = await gateway.refreshTransfers();
+    expect(pending).toHaveLength(1);
+    expect(pending[0].status).toBe('Pending');
+
+    // The mock settles on the second refresh, mirroring checkPayment.
+    const settled = await gateway.refreshTransfers();
+    expect(settled[0].status).toBe('Settled');
+    expect(settled[0].transferId.length).toBeGreaterThan(0);
+  });
+});
+
 describe('wallet creation single-flight', () => {
   afterEach(() => {
     jest.useRealTimers();

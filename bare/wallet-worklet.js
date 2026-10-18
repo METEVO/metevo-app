@@ -15,9 +15,12 @@
 import {
   assertPayableInvoice,
   createMetevoWallet,
+  createUsdmLightningInvoice,
   findAssetIdByTicker,
   getMetevoWalletStatus,
   getPaymentStatus,
+  hasUsableChannelWith,
+  refreshWalletTransfers,
   shutdownMetevoWallet,
 } from './compiled/services/metevo/wallet.js'
 
@@ -139,6 +142,28 @@ async function checkPayment({ paymentHash }) {
   return getPaymentStatus(requireOpenWallet().account, paymentHash)
 }
 
+async function refreshTransfers() {
+  // The node needs periodic refreshTransfers calls to settle pending RGB
+  // transfers; the settlement watcher in the app polls this handler.
+  return refreshWalletTransfers(requireOpenWallet().account, usdmAssetId)
+}
+
+async function createUsdmInvoice({ amountBaseUnits }) {
+  return createUsdmLightningInvoice(
+    requireOpenWallet().account,
+    usdmAssetId,
+    amountBaseUnits ?? null,
+  )
+}
+
+async function hasUsableChannelWith({ peerPubkey }) {
+  return hasUsableChannelWith(requireOpenWallet().account, peerPubkey)
+}
+
+async function connectPeer({ peerUri }) {
+  await requireOpenWallet().account.connectPeer(peerUri)
+}
+
 async function shutdown() {
   if (wallet !== null) {
     await shutdownMetevoWallet(wallet)
@@ -151,6 +176,10 @@ const handlers = {
   readStatus,
   submitPayment,
   checkPayment,
+  refreshTransfers,
+  createUsdmInvoice,
+  hasUsableChannelWith,
+  connectPeer,
   shutdown,
 }
 

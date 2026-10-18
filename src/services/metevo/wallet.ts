@@ -8,6 +8,7 @@ import {
   MetevoPaymentStatus,
   PaymentValidationError,
 } from './paymentGuard';
+import { TransferInfo } from './transferWatcher';
 
 export {
   assertPayableInvoice,
@@ -149,6 +150,104 @@ export async function createUsdmReceiveInvoice(
     throw new Error('createRgbInvoice returned no invoice');
   }
   return { invoice, kind: aware ? 'witness' : 'blind' };
+}
+
+/**
+ * Advance the node's RGB transfer state machine and report the current
+ * transfer list for the asset. The node requires periodic refreshTransfers
+ * calls to progress pending transfers (incoming and outgoing); the
+ * settlement watcher polls this until a transfer is Settled/Failed.
+ *
+ * Transfer entries come back untyped from the binding; only the verified
+ * fields are mapped, unknown shapes are skipped instead of guessed.
+ */
+export async function refreshWalletTransfers(
+  account: MetevoWallet['account'],
+  assetId: string | null,
+): Promise<TransferInfo[]> {
+  // skip_sync=false keeps the node honest about on-chain state before it
+  // settles transfers; filter=[] refreshes every pending transfer.
+  await account.refreshTransfers({ skip_sync: false, filter: [] });
+  if (assetId === null) {
+    return [];
+  }
+  const response = (await account.listTransfers(assetId)) as unknown;
+  const list = Array.isArray(response)
+    ? response
+    : (response as Record<string, unknown>)?.transfers;
+  if (!Array.isArray(list)) {
+    return [];
+  }
+  const mapped: TransferInfo[] = [];
+  for (const entry of list) {
+    if (typeof entry !== 'object' || entry === null) {
+      continue;
+    }
+    const record = entry as Record<string, unknown>;
+    const transferId = String(
+      record.transfer_id ?? record.transferId ?? record.txid ?? '',
+    );
+    if (transferId.length === 0) {
+      continue;
+    }
+    const amountRaw = record.receive_amount ?? record.amount ?? null;
+    mapped.push({
+      transferId,
+      kind: String(record.kind ?? ''),
+      status: String(record.status ?? ''),
+      amount:
+        typeof amountRaw === 'number' && Number.isFinite(amountRaw)
+          ? amountRaw
+          : null,
+    });
+  }
+  return mapped;
+}
+
+/**
+ * Creates the receiver's USDm Lightning invoice (the payer pays it over
+ * the LSP channel or a direct one). With an amount the invoice pins the
+ * asset amount (and lets the node derive the msat demand); without one it
+ * stays amount-free (blind receive). Uses the verified camelCase request
+ * shape { expirySec, assetId?, assetAmount? } of the WDK account.
+ */
+export async function createUsdmLightningInvoice(
+  account: MetevoWallet['account'],
+  usdmAssetId: string | null,
+  amountBaseUnits: number | null,
+): Promise<{ invoice: string; paymentHash: string | null }> {
+  const response = (await account.createLightningInvoice({
+    expirySec: 3600,
+    ...(usdmAssetId !== null ? { assetId: usdmAssetId } : {}),
+    ...(amountBaseUnits !== null ? { assetAmount: amountBaseUnits } : {}),
+  })) as Record<string, unknown>;
+  const invoice = String(response?.invoice ?? '');
+  if (invoice.length === 0) {
+    throw new Error('createLightningInvoice returned no invoice');
+  }
+  const paymentHash = String(response?.payment_hash ?? response?.paymentHash ?? '');
+  return {
+    invoice,
+    paymentHash: paymentHash.length > 0 ? paymentHash : null,
+  };
+}
+
+/**
+ * Whether this node has a usable channel with exactly this peer (the
+ * direct-route condition for in-person payments over the local link).
+ */
+export async function hasUsableChannelWith(
+  account: MetevoWallet['account'],
+  peerPubkey: string,
+): Promise<boolean> {
+  const channels = (await account.listChannels()) as any;
+  const list = Array.isArray(channels) ? channels : channels?.channels ?? [];
+  const target = peerPubkey.toLowerCase();
+  return list.some(
+    (c: any) =>
+      String(c?.peer_pubkey ?? '').toLowerCase() === target &&
+      (c.is_usable ?? c.ready) === true,
+  );
 }
 
 export async function findAssetIdByTicker(

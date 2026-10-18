@@ -1,5 +1,6 @@
 import { ENV } from '../../config/env';
 import { createBareWalletSessionGateway } from './bareGateway';
+import type { TransferInfo } from './transferWatcher';
 import type { StoredWalletMeta } from './secure-store';
 
 export type { StoredWalletMeta };
@@ -70,6 +71,19 @@ export interface WalletSessionGateway {
   submitPayment(proposal: PaymentProposal): Promise<SubmittedPayment>;
   /** Query an existing payment; never creates a replacement payment. */
   checkPayment(paymentHash: string): Promise<PaymentNetworkStatus>;
+  /** Advance the WDK transfer state machine (refreshTransfers) and return
+   * the current transfer list for the session asset (USDm). The settlement
+   * watcher polls this until a watched transfer is Settled/Failed. */
+  refreshTransfers(): Promise<TransferInfo[]>;
+  /** Creates the receiver's USDm Lightning invoice (blind when the amount
+   * is null). Serves the local-link receive flow and the relay answer. */
+  createUsdmInvoice(
+    amountBaseUnits: number | null,
+  ): Promise<{ invoice: string; paymentHash: string | null }>;
+  /** Whether a usable channel exists with exactly this peer (direct route). */
+  hasUsableChannelWith(peerPubkey: string): Promise<boolean>;
+  /** Opens the LDK peer session (pubkey@host:port) for a direct payment. */
+  connectPeer(peerUri: string): Promise<void>;
   shutdown(): Promise<void>;
 }
 
@@ -85,6 +99,9 @@ const MOCK_PAYMENT_HASH =
   'a24672c1b3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0';
 /** The mock settles on the second status check, so demos show both states. */
 const MOCK_SETTLE_AFTER_CHECKS = 2;
+/** Demo peer the mock device shares a direct channel with. */
+export const MOCK_DEMO_PEER_PUBKEY = `02${'ab'.repeat(32)}`;
+const mockConnectedPeers = new Set<string>();
 
 function waitFor(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -96,6 +113,8 @@ function createMockWalletSessionGateway(): WalletSessionGateway {
   let opened = false;
   let submittedHash: string | null = null;
   let checkCount = 0;
+  let transferRefreshCount = 0;
+  let mockTransfers: TransferInfo[] = [];
 
   return {
     async listWallets() {
@@ -146,6 +165,17 @@ function createMockWalletSessionGateway(): WalletSessionGateway {
       await waitFor(MOCK_STEP_DELAY_MS);
       submittedHash = MOCK_PAYMENT_HASH;
       checkCount = 0;
+      // The demo transfer follows the same settle-after-N rhythm as
+      // checkPayment so the watcher hook shows both pending and settled.
+      transferRefreshCount = 0;
+      mockTransfers = [
+        {
+          transferId: `mock-transfer-${MOCK_PAYMENT_HASH.slice(0, 8)}`,
+          kind: 'outbound',
+          status: 'Pending',
+          amount: null,
+        },
+      ];
       return { paymentHash: submittedHash };
     },
     async checkPayment(paymentHash) {
@@ -154,6 +184,29 @@ function createMockWalletSessionGateway(): WalletSessionGateway {
       }
       checkCount += 1;
       return checkCount >= MOCK_SETTLE_AFTER_CHECKS ? 'settled' : 'pending';
+    },
+    async refreshTransfers() {
+      transferRefreshCount += 1;
+      mockTransfers = mockTransfers.map((entry) =>
+        entry.status === 'Pending' && transferRefreshCount >= MOCK_SETTLE_AFTER_CHECKS
+          ? { ...entry, status: 'Settled' }
+          : entry,
+      );
+      return mockTransfers.map((entry) => ({ ...entry }));
+    },
+    async createUsdmInvoice(amountBaseUnits) {
+      // The demo invoice is bolt11-shaped so payer-side guards accept it;
+      // it never reaches a real node.
+      const invoice = `lntb1metevomockreceive${amountBaseUnits ?? 'blind'}usdmdemo`;
+      return { invoice, paymentHash: null };
+    },
+    async hasUsableChannelWith(peerPubkey) {
+      // The demo device shares a channel with the demo peer, so the
+      // in-person flow exercises the direct route in mock mode.
+      return peerPubkey.toLowerCase() === MOCK_DEMO_PEER_PUBKEY;
+    },
+    async connectPeer(peerUri) {
+      mockConnectedPeers.add(peerUri);
     },
     async shutdown() {
       opened = false;

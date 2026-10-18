@@ -117,6 +117,33 @@ export function createWdkWalletSessionGateway(): WalletSessionGateway {
       const paymentHash = String(response?.payment_hash ?? response?.paymentHash ?? '');
       return { paymentHash: paymentHash.length > 0 ? paymentHash : null };
     },
+    async refreshTransfers() {
+      if (wallet === null) {
+        return [];
+      }
+      const { refreshWalletTransfers } = loadWdkService();
+      return refreshWalletTransfers(wallet.account, usdmAssetId);
+    },
+    async createUsdmInvoice(amountBaseUnits) {
+      if (wallet === null) {
+        throw new Error('the wallet is not open');
+      }
+      const { createUsdmLightningInvoice } = loadWdkService();
+      return createUsdmLightningInvoice(wallet.account, usdmAssetId, amountBaseUnits);
+    },
+    async hasUsableChannelWith(peerPubkey) {
+      if (wallet === null) {
+        return false;
+      }
+      const { hasUsableChannelWith } = loadWdkService();
+      return hasUsableChannelWith(wallet.account, peerPubkey);
+    },
+    async connectPeer(peerUri) {
+      if (wallet === null) {
+        throw new Error('the wallet is not open');
+      }
+      await wallet.account.connectPeer(peerUri);
+    },
     async checkPayment(paymentHash) {
       if (wallet === null) {
         return 'unknown';
