@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import AttentionVoice from '../../assets/voice_attention_dark.svg';
@@ -9,13 +9,19 @@ import {
   useTheme,
   useThemedStyles,
 } from '../../design/ThemeContext';
+import { usePaymentFlow } from '../../hooks/usePaymentFlow';
 import { useWalletSession } from '../../hooks/useWalletSession';
 import {
   PaymentNetworkStatus,
   PaymentValidationError,
 } from '../../services/metevo/wallet-gateway';
+import {
+  PaymentVoiceIntent,
+  parseVoicePaymentIntent,
+} from '../../services/metevo/paymentIntent';
 import { layout } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
+import { IntentCardProps } from './IntentCard';
 
 type PaymentStage = 'review' | 'pending' | 'settled' | 'failed' | 'unknown';
 
@@ -50,12 +56,183 @@ const NEW_REVIEW_ACTION = 'New review';
 
 /**
  * Design sections 20/21: full payment review, then an explicit one-shot
- * confirmation. Confirm authorizes this exact proposal once; cancel
- * discards it. Pending is never displayed as success; a timeout after
- * possible submission becomes unknown, and the only recovery is checking
- * the existing payment - the design forbids automatic resending.
+ * confirmation. Without a valid voice payload this renders the demo
+ * proposal; with one, the remote LSP-relayed payment flow takes over.
  */
-export function SendPaymentCard() {
+export function SendPaymentCard(props: IntentCardProps) {
+  const voiceIntent = useMemo(
+    () => parseVoicePaymentIntent(props.payload),
+    [props.payload],
+  );
+  if (voiceIntent === null) {
+    return <DemoSendPaymentCard {...props} />;
+  }
+  return <VoiceSendPaymentCard intent={voiceIntent} {...props} />;
+}
+
+/**
+ * Remote flow: the parsed voice intent drives the LSP invoice relay, the
+ * biometric confirmation and the transfer watcher's settlement outcome.
+ */
+function VoiceSendPaymentCard({
+  intent,
+  onClearIntent,
+}: { intent: PaymentVoiceIntent } & IntentCardProps) {
+  const styles = useThemedStyles(makeStyles);
+  const { stage, proposal, note, start, confirm, cancel } = usePaymentFlow();
+
+  useEffect(() => {
+    // The voice command already decided "pay"; the invoice request starts
+    // as soon as the card renders.
+    void start(intent);
+  }, [intent, start]);
+
+  const finish = useCallback(() => {
+    cancel();
+    onClearIntent?.();
+  }, [cancel, onClearIntent]);
+
+  if (stage === 'requesting' || stage === 'authorizing' || stage === 'submitting') {
+    return (
+      <View style={styles.centered}>
+        <ProcessingVoice width={64} height={64} />
+        <Text style={styles.title}>
+          {stage === 'requesting'
+            ? 'Requesting the invoice…'
+            : stage === 'authorizing'
+              ? 'Waiting for your confirmation…'
+              : 'Submitting the payment…'}
+        </Text>
+        {note !== null && <Text style={styles.caption}>{note}</Text>}
+      </View>
+    );
+  }
+
+  if (stage === 'watching') {
+    return (
+      <View style={styles.centered}>
+        <ProcessingVoice width={64} height={64} />
+        <Text style={styles.title}>{PENDING_TITLE}</Text>
+        <Text style={styles.caption}>The payment is not confirmed yet.</Text>
+      </View>
+    );
+  }
+
+  if (stage === 'settled') {
+    return (
+      <View style={styles.centered}>
+        <SuccessVoice width={64} height={64} />
+        <Text style={styles.title}>Settled</Text>
+        <Text style={styles.body}>
+          {formatAmount(proposal)} sent to {proposal?.recipient ?? intent.recipient}.
+        </Text>
+        <ActionButton label="Done" variant="primary" onPress={finish} />
+      </View>
+    );
+  }
+
+  if (stage === 'failed') {
+    return (
+      <View style={styles.centered}>
+        <AttentionVoice width={64} height={64} />
+        <Text style={styles.title}>{FAILED_TITLE}</Text>
+        <Text style={styles.caption}>
+          The node reported a confirmed failure. Nothing was resent.
+        </Text>
+        <ActionButton label="Done" variant="primary" onPress={finish} />
+      </View>
+    );
+  }
+
+  if (stage === 'unknown') {
+    return (
+      <View style={styles.centered}>
+        <AttentionVoice width={64} height={64} />
+        <Text style={styles.title}>{UNKNOWN_TITLE}</Text>
+        <Text style={styles.caption}>{UNKNOWN_NOTE}</Text>
+        <ActionButton label="Done" variant="primary" onPress={finish} />
+      </View>
+    );
+  }
+
+  if (stage === 'error') {
+    return (
+      <View style={styles.centered}>
+        <AttentionVoice width={64} height={64} />
+        <Text style={styles.title}>The payment could not start</Text>
+        <Text style={styles.caption}>
+          {note ?? 'The invoice request failed. Try again.'}
+        </Text>
+        <View style={styles.actions}>
+          <ActionButton label="Back" variant="outlined" onPress={finish} grow />
+          <ActionButton
+            label="Try again"
+            variant="primary"
+            onPress={() => void start(intent)}
+            grow
+          />
+        </View>
+      </View>
+    );
+  }
+
+  if (stage === 'review' && proposal !== null) {
+    return (
+      <View style={styles.canvas}>
+        <Text style={styles.title}>Send {proposal.asset}</Text>
+        <View style={styles.row}>
+          <Text style={styles.caption}>To</Text>
+          <Text style={styles.value}>{proposal.recipient}</Text>
+        </View>
+        <View style={styles.row}>
+          <Text style={styles.caption}>Amount</Text>
+          <Text style={styles.value}>{formatAmount(proposal)}</Text>
+        </View>
+        <View style={styles.row}>
+          <Text style={styles.caption}>Destination</Text>
+          <Text style={styles.invoiceText}>{shortenInvoice(proposal.invoice)}</Text>
+        </View>
+        {note !== null && <Text style={styles.rejection}>{note}</Text>}
+        <View style={styles.actions}>
+          <ActionButton label="Cancel" variant="outlined" onPress={finish} grow />
+          <ActionButton
+            label="Confirm payment"
+            variant="primary"
+            onPress={() => void confirm()}
+            grow
+          />
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.centered}>
+      <ProcessingVoice width={64} height={64} />
+      <Text style={styles.title}>Preparing…</Text>
+    </View>
+  );
+}
+
+function formatAmount(proposal: { amount: number; asset: string } | null): string {
+  if (proposal === null) {
+    return '';
+  }
+  return `${(proposal.amount).toFixed(2)} ${proposal.asset}`;
+}
+
+function shortenInvoice(invoice: string): string {
+  if (invoice.length <= 24) {
+    return invoice;
+  }
+  return `${invoice.slice(0, 12)}…${invoice.slice(-8)}`;
+}
+
+/**
+ * Demo path (no voice payload): the section 20/21 storyboard with the
+ * clearly-marked fake proposal, polling checkPayment for the outcome.
+ */
+function DemoSendPaymentCard({ onClearIntent }: IntentCardProps) {
   const theme = useTheme();
   const styles = useThemedStyles(makeStyles);
   const { submitPayment, checkPayment } = useWalletSession();
@@ -147,7 +324,14 @@ export function SendPaymentCard() {
         <SuccessVoice width={64} height={64} />
         <Text style={styles.title}>Settled</Text>
         <Text style={styles.body}>10.00 USDm sent to Maria.</Text>
-        <ActionButton label="Done" variant="primary" onPress={() => setStage('review')} />
+        <ActionButton
+          label="Done"
+          variant="primary"
+          onPress={() => {
+            setStage('review');
+            onClearIntent?.();
+          }}
+        />
       </View>
     );
   }
@@ -227,6 +411,10 @@ const makeStyles = (theme: MetevoTheme) => ({
   value: {
     ...theme.typography.body,
     fontWeight: '700' as const,
+  },
+  invoiceText: {
+    ...theme.typography.caption,
+    flexShrink: 1,
   },
   rejection: {
     ...theme.typography.caption,

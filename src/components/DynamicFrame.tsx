@@ -11,6 +11,8 @@ interface DynamicFrameProps {
   intent: IntentId | null;
   /** Hands a card's Done action the way back to the idle hint. */
   onClearIntent?: () => void;
+  /** The voice pipeline's structured answer; cards validate their own shape. */
+  payload?: unknown;
 }
 
 /**
@@ -22,12 +24,12 @@ interface DynamicFrameProps {
  * TODO(phase 2): `intent` comes from `useIntents`, fed by the QVAC
  * voice-to-intent pipeline.
  */
-export function DynamicFrame({ intent, onClearIntent }: DynamicFrameProps) {
+export function DynamicFrame({ intent, onClearIntent, payload }: DynamicFrameProps) {
   const styles = useThemedStyles(makeStyles);
 
   return (
     <View style={styles.frame}>
-      <IntentCard id={intent} onClearIntent={onClearIntent} />
+      <IntentCard id={intent} onClearIntent={onClearIntent} payload={payload} />
     </View>
   );
 }

@@ -103,7 +103,7 @@ export function HomeScreen() {
 function HomeShell({ session }: { session: WalletSession }) {
   const theme = useTheme();
   const styles = useThemedStyles(makeStyles);
-  const { intent, simulateIntent } = useIntents(null);
+  const { intent, payload, simulateIntent } = useIntents(null);
   const channelProvisioning =
     session.wallet !== null && !session.wallet.channelReady;
 
@@ -156,6 +156,7 @@ function HomeShell({ session }: { session: WalletSession }) {
         <DynamicFrame
           intent={intent}
           onClearIntent={() => simulateIntent(null)}
+          payload={payload}
         />
       </ScrollView>
 
