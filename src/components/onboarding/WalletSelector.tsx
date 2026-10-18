@@ -1,5 +1,11 @@
 import React, { useCallback, useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 
 import AttentionVoice from '../../assets/voice_attention_dark.svg';
 import IdleVoice from '../../assets/voice_idle_dark.svg';
@@ -9,6 +15,7 @@ import {
   useTheme,
   useThemedStyles,
 } from '../../design/ThemeContext';
+import { useWalletSession } from '../../hooks/useWalletSession';
 import {
   startSpokenOptionHighlight,
   stopSpokenOptionHighlight,
@@ -18,38 +25,38 @@ import { layout, scale } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
 import { OnboardingFrame } from './OnboardingFrame';
 
-const WALLETS = ['Everyday wallet', 'Savings wallet'] as const;
-
-export type WalletChoice = (typeof WALLETS)[number];
+type SelectorStage = 'select' | 'naming';
 
 const OPENING_TITLE = 'Opening…';
 const PLEASE_WAIT = 'Please wait';
 const ATTENTION_TITLE = 'Needs attention';
+const EMPTY_WALLETS_NOTE = 'No wallets on this device yet.';
 
 interface WalletSelectorProps {
   setupStep: WalletSetupStep;
   progressMessage: string | null;
   errorMessage: string | null;
-  onOpen: () => void;
   onBack: () => void;
 }
 
 /**
- * Design sections 29 and 35: select a wallet, then an explicit Open wallet
- * action runs the connection state machine - node opening, LSP connection
- * and USDm channel provisioning - with the processing voice state while it
- * works and the attention state with a recovery action on failure.
+ * Design sections 29 and 35, backed by the device's real wallets: select a
+ * stored wallet and open it (node + LSP + channel state machine), or create
+ * a new named wallet - one account, multiple wallets. Processing and
+ * attention states cover the connection; failures keep a recovery action.
  */
 export function WalletSelector({
   setupStep,
   progressMessage,
   errorMessage,
-  onOpen,
   onBack,
 }: WalletSelectorProps) {
   const theme = useTheme();
   const styles = useThemedStyles(makeStyles);
-  const [selected, setSelected] = useState<WalletChoice | null>(null);
+  const { wallets, selectedWalletId, chooseWallet, createWallet, openWallet } =
+    useWalletSession();
+  const [stage, setStage] = useState<SelectorStage>('select');
+  const [nameDraft, setNameDraft] = useState('');
   const [hearing, setHearing] = useState(false);
 
   const toggleHearing = useCallback(() => {
@@ -58,9 +65,22 @@ export function WalletSelector({
       setHearing(false);
       return;
     }
-    startSpokenOptionHighlight(WALLETS.length, () => undefined);
+    startSpokenOptionHighlight(wallets.length + 1, () => undefined);
     setHearing(true);
-  }, [hearing]);
+  }, [hearing, wallets.length]);
+
+  const startNaming = useCallback(() => {
+    setNameDraft('');
+    setStage('naming');
+  }, []);
+
+  const saveWallet = useCallback(async () => {
+    if (nameDraft.trim().length === 0) {
+      return;
+    }
+    await createWallet(nameDraft);
+    setStage('select');
+  }, [createWallet, nameDraft]);
 
   if (errorMessage !== null) {
     return (
@@ -75,7 +95,7 @@ export function WalletSelector({
         <Text style={theme.typography.body}>{errorMessage}</Text>
         <View style={styles.actions}>
           <ActionButton label="Back" variant="outlined" onPress={onBack} />
-          <ActionButton label="Try again" variant="primary" onPress={onOpen} grow />
+          <ActionButton label="Try again" variant="primary" onPress={onBack} grow />
         </View>
       </View>
     );
@@ -90,9 +110,37 @@ export function WalletSelector({
             height={layout.voiceViewport}
           />
         </View>
-        <Text style={theme.typography.title}>{progressMessage ?? OPENING_TITLE}</Text>
+        <Text style={theme.typography.title}>
+          {progressMessage ?? OPENING_TITLE}
+        </Text>
         <Text style={theme.typography.caption}>{PLEASE_WAIT}</Text>
       </View>
+    );
+  }
+
+  if (stage === 'naming') {
+    return (
+      <OnboardingFrame
+        title="Name your wallet"
+        subtitle="A name helps you pick it by voice later."
+        hearOptionCount={1}
+        onBack={() => setStage('select')}
+        confirmLabel="Create wallet"
+        confirmDisabled={nameDraft.trim().length === 0}
+        onConfirm={() => void saveWallet()}
+      >
+        <View style={styles.field}>
+          <Text style={theme.typography.caption}>Wallet name</Text>
+          <TextInput
+            style={styles.input}
+            value={nameDraft}
+            onChangeText={setNameDraft}
+            accessibilityLabel="Wallet name"
+            placeholder="Everyday wallet"
+            placeholderTextColor={theme.colors.textMuted}
+          />
+        </View>
+      </OnboardingFrame>
     );
   }
 
@@ -100,27 +148,36 @@ export function WalletSelector({
     <OnboardingFrame
       title="Choose a wallet"
       subtitle="Select a wallet or say its name."
-      hearOptionCount={WALLETS.length}
+      hearOptionCount={wallets.length + 1}
       confirmLabel="Open wallet"
-      confirmDisabled={selected === null}
-      onConfirm={onOpen}
+      confirmDisabled={selectedWalletId === null}
+      onConfirm={() => void openWallet()}
       onBack={onBack}
     >
       <Text style={theme.typography.caption}>No wallet open</Text>
       <Text style={theme.typography.body}>Your wallets</Text>
 
-      {WALLETS.map((wallet) => (
+      {wallets.length === 0 && (
+        <Text style={theme.typography.caption}>{EMPTY_WALLETS_NOTE}</Text>
+      )}
+
+      {wallets.map((wallet) => (
         <TouchableOpacity
-          key={wallet}
-          style={[styles.option, selected === wallet && styles.optionSelected]}
-          onPress={() => setSelected(wallet)}
+          key={wallet.id}
+          style={[
+            styles.option,
+            selectedWalletId === wallet.id && styles.optionSelected,
+          ]}
+          onPress={() => chooseWallet(wallet.id)}
           accessibilityRole="button"
-          accessibilityLabel={wallet}
-          accessibilityState={{ selected: selected === wallet }}
+          accessibilityLabel={wallet.name}
+          accessibilityState={{ selected: selectedWalletId === wallet.id }}
         >
-          <Text style={styles.optionLabel}>{wallet}</Text>
+          <Text style={styles.optionLabel}>{wallet.name}</Text>
         </TouchableOpacity>
       ))}
+
+      <ActionButton label="Create wallet" variant="outlined" onPress={startNaming} grow />
 
       <View style={styles.voiceAnchor}>
         <IdleVoice width={layout.voiceViewport} height={layout.voiceViewport} />
@@ -149,6 +206,15 @@ const makeStyles = (theme: MetevoTheme) => ({
     borderColor: theme.colors.text,
   },
   optionLabel: theme.typography.body,
+  field: {
+    ...theme.cardBase,
+    gap: layout.rowGap / 4,
+  },
+  input: {
+    ...theme.typography.body,
+    color: theme.colors.text,
+    padding: 0,
+  },
   actions: {
     flexDirection: 'row' as const,
     gap: layout.rowGap,

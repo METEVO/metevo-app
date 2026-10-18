@@ -85,7 +85,6 @@ export function HomeScreen() {
             setupStep={session.setupStep}
             progressMessage={session.progressMessage}
             errorMessage={session.errorMessage}
-            onOpen={session.openWallet}
             onBack={() => session.reopenPhase('account')}
           />
         </View>

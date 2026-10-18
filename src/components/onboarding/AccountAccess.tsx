@@ -17,7 +17,7 @@ interface AccountAccessProps {
   /** True while the wallet secret is being created and stored. */
   creating: boolean;
   errorMessage: string | null;
-  onCreateAccount: () => void;
+  onCreateAccount: (walletName: string) => void;
   onSignIn: () => void;
   onBack: () => void;
 }
@@ -42,13 +42,14 @@ export function AccountAccess({
   const [stage, setStage] = useState<AccountStage>('welcome');
   const [fullName, setFullName] = useState('');
   const [contact, setContact] = useState('');
-  const [walletExists, setWalletExists] = useState(false);
+  const [walletName, setWalletName] = useState('Everyday wallet');
+  const [walletCount, setWalletCount] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     void hasStoredWallet().then((exists) => {
       if (!cancelled) {
-        setWalletExists(exists);
+        setWalletCount(exists ? 1 : 0);
       }
     });
     return () => {
@@ -65,21 +66,21 @@ export function AccountAccess({
         onBack={onBack}
       >
         <Text style={theme.typography.body}>One account. Multiple wallets.</Text>
-        {walletExists && (
+        {walletCount !== null && walletCount > 0 && (
           <Text style={styles.existingNote}>
-            A wallet already exists on this device - open it to continue.
+            {walletCount} wallet{walletCount > 1 ? 's' : ''} on this device -
+            open one or create another.
           </Text>
         )}
         <ActionButton
           label="Create account"
-          variant={walletExists ? 'outlined' : 'primary'}
+          variant="primary"
           onPress={() => setStage('create')}
-          disabled={walletExists}
           grow
         />
         <ActionButton
           label="Sign in"
-          variant={walletExists ? 'primary' : 'outlined'}
+          variant="outlined"
           onPress={() => setStage('signIn')}
           grow
         />
@@ -92,9 +93,9 @@ export function AccountAccess({
       <OnboardingFrame
         title="Create account"
         subtitle="For a new METEVO account."
-        hearOptionCount={2}
+        hearOptionCount={3}
         onBack={() => setStage('welcome')}
-        onConfirm={onCreateAccount}
+        onConfirm={() => onCreateAccount(walletName)}
         confirmDisabled={creating || fullName.trim().length === 0}
       >
         <LabeledField
@@ -106,6 +107,11 @@ export function AccountAccess({
           label="Email or phone"
           value={contact}
           onChangeText={setContact}
+        />
+        <LabeledField
+          label="Wallet name"
+          value={walletName}
+          onChangeText={setWalletName}
         />
         {creating && (
           <Text style={theme.typography.caption}>Creating your wallet…</Text>
