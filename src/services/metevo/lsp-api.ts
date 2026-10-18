@@ -26,6 +26,25 @@ export interface MetevoClaimResult {
   reason?: string;
 }
 
+/**
+ * Invoice-relay contract (client side; the utexo-lsp routes are a
+ * documented follow-up):
+ * - POST /metevo/invoice-request  { recipient, asset_id?, amount_usd }
+ *     -> { request_id, expires_at }  (the LSP forwards the request to the
+ *        recipient's active node, which answers with a wallet.createInvoice
+ *        payload)
+ * - POST /metevo/invoice-response { request_id }
+ *     -> { status: 'pending' | 'delivered', invoice?, payment_hash? }
+ */
+export interface MetevoInvoiceRequestResult {
+  requestId: string;
+  expiresAt: number;
+}
+
+export type MetevoInvoiceRelayResponse =
+  | { status: 'pending' }
+  | { status: 'delivered'; invoice: string; paymentHash: string | null };
+
 export class MetevoLspError extends Error {
   readonly endpoint: string;
   readonly status: number;
@@ -82,6 +101,42 @@ export class MetevoLspClient {
       ...(params.paymentPreimage ? { payment_preimage: params.paymentPreimage } : {}),
     });
     return parseClaimResult(body);
+  }
+
+  /**
+   * Asks the LSP to relay a dynamic USDm invoice request to the recipient's
+   * active node. The response only acknowledges the request; the payable
+   * invoice arrives through pollInvoiceResponse.
+   */
+  async requestInvoice(params: {
+    recipient: string;
+    assetId: string | null;
+    amountUsd: number;
+  }): Promise<MetevoInvoiceRequestResult> {
+    if (params.recipient.trim().length === 0) {
+      throw new TypeError('requestInvoice: recipient is required');
+    }
+    if (!Number.isSafeInteger(params.amountUsd) || params.amountUsd <= 0) {
+      throw new TypeError('requestInvoice: amountUsd must be a positive integer (whole USD)');
+    }
+    const body = await this.request('POST', '/metevo/invoice-request', {
+      recipient: params.recipient,
+      ...(params.assetId !== null ? { asset_id: params.assetId } : {}),
+      amount_usd: params.amountUsd,
+    });
+    return parseInvoiceRequestResult(body);
+  }
+
+  /** Polls the relay for the recipient's invoice answer; safe to call
+   * repeatedly while the answer is pending. */
+  async pollInvoiceResponse(requestId: string): Promise<MetevoInvoiceRelayResponse> {
+    if (!/^[0-9a-f]{64}$/i.test(requestId)) {
+      throw new TypeError('pollInvoiceResponse: requestId must be a 64-hex hash');
+    }
+    const body = await this.request('POST', '/metevo/invoice-response', {
+      request_id: requestId,
+    });
+    return parseInvoiceRelayResponse(body);
   }
 
   private async request(method: 'POST', endpoint: string, payload: unknown): Promise<unknown> {
@@ -233,4 +288,43 @@ function parseClaimResult(value: unknown): MetevoClaimResult {
     status: String(record['status'] ?? ''),
     ...(record['reason'] !== undefined ? { reason: String(record['reason']) } : {}),
   };
+}
+
+function parseInvoiceRequestResult(value: unknown): MetevoInvoiceRequestResult {
+  const ENDPOINT = '/metevo/invoice-request';
+  if (typeof value !== 'object' || value === null) {
+    throw new MetevoLspError(ENDPOINT, 200, 'response is not an object');
+  }
+  const record = value as Record<string, unknown>;
+  const rawExpires = record['expires_at'] ?? 0;
+  const expiresAt = typeof rawExpires === 'number' ? rawExpires : Number(rawExpires);
+  if (!Number.isFinite(expiresAt) || expiresAt < 0) {
+    throw new MetevoLspError(ENDPOINT, 200, 'response field expires_at is not a timestamp');
+  }
+  return {
+    requestId: requireHexHash(record['request_id'], ENDPOINT, 'request_id'),
+    expiresAt,
+  };
+}
+
+function parseInvoiceRelayResponse(value: unknown): MetevoInvoiceRelayResponse {
+  const ENDPOINT = '/metevo/invoice-response';
+  if (typeof value !== 'object' || value === null) {
+    throw new MetevoLspError(ENDPOINT, 200, 'response is not an object');
+  }
+  const record = value as Record<string, unknown>;
+  const status = String(record['status'] ?? '');
+  if (status === 'pending') {
+    return { status: 'pending' };
+  }
+  if (status === 'delivered') {
+    const rawHash = record['payment_hash'];
+    return {
+      status: 'delivered',
+      invoice: requireBolt11Invoice(record['invoice'], ENDPOINT),
+      paymentHash:
+        rawHash === undefined || rawHash === null ? null : requireHexHash(rawHash, ENDPOINT, 'payment_hash'),
+    };
+  }
+  throw new MetevoLspError(ENDPOINT, 200, `response status ${status} is not pending or delivered`);
 }
