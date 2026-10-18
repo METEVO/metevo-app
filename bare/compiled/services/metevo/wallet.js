@@ -1,0 +1,109 @@
+import WalletManagerRgbLightning from '@utexo/wdk-rgb-lightning';
+// Payment-boundary guards live in their own runtime-agnostic module (the
+// React Native app bundle imports them without pulling the WDK binding in).
+import { assertPayableInvoice, getPaymentStatus, PaymentValidationError, } from './paymentGuard';
+export { assertPayableInvoice, getPaymentStatus, PaymentValidationError, };
+const DEFAULT_USDM_TICKER = 'USDM';
+export async function createMetevoWallet(mnemonic, config) {
+    const manager = new WalletManagerRgbLightning(mnemonic, {
+        network: config.network,
+        dataDir: config.dataDir,
+        ldkPeerListeningPort: config.ldkPeerListeningPort,
+        daemonListeningPort: config.daemonListeningPort,
+        ...(config.lspBaseUrl ? { lspBaseUrl: config.lspBaseUrl } : {}),
+        ...(config.lspBearerToken ? { lspBearerToken: config.lspBearerToken } : {}),
+    });
+    const account = await manager.getAccount(0);
+    await account.unlock({
+        ldk_chain_sync: {
+            mode: 'BlockSync',
+            config: {
+                bitcoind_rpc_username: config.bitcoindRpcUsername,
+                bitcoind_rpc_password: config.bitcoindRpcPassword,
+                bitcoind_rpc_host: config.bitcoindRpcHost,
+                bitcoind_rpc_port: config.bitcoindRpcPort,
+            },
+        },
+        indexer_url: config.indexerUrl,
+        proxy_endpoint: config.proxyEndpoint,
+        announce_addresses: [],
+        announce_alias: 'metevo-wallet',
+    });
+    return { manager, account };
+}
+export async function getMetevoWalletStatus(account, usdmAssetId) {
+    const info = (await account.getNodeInfo());
+    const balance = (await account.getBalanceDetails(false));
+    let usdmBaseUnits = null;
+    let usdmChannelReady = false;
+    if (usdmAssetId) {
+        usdmBaseUnits = Number(await account.getTokenBalance(usdmAssetId));
+        const channels = (await account.listChannels());
+        const list = Array.isArray(channels) ? channels : channels?.channels ?? [];
+        usdmChannelReady = list.some((c) => c?.peer_pubkey && (c.is_usable ?? c.ready) === true &&
+            (c.asset_id ?? null) === usdmAssetId);
+    }
+    return {
+        pubkey: info?.pubkey ?? null,
+        btcSpendableSat: Number(balance?.vanilla?.spendable ?? 0),
+        usdmBaseUnits,
+        usdmChannelReady,
+        unlocked: true,
+    };
+}
+export async function ensureColorableUtxos(account, options = {}) {
+    const num = options.num ?? 2;
+    const sizeSat = options.sizeSat ?? 30050;
+    const feeRate = options.feeRate ?? 2;
+    try {
+        await account.createUtxos({ up_to: true, num, size: sizeSat, fee_rate: feeRate, skip_sync: false });
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes('Allocations already available') || message.includes('AllocationsAlreadyAvailable')) {
+            return;
+        }
+        throw error;
+    }
+}
+export async function createUsdmReceiveInvoice(account, options) {
+    const aware = options.assetId !== null;
+    const request = {
+        min_confirmations: 1,
+        witness: aware,
+        duration_seconds: options.durationSeconds ?? 3600,
+    };
+    if (aware) {
+        request.asset_id = options.assetId;
+        if (options.amountBaseUnits !== null) {
+            request.assignment_kind = 'Fungible';
+            request.assignment_amount = options.amountBaseUnits;
+        }
+    }
+    const response = (await account.createRgbInvoice(request));
+    const invoice = response?.invoice ?? response?.recipient_id;
+    if (typeof invoice !== 'string' || invoice.length === 0) {
+        throw new Error('createRgbInvoice returned no invoice');
+    }
+    return { invoice, kind: aware ? 'witness' : 'blind' };
+}
+export async function findAssetIdByTicker(account, ticker = DEFAULT_USDM_TICKER) {
+    const assets = (await account.listAssets(['Ifa', 'Nia']));
+    const groups = [assets?.ifa ?? [], assets?.nia ?? []];
+    for (const group of groups) {
+        for (const asset of group) {
+            if (String(asset?.ticker ?? '').toLowerCase() === ticker.toLowerCase()) {
+                return asset.asset_id;
+            }
+        }
+    }
+    return null;
+}
+export async function shutdownMetevoWallet(wallet) {
+    try {
+        await wallet.account.shutdown();
+    }
+    finally {
+        wallet.manager.dispose();
+    }
+}

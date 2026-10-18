@@ -1,0 +1,11 @@
+node_modules/
+.expo/
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+build/
+*.log
+.env.local
+scripts/device-wallet-config.json
+ios/Pods/

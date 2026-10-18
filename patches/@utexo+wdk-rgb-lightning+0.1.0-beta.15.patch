@@ -1,0 +1,19 @@
+diff --git a/node_modules/@utexo/wdk-rgb-lightning/bare.js b/node_modules/@utexo/wdk-rgb-lightning/bare.js
+index 134a52f..03c9b93 100644
+--- a/node_modules/@utexo/wdk-rgb-lightning/bare.js
++++ b/node_modules/@utexo/wdk-rgb-lightning/bare.js
+@@ -11,6 +11,12 @@
+ 
+ import 'bare-node-runtime/global'
+ 
+-export * from './index-bare.js' with { imports: 'bare-node-runtime/imports' }
++// NOTE(METEVO patch): the `with { imports }` clauses were removed — the
++// Node-builtin remap (fs -> bare-fs, ...) is applied at bundle time by
++// bare-pack --imports (see package.json bundle:wallet), because older
++// Bare runtimes embedded in react-native-bare-kit 0.15.x cannot parse
++// import attributes.
+ 
+-export { default } from './index-bare.js' with { imports: 'bare-node-runtime/imports' }
++export * from './index-bare.js'
++
++export { default } from './index-bare.js'
