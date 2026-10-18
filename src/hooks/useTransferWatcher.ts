@@ -44,6 +44,7 @@ export function useTransferWatcher() {
   const [phase, setPhase] = useState<TransferWatchPhase>('idle');
   const [transfer, setTransfer] = useState<TransferInfo | null>(null);
   const mountedRef = useRef(true);
+  const cancelledRef = useRef(false);
   const watchRef = useRef<Promise<TransferWatchResult> | null>(null);
 
   useEffect(() => {
@@ -58,6 +59,7 @@ export function useTransferWatcher() {
       if (watchRef.current !== null) {
         return watchRef.current;
       }
+      cancelledRef.current = false;
       setPhase('watching');
       playTacton('attention');
       const run = watchTransfersToTerminal({
@@ -65,7 +67,7 @@ export function useTransferWatcher() {
         intervalMs: ENV.EXPO_PUBLIC_TRANSFER_POLL_INTERVAL_MS,
         timeoutMs: ENV.EXPO_PUBLIC_TRANSFER_SETTLE_TIMEOUT_MS,
         transferId: options.transferId,
-        shouldStop: () => mountedRef.current === false,
+        shouldStop: () => mountedRef.current === false || cancelledRef.current,
       })
         .then((result) => {
           // The watcher only resolves on terminal outcomes; 'pending' is
@@ -79,9 +81,12 @@ export function useTransferWatcher() {
             setTransfer(result.transfer);
           }
           // Terminal outcomes always give haptic + spoken feedback, even
-          // when the surface unmounted mid-watch.
-          playTacton(TACTON_BY_OUTCOME[outcome]);
-          speakAnnouncement(VOICE_BY_OUTCOME[outcome]);
+          // when the surface unmounted mid-watch. A user cancellation
+          // stays silent: the caller chose to stop listening.
+          if (!cancelledRef.current) {
+            playTacton(TACTON_BY_OUTCOME[outcome]);
+            speakAnnouncement(VOICE_BY_OUTCOME[outcome]);
+          }
           return result;
         })
         .finally(() => {
@@ -93,8 +98,14 @@ export function useTransferWatcher() {
     [refreshTransfers],
   );
 
+  /** Cancels the running watch; its promise resolves unknown and stays
+   * silent (no haptic/voice feedback for a user-driven stop). */
+  const stopWatching = useCallback(() => {
+    cancelledRef.current = true;
+  }, []);
+
   return useMemo(
-    () => ({ phase, transfer, watch }),
-    [phase, transfer, watch],
+    () => ({ phase, transfer, watch, stopWatching }),
+    [phase, transfer, watch, stopWatching],
   );
 }
