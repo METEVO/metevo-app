@@ -135,6 +135,29 @@ describe('mock gateway transfer refresh', () => {
   });
 });
 
+describe('mock gateway first-time balance', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  test('a freshly created and opened wallet starts at zero, not demo data', async () => {
+    const { createWalletSessionGateway } = loadGatewayWithMode('mock');
+    const gateway = createWalletSessionGateway();
+
+    const entry = await gateway.createWallet('Everyday wallet');
+
+    jest.useFakeTimers();
+    const opening = gateway.openWallet(entry.id, () => undefined);
+    await jest.advanceTimersByTimeAsync(5_000);
+    await opening;
+
+    const status = await gateway.readStatus();
+    expect(status.balanceUsdmBaseUnits).toBe(0);
+    expect(status.btcSpendableSat).toBe(0);
+    expect(status.channelReady).toBe(true);
+  });
+});
+
 describe('wallet creation single-flight', () => {
   afterEach(() => {
     jest.useRealTimers();
