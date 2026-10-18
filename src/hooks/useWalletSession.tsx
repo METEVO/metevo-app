@@ -83,6 +83,10 @@ export interface WalletSession {
   createUsdmInvoice(
     amountBaseUnits: number | null,
   ): Promise<{ invoice: string; paymentHash: string | null }>;
+  /** Whether a usable channel exists with this peer (direct route). */
+  hasUsableChannelWith(peerPubkey: string): Promise<boolean>;
+  /** Opens the LDK peer session (pubkey@host:port) for a direct payment. */
+  connectPeer(peerUri: string): Promise<void>;
   /** Back navigation to a fixed earlier phase (account -> theme, etc.). */
   reopenPhase(phase: SessionPhase): void;
 }
@@ -230,6 +234,17 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
     [withGateway],
   );
 
+  const hasUsableChannelWith = useCallback(
+    (peerPubkey: string) =>
+      withGateway((gateway) => gateway.hasUsableChannelWith(peerPubkey)),
+    [withGateway],
+  );
+
+  const connectPeer = useCallback(
+    (peerUri: string) => withGateway((gateway) => gateway.connectPeer(peerUri)),
+    [withGateway],
+  );
+
   const session = useMemo(
     () => ({
       phase,
@@ -256,6 +271,8 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       checkPayment,
       refreshTransfers,
       createUsdmInvoice,
+      hasUsableChannelWith,
+      connectPeer,
       reopenPhase,
     }),
     [
@@ -283,6 +300,8 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       checkPayment,
       refreshTransfers,
       createUsdmInvoice,
+      hasUsableChannelWith,
+      connectPeer,
       reopenPhase,
     ],
   );

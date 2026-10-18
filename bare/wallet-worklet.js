@@ -19,6 +19,7 @@ import {
   findAssetIdByTicker,
   getMetevoWalletStatus,
   getPaymentStatus,
+  hasUsableChannelWith,
   refreshWalletTransfers,
   shutdownMetevoWallet,
 } from './compiled/services/metevo/wallet.js'
@@ -133,6 +134,14 @@ async function createUsdmInvoice({ amountBaseUnits }) {
   )
 }
 
+async function hasUsableChannelWith({ peerPubkey }) {
+  return hasUsableChannelWith(requireOpenWallet().account, peerPubkey)
+}
+
+async function connectPeer({ peerUri }) {
+  await requireOpenWallet().account.connectPeer(peerUri)
+}
+
 async function shutdown() {
   if (wallet !== null) {
     await shutdownMetevoWallet(wallet)
@@ -147,6 +156,8 @@ const handlers = {
   checkPayment,
   refreshTransfers,
   createUsdmInvoice,
+  hasUsableChannelWith,
+  connectPeer,
   shutdown,
 }
 

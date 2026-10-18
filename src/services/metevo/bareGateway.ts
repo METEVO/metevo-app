@@ -180,6 +180,12 @@ export function createBareWalletSessionGateway(): WalletSessionGateway {
         paymentHash: string | null;
       };
     },
+    async hasUsableChannelWith(peerPubkey) {
+      return (await request('hasUsableChannelWith', { peerPubkey })) as boolean;
+    },
+    async connectPeer(peerUri) {
+      await request('connectPeer', { peerUri });
+    },
     async shutdown() {
       if (worklet !== null) {
         await request('shutdown');

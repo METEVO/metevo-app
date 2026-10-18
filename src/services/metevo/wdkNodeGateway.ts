@@ -131,6 +131,19 @@ export function createWdkWalletSessionGateway(): WalletSessionGateway {
       const { createUsdmLightningInvoice } = loadWdkService();
       return createUsdmLightningInvoice(wallet.account, usdmAssetId, amountBaseUnits);
     },
+    async hasUsableChannelWith(peerPubkey) {
+      if (wallet === null) {
+        return false;
+      }
+      const { hasUsableChannelWith } = loadWdkService();
+      return hasUsableChannelWith(wallet.account, peerPubkey);
+    },
+    async connectPeer(peerUri) {
+      if (wallet === null) {
+        throw new Error('the wallet is not open');
+      }
+      await wallet.account.connectPeer(peerUri);
+    },
     async checkPayment(paymentHash) {
       if (wallet === null) {
         return 'unknown';

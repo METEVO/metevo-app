@@ -232,6 +232,24 @@ export async function createUsdmLightningInvoice(
   };
 }
 
+/**
+ * Whether this node has a usable channel with exactly this peer (the
+ * direct-route condition for in-person payments over the local link).
+ */
+export async function hasUsableChannelWith(
+  account: MetevoWallet['account'],
+  peerPubkey: string,
+): Promise<boolean> {
+  const channels = (await account.listChannels()) as any;
+  const list = Array.isArray(channels) ? channels : channels?.channels ?? [];
+  const target = peerPubkey.toLowerCase();
+  return list.some(
+    (c: any) =>
+      String(c?.peer_pubkey ?? '').toLowerCase() === target &&
+      (c.is_usable ?? c.ready) === true,
+  );
+}
+
 export async function findAssetIdByTicker(
   account: MetevoWallet['account'],
   ticker: string = DEFAULT_USDM_TICKER,
