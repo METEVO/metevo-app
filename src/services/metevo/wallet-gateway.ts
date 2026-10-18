@@ -219,12 +219,12 @@ function selectGateway(): WalletSessionGateway {
     return createMockWalletSessionGateway();
   }
   if (ENV.EXPO_PUBLIC_WALLET_TRANSPORT === 'bare') {
-    // Known issue: react-native-bare-kit aborts natively on Android when
-    // the RLN addon calls back into JS (confirmed via
-    // docs/known-issues/wallet-bare-android-crash.md - the same native
-    // addon pairing works on Node.js, so this is a Bare/Android callback
-    // bug, not a JS-level mismatch). Opt in deliberately; do not default
-    // on-device builds to this transport until that upstream bug is fixed.
+    // See docs/known-issues/wallet-bare-android-crash.md: a real duplicate
+    // declaration in bare/wallet-worklet.js previously aborted the whole
+    // app natively on Android (fixed, with a regression test). Any syntax
+    // error in that file's module graph crashes just as hard and just as
+    // silently, so re-verify on a real device after editing the worklet
+    // before defaulting on-device builds to this transport again.
     return createBareWalletSessionGateway();
   }
   // The in-process WDK gateway cannot exist inside the app bundle: the WDK
