@@ -44,6 +44,18 @@ const numberFromEnv = (fallback: number, min: number, max: number) =>
       .default(fallback),
   );
 
+/**
+ * Non-empty string or unset. An empty value counts as unset so the
+ * committed template can list every key without forcing a value; a
+ * whitespace-only or empty assigned value never reaches the app.
+ */
+const optionalNonEmptyString = () =>
+  z.preprocess(
+    (value) =>
+      typeof value === 'string' && value.trim().length === 0 ? undefined : value,
+    z.string().min(1).optional(),
+  );
+
 export const appEnvSchema = z.object({
   // --- App flavour -----------------------------------------------------------
   EXPO_PUBLIC_METEVO_ENV: z.enum(['dev', 'prod']).default('dev'),
@@ -73,6 +85,40 @@ export const appEnvSchema = z.object({
    * WDK module from the app's JS runtime (Node tooling/scripts); "bare"
    * hosts it in a Bare worklet (the mobile device path). */
   EXPO_PUBLIC_WALLET_TRANSPORT: z.enum(['inprocess', 'bare']).default('inprocess'),
+
+  // --- Network target (Step: payment flows) -----------------------------------
+  /** Demo provisioning preset: "regtest" (local metevo-infra) or "signet"
+   * (public signet LSP). Selects which device-config profile the setup
+   * flow expects; endpoints/credentials themselves stay OUT of app env and
+   * are provisioned per target via scripts/device-wallet-config.json. */
+  EXPO_PUBLIC_NETWORK_TARGET: z.enum(['regtest', 'signet']).default('regtest'),
+
+  // --- Transfer settlement watcher (Step: refreshTransfers loop) ---------------
+  /** How often (ms) the watcher calls refreshTransfers/listTransfers. */
+  EXPO_PUBLIC_TRANSFER_POLL_INTERVAL_MS: intFromEnv(2_000, 250, 60_000),
+  /** How long (ms) a watch may stay Pending before the outcome is reported
+   * as unknown (never guessed as settled). */
+  EXPO_PUBLIC_TRANSFER_SETTLE_TIMEOUT_MS: intFromEnv(120_000, 10_000, 900_000),
+
+  // --- QVAC on-device voice models (Step: voice-to-intent pipeline) ------------
+  /** QVAC model identifier that parses speech into the payment intent JSON
+   * when no language-specific entry matches (verified against the installed
+   * @qvac/sdk exports at integration time). */
+  EXPO_PUBLIC_QVAC_INTENT_MODEL: z.string().min(1).default('LLAMA_3_2_1B_INST_Q4_0'),
+  /** Per-UI-language QVAC model identifiers (speech-to-text / intent). An
+   * unset language falls back to EXPO_PUBLIC_QVAC_INTENT_MODEL. */
+  EXPO_PUBLIC_QVAC_MODEL_ENGLISH: optionalNonEmptyString(),
+  EXPO_PUBLIC_QVAC_MODEL_ITALIANO: optionalNonEmptyString(),
+  EXPO_PUBLIC_QVAC_MODEL_TURKCE: optionalNonEmptyString(),
+  EXPO_PUBLIC_QVAC_MODEL_FRANCAIS: optionalNonEmptyString(),
+  EXPO_PUBLIC_QVAC_MODEL_HINDI: optionalNonEmptyString(),
+  EXPO_PUBLIC_QVAC_MODEL_ESPANOL: optionalNonEmptyString(),
+  EXPO_PUBLIC_QVAC_MODEL_KISWAHILI: optionalNonEmptyString(),
+
+  // --- Local P2P link (Step: NFC + Wi-Fi Direct) --------------------------------
+  /** TCP port the receiver's Wi-Fi Direct group serves the invoice fetch
+   * protocol on (the group runs on the 192.168.49.x subnet). */
+  EXPO_PUBLIC_LOCAL_LINK_PORT: intFromEnv(48_444, 1024, 65_535),
 });
 
 export type AppEnv = z.infer<typeof appEnvSchema>;
