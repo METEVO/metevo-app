@@ -63,7 +63,18 @@ const optionalNonEmptyString = () =>
     z.string().min(1).optional(),
   );
 
-export const appEnvSchema = z.object({
+/** Absolute http(s) URL or unset (empty counts as unset). */
+const optionalUrl = () =>
+  z.preprocess(
+    (value) =>
+      typeof value === 'string' && value.trim().length === 0 ? undefined : value,
+    z.string().url().optional(),
+  );
+
+/** Lightning peer URI: compressed pubkey (66 hex chars) @ host : port. */
+const PEER_URI_PATTERN = /^[0-9a-f]{66}@[a-z0-9.\-]+:[0-9]{1,5}$/i;
+
+const baseAppEnvSchema = z.object({
   // --- App flavour -----------------------------------------------------------
   EXPO_PUBLIC_METEVO_ENV: z.enum(['dev', 'prod']).default('dev'),
   EXPO_PUBLIC_LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
@@ -80,8 +91,9 @@ export const appEnvSchema = z.object({
 
   // --- Wallet session (Step: onboarding + wallet setup) ------------------------
   /** Wallet runtime: "mock" simulates the full setup flow (Expo Go demos),
-   * "wdk" drives the real @utexo/wdk-rgb-lightning node (debug APK builds). */
-  EXPO_PUBLIC_WALLET_MODE: z.enum(['mock', 'wdk']).default('mock'),
+   * "wdk" drives the real @utexo/wdk-rgb-lightning node (debug APK builds),
+   * "remote" drives an rgb-lightning-node daemon over its REST API. */
+  EXPO_PUBLIC_WALLET_MODE: z.enum(['mock', 'wdk', 'remote']).default('mock'),
   /** Bitcoin network for the embedded wallet node. */
   EXPO_PUBLIC_WALLET_NETWORK: z.enum(['regtest', 'testnet', 'signet', 'mainnet']).default('regtest'),
   /** How long the wallet setup waits for the LSP to provision the USDm
@@ -92,6 +104,23 @@ export const appEnvSchema = z.object({
    * WDK module from the app's JS runtime (Node tooling/scripts); "bare"
    * hosts it in a Bare worklet (the mobile device path). */
   EXPO_PUBLIC_WALLET_TRANSPORT: z.enum(['inprocess', 'bare']).default('inprocess'),
+  /** How often (ms) the home shell refreshes balances and the connection state. */
+  EXPO_PUBLIC_WALLET_STATUS_POLL_MS: intFromEnv(10_000, 2_000, 120_000),
+
+  // --- Remote RLN node (EXPO_PUBLIC_WALLET_MODE=remote) ------------------------
+  /** REST base URL of the node holding this wallet's keys. A USB phone uses
+   * http://localhost:3001 and an `adb reverse` to its own node. */
+  EXPO_PUBLIC_RLN_NODE_URL: optionalUrl(),
+  EXPO_PUBLIC_RLN_REQUEST_TIMEOUT_MS: intFromEnv(15_000, 1_000, 120_000),
+  /** Ticker of the USDm asset; ignored when the asset id is pinned below. */
+  EXPO_PUBLIC_RLN_USDM_TICKER: stringFromEnv('USDM'),
+  EXPO_PUBLIC_RLN_USDM_ASSET_ID: optionalNonEmptyString(),
+  /** Peer (pubkey@host:port) connected when the wallet opens; unset skips it. */
+  EXPO_PUBLIC_RLN_PEER_URI: z.preprocess(
+    (value) =>
+      typeof value === 'string' && value.trim().length === 0 ? undefined : value,
+    z.string().regex(PEER_URI_PATTERN).optional(),
+  ),
 
   // --- Voice AI (on-device QVAC models) ---------------------------------------
   /** Whisper STT model per UI language, resolved under <documents>/models/whisper.
@@ -160,6 +189,29 @@ export const appEnvSchema = z.object({
   /** TCP port the receiver's Wi-Fi Direct group serves the invoice fetch
    * protocol on (the group runs on the 192.168.49.x subnet). */
   EXPO_PUBLIC_LOCAL_LINK_PORT: intFromEnv(48_444, 1024, 65_535),
+});
+
+export const appEnvSchema = baseAppEnvSchema.superRefine((env, context) => {
+  if (env.EXPO_PUBLIC_WALLET_MODE === 'remote' && env.EXPO_PUBLIC_RLN_NODE_URL === undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['EXPO_PUBLIC_RLN_NODE_URL'],
+      message: 'required when EXPO_PUBLIC_WALLET_MODE=remote',
+    });
+  }
+  // Release builds forbid cleartext traffic, and the node URL reaches a
+  // key-holding wallet: anything outside dev must be TLS.
+  if (
+    env.EXPO_PUBLIC_METEVO_ENV === 'prod' &&
+    env.EXPO_PUBLIC_RLN_NODE_URL !== undefined &&
+    !env.EXPO_PUBLIC_RLN_NODE_URL.startsWith('https://')
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['EXPO_PUBLIC_RLN_NODE_URL'],
+      message: 'must use https:// in prod',
+    });
+  }
 });
 
 export type AppEnv = z.infer<typeof appEnvSchema>;
