@@ -14,6 +14,20 @@
         {
           "microphonePermission": "METEVO listens only while you press the talk button, and processes your voice on this device."
         }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 29
+          }
+        }
+      ],
+      [
+        "@qvac/sdk/expo-plugin",
+        {
+          "installMissingPrebuilds": true
+        }
       ]
     ]
   }
