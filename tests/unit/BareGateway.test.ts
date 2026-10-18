@@ -97,8 +97,13 @@ describe('bare gateway ipc bridge', () => {
     await flushMicrotasks();
 
     const worklet = lastWorklet();
-    expect(worklet.written).toHaveLength(1);
-    const request = JSON.parse(worklet.written[0]);
+    // Two-phase boot: the gateway first ships the bundle to the bootstrap
+    // (frame 1) and only sends the wallet request after bootstrap-loaded.
+    expect(worklet.written).toHaveLength(2);
+    const bootstrapFrame = JSON.parse(worklet.written[0]);
+    expect(bootstrapFrame.method).toBe('load');
+    expect(typeof bootstrapFrame.params.bundle).toBe('string');
+    const request = JSON.parse(worklet.written[1]);
     expect(request.method).toBe('openWallet');
     expect(request.params.mnemonic).toBe('fake test seed, never a real one');
     expect(request.params.walletConfig.lspBaseUrl).toBe('http://127.0.0.1:8080');
