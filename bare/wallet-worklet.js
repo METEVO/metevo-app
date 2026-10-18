@@ -23,6 +23,28 @@ import {
 
 const { IPC } = BareKit
 
+// On Android a worklet abort takes the whole app process down with it.
+// Never let an unexpected async failure reach the runtime's default abort:
+// report it over IPC so the app can log it and surface it to the user.
+function reportFatal(scope, cause) {
+  const message = cause instanceof Error ? `${cause.name}: ${cause.message}` : String(cause)
+  try {
+    console.error(`[worklet] ${scope}: ${message}`)
+  } catch {
+    /* console may be unavailable late in shutdown */
+  }
+  try {
+    IPC.write(JSON.stringify({ event: 'worklet-error', scope, message }) + '\n')
+  } catch {
+    /* IPC already closed - nothing more we can do */
+  }
+}
+
+if (typeof process !== 'undefined' && typeof process.on === 'function') {
+  process.on('uncaughtException', (cause) => reportFatal('uncaughtException', cause))
+  process.on('unhandledRejection', (cause) => reportFatal('unhandledRejection', cause))
+}
+
 let wallet = null
 let usdmAssetId = null
 

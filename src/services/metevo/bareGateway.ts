@@ -25,7 +25,12 @@ import type {
 // evaluates its contents inside the Bare runtime.
 import walletBundleAsset from '../../../bare/wallet.rlnbundle';
 
-const WORKLET_ENTRY_NAME = '/wallet.rlnbundle';
+// bare-module types the worklet source by the URL extension of this name:
+// only a ".bundle" suffix is recognized as a bare bundle and mounted as
+// one. Any other extension is compiled as a plain script, which dies on
+// the bundle header's first ':' and SIGABRTs the whole app (observed on
+// react-native-bare-kit 0.15.5, bare-module 7.0.3).
+const WORKLET_ENTRY_NAME = '/wallet.bundle';
 
 type WorkletInstance = {
   IPC: {
@@ -59,8 +64,10 @@ export function createBareWalletSessionGateway(): WalletSessionGateway {
     // The bundle resolves to a packaged file URI in release builds and to
     // the Metro dev-server URL in development; fetch reads both.
     const source = Image.resolveAssetSource(walletBundleAsset);
+    console.log('[metevo] worklet: fetching bundle from', source.uri);
     const response = await fetch(source.uri);
     const bundleContent = await response.text();
+    console.log('[metevo] worklet: bundle fetched,', bundleContent.length, 'chars');
 
     // Lazy require: bare-kit's JS calls TurboModuleRegistry.getEnforcing at
     // import time, which must never happen in runtimes without the native
@@ -80,6 +87,7 @@ export function createBareWalletSessionGateway(): WalletSessionGateway {
       }
     });
     started.start(WORKLET_ENTRY_NAME, bundleContent);
+    console.log('[metevo] worklet: start() accepted');
     worklet = started;
     return started;
   }
@@ -94,6 +102,18 @@ export function createBareWalletSessionGateway(): WalletSessionGateway {
     if (frame.event === 'progress') {
       const event = frame as unknown as { step: string; message: string };
       progressListener?.(event.step as WalletSetupStep, event.message);
+      return;
+    }
+    if (frame.event === 'worklet-error') {
+      const event = frame as unknown as { scope: string; message: string };
+      console.log('[metevo] worklet fatal:', event.scope, '-', event.message);
+      // Fail every in-flight request so the UI surfaces the error instead
+      // of waiting on a worklet that is about to die.
+      const inFlight = [...pending.values()];
+      pending.clear();
+      for (const request of inFlight) {
+        request.reject(new Error(`wallet node error: ${event.message}`));
+      }
       return;
     }
     const pendingRequest = pending.get(Number(frame.id));
@@ -145,17 +165,34 @@ export function createBareWalletSessionGateway(): WalletSessionGateway {
       progressListener = onProgress;
       try {
         await authenticateToAccessSecrets('Open your METEVO wallet');
+        console.log('[metevo] openWallet: biometric ok');
         const mnemonic = await readWalletMnemonicById(walletId);
         if (mnemonic === null) {
           throw new Error('no wallet seed is stored on this device');
         }
+        console.log(
+          '[metevo] openWallet: seed loaded,',
+          mnemonic.trim().split(/\s+/).length,
+          'words',
+        );
         const device = await loadDeviceWalletConfig();
+        console.log(
+          '[metevo] openWallet: device config loaded, peer',
+          device.lspPeerUri ?? '(none)',
+        );
         await request('openWallet', {
           mnemonic,
           walletConfig: walletConfigFromDevice(device),
           lspPeerUri: device.lspPeerUri ?? null,
           channelTimeoutMs: ENV.EXPO_PUBLIC_CHANNEL_PROVISION_TIMEOUT_MS,
         });
+        console.log('[metevo] openWallet: worklet reported success');
+      } catch (cause) {
+        console.log(
+          '[metevo] openWallet failed:',
+          cause instanceof Error ? cause.message : String(cause),
+        );
+        throw cause;
       } finally {
         progressListener = null;
       }
