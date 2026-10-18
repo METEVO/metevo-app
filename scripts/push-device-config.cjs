@@ -20,6 +20,9 @@ const APP_PACKAGE = 'app.metevo.wallet';
 const DEVICE_FILE_NAME = 'metevo-wallet-config.json';
 const REMOTE_TMP_PATH = `/data/local/tmp/${DEVICE_FILE_NAME}`;
 
+/** ADB override: set ADB=/path/to/adb when platform-tools is not on PATH. */
+const adbBinary = process.env.ADB ?? 'adb';
+
 const sourcePath = path.resolve(
   process.argv[2] ?? path.join(__dirname, 'device-wallet-config.json'),
 );
@@ -39,12 +42,12 @@ try {
   process.exit(1);
 }
 
-execFileSync('adb', ['push', sourcePath, REMOTE_TMP_PATH], { stdio: 'inherit' });
-execFileSync('adb', ['shell', 'run-as', APP_PACKAGE, 'mkdir', '-p', 'files'], {
+execFileSync(adbBinary, ['push', sourcePath, REMOTE_TMP_PATH], { stdio: 'inherit' });
+execFileSync(adbBinary, ['shell', 'run-as', APP_PACKAGE, 'mkdir', '-p', 'files'], {
   stdio: 'inherit',
 });
 execFileSync(
-  'adb',
+  adbBinary,
   [
     'shell',
     'run-as',
