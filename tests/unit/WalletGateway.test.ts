@@ -135,6 +135,24 @@ describe('mock gateway transfer refresh', () => {
   });
 });
 
+describe('gateway selection', () => {
+  test('remote mode drives the remote node gateway', async () => {
+    let selected!: GatewayModule;
+    jest.isolateModules(() => {
+      process.env.EXPO_PUBLIC_WALLET_MODE = 'remote';
+      process.env.EXPO_PUBLIC_RLN_NODE_URL = 'http://localhost:3001';
+      const gatewayModule = require('../../src/services/metevo/wallet-gateway');
+      selected = { createWalletSessionGateway: () => gatewayModule.createWalletSessionGateway() };
+    });
+    delete process.env.EXPO_PUBLIC_RLN_NODE_URL;
+    const gateway = selected.createWalletSessionGateway();
+
+    await expect(gateway.listWallets()).resolves.toEqual([
+      expect.objectContaining({ id: 'remote-rln-node' }),
+    ]);
+  });
+});
+
 describe('mock gateway first-time balance', () => {
   afterEach(() => {
     jest.useRealTimers();

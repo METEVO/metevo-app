@@ -1,5 +1,6 @@
 import { ENV } from '../../config/env';
 import { createBareWalletSessionGateway } from './bareGateway';
+import { createRemoteRlnWalletSessionGateway } from './remoteRlnGateway';
 import type { TransferInfo } from './transferWatcher';
 import type { StoredWalletMeta } from './secure-store';
 
@@ -217,6 +218,9 @@ function createMockWalletSessionGateway(): WalletSessionGateway {
 function selectGateway(): WalletSessionGateway {
   if (ENV.EXPO_PUBLIC_WALLET_MODE === 'mock') {
     return createMockWalletSessionGateway();
+  }
+  if (ENV.EXPO_PUBLIC_WALLET_MODE === 'remote') {
+    return createRemoteRlnWalletSessionGateway();
   }
   if (ENV.EXPO_PUBLIC_WALLET_TRANSPORT === 'bare') {
     // See docs/known-issues/wallet-bare-android-crash.md: a real duplicate
