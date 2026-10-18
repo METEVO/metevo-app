@@ -18,7 +18,14 @@ export interface LocalLink {
   startGroup(port: number): Promise<LocalLinkGroup>;
   /** Payer side: joins the receiver's group with the tag credentials. */
   connectToGroup(ssid: string, password: string, timeoutMs: number): Promise<void>;
-  serveInvoice(params: { sessionId: string; invoice: string }): Promise<void>;
+  serveInvoice(params: {
+    sessionId: string;
+    invoice: string;
+    /** When the receiver's LDK node listens on the group, the payer may
+     * settle over a direct channel (see offlineChannel.ts). */
+    nodePubkey?: string;
+    ldkPort?: number;
+  }): Promise<void>;
   fetchInvoice(params: {
     host: string;
     port: number;
@@ -32,20 +39,38 @@ export interface LocalLink {
 
 /**
  * The wire protocol over the P2P TCP socket: one request line
- * (`fetch <sessionId>`), one response line (the invoice, or
- * `error <reason>`). Defined here so payer and receiver never drift.
+ * (`fetch <sessionId>`), one response line. Response forms:
+ *   `error <reason>`                         - nothing to serve
+ *   `direct <invoice> <nodePubkey> <ldkPort>` - invoice + direct route hint
+ *   `<invoice>`                              - invoice, LSP-routed only
+ * Defined here so payer and receiver never drift.
  */
 export const localLinkFetchInvoiceProtocol = {
   requestLine(sessionId: string): string {
     return `fetch ${sessionId}\n`;
   },
-  parseResponse(line: string): { invoice: string } | { error: string } {
+  parseResponse(
+    line: string,
+  ): { invoice: string } | { error: string } | { direct: { invoice: string; nodePubkey: string; ldkPort: number } } {
     const trimmed = line.trim();
     if (trimmed.length === 0) {
       throw new Error('local link: empty socket response');
     }
     if (trimmed.startsWith('error ')) {
       return { error: trimmed.slice('error '.length) };
+    }
+    if (trimmed.startsWith('direct ')) {
+      const parts = trimmed.split(' ');
+      if (parts.length !== 4) {
+        throw new Error('local link: malformed direct response');
+      }
+      const ldkPort = Number(parts[3]);
+      if (!Number.isInteger(ldkPort) || ldkPort < 1 || ldkPort > 65_535) {
+        throw new Error('local link: malformed direct response port');
+      }
+      return {
+        direct: { invoice: parts[1], nodePubkey: parts[2], ldkPort },
+      };
     }
     return { invoice: trimmed };
   },
@@ -66,7 +91,12 @@ interface PendingFetch {
  */
 export function createMockLocalLink(defaultPort = 48_444): LocalLink {
   let credentials: LocalLinkCredentials | null = null;
-  let served: { sessionId: string; invoice: string } | null = null;
+  let served: {
+    sessionId: string;
+    invoice: string;
+    nodePubkey: string | null;
+    ldkPort: number | null;
+  } | null = null;
   let running = false;
   const pending = new Set<PendingFetch>();
 
@@ -100,7 +130,12 @@ export function createMockLocalLink(defaultPort = 48_444): LocalLink {
       void timeoutMs;
     },
     async serveInvoice(params) {
-      served = { sessionId: params.sessionId, invoice: params.invoice };
+      served = {
+        sessionId: params.sessionId,
+        invoice: params.invoice,
+        nodePubkey: params.nodePubkey ?? null,
+        ldkPort: params.ldkPort ?? null,
+      };
     },
     async fetchInvoice(params) {
       if (!running) {
@@ -109,7 +144,12 @@ export function createMockLocalLink(defaultPort = 48_444): LocalLink {
       if (served === null || served.sessionId !== params.sessionId) {
         throw new Error('local link: unknown session');
       }
-      const invoice = served.invoice;
+      // The receiver answers with the direct hint when its LDK node
+      // listens on the group interface.
+      const responseLine =
+        served.nodePubkey !== null && served.ldkPort !== null
+          ? `direct ${served.invoice} ${served.nodePubkey} ${served.ldkPort}`
+          : served.invoice;
       return new Promise<string>((resolve, reject) => {
         const waiter: PendingFetch = { resolve, reject };
         pending.add(waiter);
@@ -121,7 +161,7 @@ export function createMockLocalLink(defaultPort = 48_444): LocalLink {
             reject(new Error('local link: teardown during fetch'));
             return;
           }
-          resolve(invoice);
+          resolve(responseLine);
         }, 5);
       });
     },

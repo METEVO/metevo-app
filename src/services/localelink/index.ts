@@ -10,7 +10,11 @@ import { LocalLink, LocalLinkGroup } from './mockLocalLink';
 import { createMockLocalLink } from './mockLocalLink';
 
 export { FRAME_SIZE, decodeLocalLinkFrame, encodeLocalLinkFrame, LocalLinkCredentials } from './localLinkFrame';
-export { LocalLink, LocalLinkGroup } from './mockLocalLink';
+export {
+  LocalLink,
+  LocalLinkGroup,
+  localLinkFetchInvoiceProtocol,
+} from './mockLocalLink';
 
 /**
  * Native module surface (app.metevo.wallet.localelink.MetevoLocalLinkModule).
