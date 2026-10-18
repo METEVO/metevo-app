@@ -1,0 +1,66 @@
+name: metevo-regtest
+
+# Two RGB Lightning wallet nodes (alice, bob) on a private regtest chain.
+# Only the node REST APIs are published, bound to 127.0.0.1: they run
+# without authentication, so phones reach them through `adb reverse`.
+services:
+  bitcoind:
+    image: registry.gitlab.com/hashbeam/docker/bitcoind:30.2
+    command: ["-fallbackfee=0.0002", "-rest", "-rpcallowip=0.0.0.0/0"]
+    environment:
+      RPCAUTH: ${BITCOIND_RPCAUTH:?run ./regtest.sh up once to derive it into .env}
+    volumes:
+      - bitcoind-data:/srv/app/.bitcoin
+
+  electrs:
+    image: registry.gitlab.com/hashbeam/docker/electrs:0.11.0
+    environment:
+      BTCUSER: ${BITCOIND_RPC_USER:?missing in .env}
+      BTCPASS: ${BITCOIND_RPC_PASSWORD:?missing in .env}
+    volumes:
+      - electrs-data:/srv/app/db
+    depends_on:
+      - bitcoind
+
+  proxy:
+    image: ghcr.io/rgb-tools/rgb-proxy-server:0.3.0
+
+  rln-alice:
+    image: ${RLN_IMAGE:-rgb-lightning-node:latest}
+    command:
+      - --daemon-listening-port=3001
+      - --ldk-peer-listening-port=9735
+      - --network=regtest
+      - --disable-authentication
+      - /RLNdata
+    ports:
+      - "127.0.0.1:${ALICE_API_HOST_PORT:-3101}:3001"
+    volumes:
+      - rln-alice-data:/RLNdata
+    depends_on:
+      - bitcoind
+      - electrs
+      - proxy
+
+  rln-bob:
+    image: ${RLN_IMAGE:-rgb-lightning-node:latest}
+    command:
+      - --daemon-listening-port=3001
+      - --ldk-peer-listening-port=9735
+      - --network=regtest
+      - --disable-authentication
+      - /RLNdata
+    ports:
+      - "127.0.0.1:${BOB_API_HOST_PORT:-3102}:3001"
+    volumes:
+      - rln-bob-data:/RLNdata
+    depends_on:
+      - bitcoind
+      - electrs
+      - proxy
+
+volumes:
+  bitcoind-data:
+  electrs-data:
+  rln-alice-data:
+  rln-bob-data:
