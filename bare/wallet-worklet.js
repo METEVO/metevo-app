@@ -15,6 +15,7 @@
 import {
   assertPayableInvoice,
   createMetevoWallet,
+  createUsdmLightningInvoice,
   findAssetIdByTicker,
   getMetevoWalletStatus,
   getPaymentStatus,
@@ -124,6 +125,14 @@ async function refreshTransfers() {
   return refreshWalletTransfers(requireOpenWallet().account, usdmAssetId)
 }
 
+async function createUsdmInvoice({ amountBaseUnits }) {
+  return createUsdmLightningInvoice(
+    requireOpenWallet().account,
+    usdmAssetId,
+    amountBaseUnits ?? null,
+  )
+}
+
 async function shutdown() {
   if (wallet !== null) {
     await shutdownMetevoWallet(wallet)
@@ -137,6 +146,7 @@ const handlers = {
   submitPayment,
   checkPayment,
   refreshTransfers,
+  createUsdmInvoice,
   shutdown,
 }
 

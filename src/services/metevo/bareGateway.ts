@@ -174,6 +174,12 @@ export function createBareWalletSessionGateway(): WalletSessionGateway {
     async refreshTransfers() {
       return (await request('refreshTransfers')) as import('./transferWatcher').TransferInfo[];
     },
+    async createUsdmInvoice(amountBaseUnits) {
+      return (await request('createUsdmInvoice', { amountBaseUnits })) as {
+        invoice: string;
+        paymentHash: string | null;
+      };
+    },
     async shutdown() {
       if (worklet !== null) {
         await request('shutdown');

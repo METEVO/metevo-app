@@ -75,6 +75,11 @@ export interface WalletSessionGateway {
    * the current transfer list for the session asset (USDm). The settlement
    * watcher polls this until a watched transfer is Settled/Failed. */
   refreshTransfers(): Promise<TransferInfo[]>;
+  /** Creates the receiver's USDm Lightning invoice (blind when the amount
+   * is null). Serves the local-link receive flow and the relay answer. */
+  createUsdmInvoice(
+    amountBaseUnits: number | null,
+  ): Promise<{ invoice: string; paymentHash: string | null }>;
   shutdown(): Promise<void>;
 }
 
@@ -181,6 +186,12 @@ function createMockWalletSessionGateway(): WalletSessionGateway {
           : entry,
       );
       return mockTransfers.map((entry) => ({ ...entry }));
+    },
+    async createUsdmInvoice(amountBaseUnits) {
+      // The demo invoice is bolt11-shaped so payer-side guards accept it;
+      // it never reaches a real node.
+      const invoice = `lntb1metevomockreceive${amountBaseUnits ?? 'blind'}usdmdemo`;
+      return { invoice, paymentHash: null };
     },
     async shutdown() {
       opened = false;

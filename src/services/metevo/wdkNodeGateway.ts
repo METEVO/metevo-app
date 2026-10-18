@@ -124,6 +124,13 @@ export function createWdkWalletSessionGateway(): WalletSessionGateway {
       const { refreshWalletTransfers } = loadWdkService();
       return refreshWalletTransfers(wallet.account, usdmAssetId);
     },
+    async createUsdmInvoice(amountBaseUnits) {
+      if (wallet === null) {
+        throw new Error('the wallet is not open');
+      }
+      const { createUsdmLightningInvoice } = loadWdkService();
+      return createUsdmLightningInvoice(wallet.account, usdmAssetId, amountBaseUnits);
+    },
     async checkPayment(paymentHash) {
       if (wallet === null) {
         return 'unknown';

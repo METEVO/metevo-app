@@ -204,6 +204,34 @@ export async function refreshWalletTransfers(
   return mapped;
 }
 
+/**
+ * Creates the receiver's USDm Lightning invoice (the payer pays it over
+ * the LSP channel or a direct one). With an amount the invoice pins the
+ * asset amount (and lets the node derive the msat demand); without one it
+ * stays amount-free (blind receive). Uses the verified camelCase request
+ * shape { expirySec, assetId?, assetAmount? } of the WDK account.
+ */
+export async function createUsdmLightningInvoice(
+  account: MetevoWallet['account'],
+  usdmAssetId: string | null,
+  amountBaseUnits: number | null,
+): Promise<{ invoice: string; paymentHash: string | null }> {
+  const response = (await account.createLightningInvoice({
+    expirySec: 3600,
+    ...(usdmAssetId !== null ? { assetId: usdmAssetId } : {}),
+    ...(amountBaseUnits !== null ? { assetAmount: amountBaseUnits } : {}),
+  })) as Record<string, unknown>;
+  const invoice = String(response?.invoice ?? '');
+  if (invoice.length === 0) {
+    throw new Error('createLightningInvoice returned no invoice');
+  }
+  const paymentHash = String(response?.payment_hash ?? response?.paymentHash ?? '');
+  return {
+    invoice,
+    paymentHash: paymentHash.length > 0 ? paymentHash : null,
+  };
+}
+
 export async function findAssetIdByTicker(
   account: MetevoWallet['account'],
   ticker: string = DEFAULT_USDM_TICKER,

@@ -79,6 +79,10 @@ export interface WalletSession {
   checkPayment(paymentHash: string): Promise<PaymentNetworkStatus>;
   /** Advance the transfer state machine; polled by the settlement watcher. */
   refreshTransfers(): Promise<TransferInfo[]>;
+  /** Creates the receiver's USDm invoice (blind when the amount is null). */
+  createUsdmInvoice(
+    amountBaseUnits: number | null,
+  ): Promise<{ invoice: string; paymentHash: string | null }>;
   /** Back navigation to a fixed earlier phase (account -> theme, etc.). */
   reopenPhase(phase: SessionPhase): void;
 }
@@ -220,6 +224,12 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
     [withGateway],
   );
 
+  const createUsdmInvoice = useCallback(
+    (amountBaseUnits: number | null) =>
+      withGateway((gateway) => gateway.createUsdmInvoice(amountBaseUnits)),
+    [withGateway],
+  );
+
   const session = useMemo(
     () => ({
       phase,
@@ -245,6 +255,7 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       submitPayment,
       checkPayment,
       refreshTransfers,
+      createUsdmInvoice,
       reopenPhase,
     }),
     [
@@ -271,6 +282,7 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       submitPayment,
       checkPayment,
       refreshTransfers,
+      createUsdmInvoice,
       reopenPhase,
     ],
   );
