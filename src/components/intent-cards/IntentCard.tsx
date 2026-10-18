@@ -11,8 +11,7 @@ import { SendPaymentCard } from './SendPaymentCard';
 import { IntentCardShell } from './IntentCardShell';
 
 const IDLE_TITLE = 'Ready when you are';
-const IDLE_MESSAGE =
-  'Say send, receive or contacts. (Voice recognition arrives with the audio phase.)';
+const IDLE_MESSAGE = 'Say send, receive or contacts.';
 
 export interface IntentCardProps {
   /** Clears the canvas back to the idle hint (panels call it on Done). */

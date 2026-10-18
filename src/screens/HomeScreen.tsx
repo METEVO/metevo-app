@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useCallback, useEffect } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { BalancesCard } from '../components/BalancesCard';
@@ -21,6 +21,7 @@ import {
   type MetevoTheme,
 } from '../design/ThemeContext';
 import { useIntents } from '../hooks/useIntents';
+import { useVoicePipeline } from '../hooks/useVoicePipeline';
 import { WalletSession, useWalletSession } from '../hooks/useWalletSession';
 import { archiveRecording } from '../utils/recordingArchive';
 
@@ -96,17 +97,42 @@ export function HomeScreen() {
 }
 
 /**
- * The connected home shell. The voice recording hand-off below is the
- * QVAC voice-to-intent insertion point: phase 2 pipes the finished
- * recording into the recognition process and calls `simulateIntent` with
- * the resulting intent id.
+ * The connected home shell. The recording hand-off below is live: a finished
+ * recording goes through the on-device QVAC voice pipeline (transcribe ->
+ * WalletIntent agent -> deterministic validation) and lands as a card in the
+ * DynamicFrame plus a spoken announcement in the session language.
  */
 function HomeShell({ session }: { session: WalletSession }) {
   const theme = useTheme();
   const styles = useThemedStyles(makeStyles);
   const { intent, simulateIntent } = useIntents(null);
+  const voice = useVoicePipeline(session.language);
   const channelProvisioning =
     session.wallet !== null && !session.wallet.channelReady;
+
+  // The pipeline's outcome drives the frame: the validated card id opens
+  // the matching card; null keeps the idle hint.
+  useEffect(() => {
+    if (voice.outcome === null) {
+      return;
+    }
+    simulateIntent(voice.outcome.cardId);
+  }, [voice.outcome, simulateIntent]);
+
+  const handleRecordingComplete = useCallback((recordingUri: string | null) => {
+    if (recordingUri === null) {
+      return;
+    }
+    voice.run(recordingUri);
+
+    // Debug support: copy the finished recording into the user-chosen
+    // archive folder (SAF) so it is retrievable outside the app sandbox.
+    void archiveRecording(recordingUri).then((archivedUri) => {
+      if (archivedUri) {
+        console.log('[metevo] recording archived to:', archivedUri);
+      }
+    });
+  }, [voice]);
 
   // While the LSP has not provisioned the USDm channel yet, keep polling:
   // readiness lands asynchronously after "Wallet connected".
@@ -190,26 +216,6 @@ function sessionBalances(session: WalletSession) {
     { label: 'USDm BAL', value: formatUsdmBalance(session.wallet.balanceUsdmBaseUnits) },
     { label: 'SATS BAL', value: `${session.wallet.btcSpendableSat} sats` },
   ];
-}
-
-/**
- * Foundation seam: the recorder hands its output over here.
- * TODO(phase 2): forward to the on-device QVAC voice-to-intent pipeline.
- *
- * Debug support: copy the finished recording into the user-chosen archive
- * folder (SAF) so it is retrievable outside the app sandbox. No-op until a
- * folder is chosen via long-press on the replay button.
- */
-function handleRecordingComplete(recordingUri: string | null): void {
-  console.log('[metevo] recording finished (non-functional):', recordingUri);
-  if (recordingUri === null) {
-    return;
-  }
-  void archiveRecording(recordingUri).then((archivedUri) => {
-    if (archivedUri) {
-      console.log('[metevo] recording archived to:', archivedUri);
-    }
-  });
 }
 
 const makeStyles = (theme: MetevoTheme) => ({

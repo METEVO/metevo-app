@@ -16,13 +16,9 @@ const INTENT_DESCRIPTIONS: Record<IntentId, string> = {
 /**
  * Owns the CURRENT intent for the DynamicFrame.
  *
- * Foundation phase: no logic. `simulateIntent` exists so the frame and the
- * cards can be exercised from dev tools / tests; it is intentionally NOT
- * wired to the recording flow yet.
- *
- * TODO(phase 2): `useAudioRecorder` hands its recording to the on-device
- * QVAC voice-to-intent pipeline, whose JSON output lands here via
- * `simulateIntent`.
+ * `simulateIntent` is the seam the voice pipeline feeds: `useVoicePipeline`
+ * resolves a finished recording into a `VoiceOutcome` and lands its card id
+ * here. Dev tools and tests can still drive the frame directly.
  */
 export function useIntents(initialIntent: IntentId | null = null) {
   const [intent, setIntent] = useState<IntentId | null>(initialIntent);
