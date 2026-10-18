@@ -126,7 +126,7 @@ const baseAppEnvSchema = z.object({
   /** Whisper STT model per UI language, resolved under <documents>/models/whisper.
    * The name is chosen per language so each device only provisions the model
    * it actually speaks. */
-  EXPO_PUBLIC_QVAC_WHISPER_MODEL_ENGLISH: stringFromEnv('en.bin'),
+  EXPO_PUBLIC_QVAC_WHISPER_MODEL_ENGLISH: stringFromEnv('en-small.bin'),
   EXPO_PUBLIC_QVAC_WHISPER_MODEL_ITALIANO: stringFromEnv('it.bin'),
   EXPO_PUBLIC_QVAC_WHISPER_MODEL_TURKCE: stringFromEnv('tr.bin'),
   EXPO_PUBLIC_QVAC_WHISPER_MODEL_FRANCAIS: stringFromEnv('fr.bin'),

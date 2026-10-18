@@ -9,3 +9,6 @@ build/
 .env.local
 scripts/device-wallet-config.json
 ios/Pods/
+
+# On-device AI weights (provisioned with scripts/push-whisper-models.cjs)
+models/
