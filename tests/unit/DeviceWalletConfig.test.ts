@@ -18,6 +18,7 @@ const VALID_CONFIG = {
   bitcoindRpcPassword: 'test-only-password',
   rgbIndexerUrl: '127.0.0.1:50001',
   rgbProxyEndpoint: 'http://127.0.0.1:3001',
+  nativeLibraryDir: '/data/app/~~test/app.metevo.wallet-test/lib/arm64',
 };
 
 let mockFileContent = JSON.stringify(VALID_CONFIG);

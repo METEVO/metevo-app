@@ -7,5 +7,6 @@
   "bitcoindRpcUsername": "REPLACE-WITH-REGTEST-RPC-USER",
   "bitcoindRpcPassword": "REPLACE-WITH-REGTEST-RPC-PASSWORD",
   "rgbIndexerUrl": "192.168.1.10:50001",
-  "rgbProxyEndpoint": "http://192.168.1.10:3001"
+  "rgbProxyEndpoint": "http://192.168.1.10:3001",
+  "nativeLibraryDir": "filled-in automatically by push-device-config.cjs from pm path"
 }

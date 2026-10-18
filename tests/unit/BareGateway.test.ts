@@ -29,9 +29,37 @@ const DEVICE_CONFIG_FIXTURE = {
   bitcoindRpcPassword: 'test-only-password',
   rgbIndexerUrl: '127.0.0.1:50001',
   rgbProxyEndpoint: 'rpc://127.0.0.1:3000/json-rpc',
+  nativeLibraryDir: '/data/app/~~test/app.metevo.wallet-test/lib/arm64',
 };
 
 let mockDeviceConfigContent = JSON.stringify(DEVICE_CONFIG_FIXTURE);
+
+/**
+ * A minimal but structurally valid bare bundle with one linked: addon
+ * reference, so the gateway's addon rewrite runs for real in these tests.
+ */
+function miniWorkletBundle(): string {
+  const header = {
+    version: 0,
+    id: null,
+    main: '/main.js',
+    imports: {},
+    resolutions: {
+      '/main.js': {
+        '#package': '/package.json',
+        'bare-type': { addon: 'linked:libbare-type.1.4.0.so' },
+      },
+    },
+    addons: ['linked:libbare-type.1.4.0.so'],
+    assets: [],
+    files: {
+      '/package.json': { offset: 0, length: 2, mode: 420 },
+      '/main.js': { offset: 2, length: 2, mode: 420 },
+    },
+  };
+  const json = JSON.stringify(header);
+  return String(json.length + 1) + '\n' + json + '{}';
+}
 
 import { createBareWalletSessionGateway } from '../../src/services/metevo/bareGateway';
 import { Worklet } from 'react-native-bare-kit';
@@ -43,6 +71,7 @@ const mockedSecureStore = jest.mocked(
 interface FakeWorklet {
   dataHandlers: Array<(chunk: Uint8Array) => void>;
   written: string[];
+  started: { entry: string; source: string } | null;
 }
 
 function lastWorklet(): FakeWorklet {
@@ -78,7 +107,7 @@ beforeEach(() => {
   // Scoped stub: jest.restoreAllMocks would also strip the implementations
   // of the global setup-file mocks (Worklet, resolveAssetSource).
   (global as { fetch: unknown }).fetch = jest.fn(async () => ({
-    text: async () => 'worklet bundle placeholder',
+    text: async () => miniWorkletBundle(),
   }));
 });
 
@@ -97,13 +126,16 @@ describe('bare gateway ipc bridge', () => {
     await flushMicrotasks();
 
     const worklet = lastWorklet();
-    // Two-phase boot: the gateway first ships the bundle to the bootstrap
-    // (frame 1) and only sends the wallet request after bootstrap-loaded.
-    expect(worklet.written).toHaveLength(2);
-    const bootstrapFrame = JSON.parse(worklet.written[0]);
-    expect(bootstrapFrame.method).toBe('load');
-    expect(typeof bootstrapFrame.params.bundle).toBe('string');
-    const request = JSON.parse(worklet.written[1]);
+    // The gateway rewrites the linked: addon to a file: URL inside the
+    // provisioned native library directory before the worklet evaluates
+    // the bundle.
+    expect(worklet.started?.entry).toBe('/wallet.bundle');
+    expect(worklet.started?.source).toContain(
+      `"addon":"file://${DEVICE_CONFIG_FIXTURE.nativeLibraryDir}/libbare-type.1.4.0.so"`,
+    );
+    expect(worklet.started?.source).not.toContain('"addon":"linked:');
+    expect(worklet.written).toHaveLength(1);
+    const request = JSON.parse(worklet.written[0]);
     expect(request.method).toBe('openWallet');
     expect(request.params.mnemonic).toBe('fake test seed, never a real one');
     expect(request.params.walletConfig.lspBaseUrl).toBe('http://127.0.0.1:8080');

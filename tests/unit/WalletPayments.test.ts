@@ -19,6 +19,7 @@ const DEVICE_CONFIG_FIXTURE = {
   bitcoindRpcPassword: 'test-only-password',
   rgbIndexerUrl: 'http://127.0.0.1:3000',
   rgbProxyEndpoint: 'http://127.0.0.1:3001',
+  nativeLibraryDir: '/data/app/~~test/app.metevo.wallet-test/lib/arm64',
 };
 
 let mockDeviceConfigContent = JSON.stringify(DEVICE_CONFIG_FIXTURE);

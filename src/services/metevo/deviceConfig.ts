@@ -48,6 +48,11 @@ const deviceConfigSchema = z
      * carries no URL scheme (e.g. "127.0.0.1:50001"). */
     rgbIndexerUrl: z.string().min(1),
     rgbProxyEndpoint: z.string().url(),
+    /** Absolute path of the APK's native library directory (contains the
+     * staged bare addon .so files). scripts/push-device-config.cjs derives
+     * it from `pm path` at provisioning time; the gateway rewrites the
+     * worklet bundle's linked: addon references to file: URLs below. */
+    nativeLibraryDir: z.string().min(1),
   })
   .strict();
 

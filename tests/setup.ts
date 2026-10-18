@@ -34,25 +34,7 @@ jest.mock(
             instance.dataHandlers.push(handler);
           },
           write: (chunk: Uint8Array) => {
-            const text = Buffer.from(chunk).toString('utf8');
-            instance.written.push(text);
-            // Simulate the real bootstrap: a load frame is answered with
-            // a bootstrap-loaded event once it arrives.
-            for (const line of text.split('\n')) {
-              if (line.includes('"method":"load"')) {
-                const reply = new TextEncoder().encode(
-                  JSON.stringify({
-                    event: 'bootstrap-loaded',
-                    libDir: '/data/app/~~test/app.metevo.wallet-test/lib/arm64',
-                  }) + '\n',
-                );
-                setImmediate(() => {
-                  for (const handler of [...instance.dataHandlers]) {
-                    handler(reply);
-                  }
-                });
-              }
-            }
+            instance.written.push(Buffer.from(chunk).toString('utf8'));
           },
         },
         start: (entry: string, source: string) => {

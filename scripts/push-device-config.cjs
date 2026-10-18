@@ -42,6 +42,30 @@ try {
   process.exit(1);
 }
 
+// Derive the device's native library directory (holds the staged bare
+// addon .so files) from the package manager's APK path. The gateway
+// rewrites the worklet bundle's linked: addon references to file: URLs
+// below this path, because the bare-kit runtime only resolves linked:
+// against addons compiled into its own registry.
+const apkPath = execFileSync(
+  adbBinary,
+  ['shell', 'pm', 'path', APP_PACKAGE],
+  { encoding: 'utf8' },
+)
+  .trim()
+  .split('\n')[0]
+  .replace(/^package:/, '');
+if (apkPath === '') {
+  console.error(`Could not resolve the APK path of ${APP_PACKAGE}; is the app installed?`);
+  process.exit(1);
+}
+const nativeLibraryDir = apkPath.replace(/\/[^/]*\.apk$/, '') + '/lib/arm64';
+
+const config = JSON.parse(fs.readFileSync(sourcePath, 'utf8'));
+config.nativeLibraryDir = nativeLibraryDir;
+fs.writeFileSync(sourcePath, JSON.stringify(config, null, 2) + '\n');
+console.log(`nativeLibraryDir: ${nativeLibraryDir}`);
+
 execFileSync(adbBinary, ['push', sourcePath, REMOTE_TMP_PATH], { stdio: 'inherit' });
 execFileSync(adbBinary, ['shell', 'run-as', APP_PACKAGE, 'mkdir', '-p', 'files'], {
   stdio: 'inherit',

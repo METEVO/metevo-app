@@ -20,7 +20,7 @@ import type {
   WalletSessionSnapshot,
   WalletSetupStep,
 } from './wallet-gateway';
-import { WORKLET_BOOTSTRAP_SOURCE } from './workletBootstrap';
+import { rewriteLinkedAddons } from './bundleAddonRewrite';
 
 // Metro serves this file as an asset (see metro.config.js); the worklet
 // evaluates its contents inside the Bare runtime.
@@ -31,14 +31,7 @@ import walletBundleAsset from '../../../bare/wallet.rlnbundle';
 // one. Any other extension is compiled as a plain script, which dies on
 // the bundle header's first ':' and SIGABRTs the whole app (observed on
 // react-native-bare-kit 0.15.5, bare-module 7.0.3).
-//
-// The worklet therefore boots in two phases: a plain-script bootstrap
-// (see workletBootstrap.ts) rewrites the bundle's linked: addon
-// references to file: URLs inside the APK's native library directory -
-// the kit runtime can only resolve linked: against addons compiled into
-// its own registry - and only then loads the packed wallet bundle.
-const WORKLET_BOOTSTRAP_NAME = '/bootstrap.js';
-const BOOTSTRAP_TIMEOUT_MS = 20_000;
+const WORKLET_ENTRY_NAME = '/wallet.bundle';
 
 type WorkletInstance = {
   IPC: {
@@ -51,10 +44,6 @@ type PendingRequest = {
   resolve: (value: unknown) => void;
   reject: (cause: Error) => void;
 };
-let bootstrapDeferred: {
-  resolve: (libDir: string) => void;
-  reject: (cause: Error) => void;
-} | null = null;
 
 /**
  * The device gateway: runs the real wallet inside a Bare worklet and talks
@@ -81,6 +70,20 @@ export function createBareWalletSessionGateway(): WalletSessionGateway {
     const bundleContent = await response.text();
     console.log('[metevo] worklet: bundle fetched,', bundleContent.length, 'chars');
 
+    // The kit runtime resolves linked: addons only against its own
+    // compiled-in registry; the wallet's addons are staged as .so files in
+    // the APK's native library directory. Rewrite the references to
+    // file: URLs before the worklet evaluates the bundle.
+    const device = await loadDeviceWalletConfig();
+    const { source: rewrittenBundle, rewritten: addonCount } =
+      rewriteLinkedAddons(bundleContent, device.nativeLibraryDir);
+    console.log(
+      '[metevo] worklet: rewrote',
+      addonCount,
+      'addons to',
+      device.nativeLibraryDir,
+    );
+
     // Lazy require: bare-kit's JS calls TurboModuleRegistry.getEnforcing at
     // import time, which must never happen in runtimes without the native
     // BareKit module (Expo Go, mock mode, Node tooling).
@@ -98,35 +101,8 @@ export function createBareWalletSessionGateway(): WalletSessionGateway {
         newlineIndex = receiveBuffer.indexOf('\n');
       }
     });
-    // Phase 1: the plain-script bootstrap. It locates the APK's native
-    // library directory, rewrites the bundle's linked: addon references
-    // to file: URLs, and loads the bundle itself (phase 2).
-    started.start(WORKLET_BOOTSTRAP_NAME, WORKLET_BOOTSTRAP_SOURCE);
-    console.log('[metevo] worklet: bootstrap started');
-
-    const bootstrapOutcome = new Promise<string>((resolve, reject) => {
-      bootstrapDeferred = { resolve, reject };
-    });
-    const timeout = setTimeout(() => {
-      bootstrapDeferred?.reject(
-        new Error('the wallet bootstrap did not complete in time'),
-      );
-      bootstrapDeferred = null;
-    }, BOOTSTRAP_TIMEOUT_MS);
-    started.IPC.write(
-      new TextEncoder().encode(
-        JSON.stringify({ method: 'load', params: { bundle: bundleContent } }) + '\n',
-      ),
-    );
-
-    try {
-      const libDir = await bootstrapOutcome;
-      console.log('[metevo] worklet: bundle loaded, addons from', libDir);
-    } finally {
-      clearTimeout(timeout);
-      bootstrapDeferred = null;
-    }
-
+    started.start(WORKLET_ENTRY_NAME, rewrittenBundle);
+    console.log('[metevo] worklet: start() accepted');
     worklet = started;
     return started;
   }
@@ -138,18 +114,6 @@ export function createBareWalletSessionGateway(): WalletSessionGateway {
     } catch {
       return;
     }
-    if (frame.event === 'bootstrap-loaded') {
-      const event = frame as unknown as { libDir: string };
-      console.log('[metevo] worklet: bootstrap loaded bundle');
-      bootstrapDeferred?.resolve(event.libDir);
-      return;
-    }
-    if (frame.event === 'bootstrap-error') {
-      const event = frame as unknown as { message: string };
-      console.log('[metevo] worklet bootstrap failed:', event.message);
-      bootstrapDeferred?.reject(new Error(`wallet bootstrap failed: ${event.message}`));
-      return;
-    }
     if (frame.event === 'progress') {
       const event = frame as unknown as { step: string; message: string };
       progressListener?.(event.step as WalletSetupStep, event.message);
@@ -158,10 +122,6 @@ export function createBareWalletSessionGateway(): WalletSessionGateway {
     if (frame.event === 'worklet-error') {
       const event = frame as unknown as { scope: string; message: string };
       console.log('[metevo] worklet fatal:', event.scope, '-', event.message);
-      // Fail the bootstrap too, so an early crash surfaces as an error
-      // instead of a timeout.
-      bootstrapDeferred?.reject(new Error(`wallet node error: ${event.message}`));
-      bootstrapDeferred = null;
       // Fail every in-flight request so the UI surfaces the error instead
       // of waiting on a worklet that is about to die.
       const inFlight = [...pending.values()];
