@@ -4,8 +4,7 @@
     android:description="@string/metevo_localelink_name"
     android:requireDeviceUnlock="false">
     <aid-group
-        android:category="other"
-        android:paymentCategory="false">
+        android:category="other">
         <aid-filter android:name="F04D455445564F01" />
     </aid-group>
 </host-apdu-service>

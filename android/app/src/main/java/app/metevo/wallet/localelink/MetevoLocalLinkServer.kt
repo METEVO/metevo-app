@@ -13,6 +13,7 @@ import java.io.IOException
 import java.io.InputStreamReader
 import java.io.PrintWriter
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.ExecutorService
@@ -161,7 +162,10 @@ class MetevoLocalLinkServer(private val context: Context) {
             }
         socket.soTimeout = timeoutMs.toInt().coerceAtLeast(1)
         try {
-            socket.connect(InetAddress.getByName(host), port, timeoutMs.toInt().coerceAtLeast(1))
+            socket.connect(
+                InetSocketAddress(InetAddress.getByName(host), port),
+                timeoutMs.toInt().coerceAtLeast(1),
+            )
             val writer = PrintWriter(socket.outputStream, false)
             writer.print("fetch $sessionId\n")
             writer.flush()

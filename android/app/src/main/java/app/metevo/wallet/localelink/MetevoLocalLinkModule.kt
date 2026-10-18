@@ -108,7 +108,7 @@ class MetevoLocalLinkModule(private val reactContext: ReactApplicationContext) :
                     promise.reject("ENFC", "this device has no NFC adapter")
                     return
                 }
-            val activity: Activity? = currentActivity
+            val activity: Activity? = reactContext.currentActivity
             if (activity == null) {
                 promise.reject("ENFC", "no foreground activity for reader mode")
                 return
@@ -176,7 +176,7 @@ class MetevoLocalLinkModule(private val reactContext: ReactApplicationContext) :
         val selectResponse = isoDep.transceive(select)
         if (selectResponse.size < 2 ||
             selectResponse[selectResponse.size - 2] != 0x90.toByte() ||
-            selectResponse[selectResponse.size - 1] != 0x00
+            selectResponse[selectResponse.size - 1] != 0x00.toByte()
         ) {
             throw IllegalStateException("the tapped tag does not carry the METEVO local link")
         }
@@ -203,7 +203,7 @@ class MetevoLocalLinkModule(private val reactContext: ReactApplicationContext) :
     }
 
     private fun disableReaderMode(adapter: NfcAdapter) {
-        val activity = currentActivity ?: return
+        val activity = reactContext.currentActivity ?: return
         val callback = readerCallback
         if (callback != null) {
             adapter.disableReaderMode(activity)
@@ -262,7 +262,7 @@ class MetevoLocalLinkModule(private val reactContext: ReactApplicationContext) :
     @ReactMethod
     fun setKeepScreenOn(enabled: Boolean, promise: Promise) {
         try {
-            val activity = currentActivity
+            val activity = reactContext.currentActivity
             if (activity != null && activity.window != null) {
                 if (enabled) {
                     activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
