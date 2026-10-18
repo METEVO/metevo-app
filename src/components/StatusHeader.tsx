@@ -17,11 +17,16 @@ import { ProfileLink } from './ProfileLink';
 const LOGO_MARK_REFERENCE = { width: 44, height: 23 } as const;
 const AUDIO_ICON_REFERENCE = { width: 16, height: 15 } as const;
 
-const CONNECTED_LABEL = 'Wallet connected';
-const DISCONNECTED_LABEL = 'No wallet open';
+export type WalletConnectionState = 'connected' | 'offline' | 'closed';
+
+const CONNECTION_LABELS: Record<WalletConnectionState, string> = {
+  connected: 'Wallet connected',
+  offline: 'Wallet node unreachable',
+  closed: 'No wallet open',
+};
 
 interface StatusHeaderProps {
-  walletConnected: boolean;
+  connection: WalletConnectionState;
 }
 
 /**
@@ -33,7 +38,7 @@ interface StatusHeaderProps {
  * the design handoff assigns audio state ownership to the existing audio
  * pipeline and forbids silently overriding the user's audio setting.
  */
-export function StatusHeader({ walletConnected }: StatusHeaderProps) {
+export function StatusHeader({ connection }: StatusHeaderProps) {
   const theme = useTheme();
   const styles = useThemedStyles(makeStyles);
 
@@ -61,9 +66,7 @@ export function StatusHeader({ walletConnected }: StatusHeaderProps) {
           />
         </TouchableOpacity>
       </View>
-      <Text style={styles.connectionState}>
-        {walletConnected ? CONNECTED_LABEL : DISCONNECTED_LABEL}
-      </Text>
+      <Text style={styles.connectionState}>{CONNECTION_LABELS[connection]}</Text>
     </View>
   );
 }

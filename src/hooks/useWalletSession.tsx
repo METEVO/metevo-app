@@ -49,6 +49,8 @@ export type UiLanguage =
 
 export type UiTheme = ThemeMode;
 
+export type NodeConnection = 'online' | 'offline';
+
 export interface WalletSession {
   phase: SessionPhase;
   language: UiLanguage | null;
@@ -56,7 +58,10 @@ export interface WalletSession {
   setupStep: WalletSetupStep;
   progressMessage: string | null;
   errorMessage: string | null;
+  /** Last known snapshot; kept while the node is offline. */
   wallet: WalletSessionSnapshot | null;
+  /** 'offline' after a failed refresh, until the next one succeeds. */
+  connection: NodeConnection;
   /** The named wallets stored on this device (refreshed on the wallet phase). */
   wallets: StoredWalletMeta[];
   /** The wallet picked in the selector; null until chosen. */
@@ -110,6 +115,7 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
   const [progressMessage, setProgressMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [wallet, setWallet] = useState<WalletSessionSnapshot | null>(null);
+  const [connection, setConnection] = useState<NodeConnection>('online');
   const [wallets, setWallets] = useState<StoredWalletMeta[]>([]);
   const [selectedWalletId, setSelectedWalletId] = useState<string | null>(null);
 
@@ -182,6 +188,7 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
         }),
       );
       setWallet(await withGateway((gateway) => gateway.readStatus()));
+      setConnection('online');
       setPhase('home');
     } catch (cause) {
       console.log(
@@ -194,7 +201,16 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
   }, [selectedWalletId, withGateway]);
 
   const refreshWallet = useCallback(async () => {
-    setWallet(await withGateway((gateway) => gateway.readStatus()));
+    try {
+      setWallet(await withGateway((gateway) => gateway.readStatus()));
+      setConnection('online');
+    } catch (cause) {
+      console.log(
+        '[metevo] wallet refresh failed:',
+        cause instanceof Error ? cause.name : 'unknown',
+      );
+      setConnection('offline');
+    }
   }, [withGateway]);
 
   const hasStoredWallet = useCallback(
@@ -254,6 +270,7 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       progressMessage,
       errorMessage,
       wallet,
+      connection,
       wallets,
       selectedWalletId,
       continueOpening,
@@ -283,6 +300,7 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       progressMessage,
       errorMessage,
       wallet,
+      connection,
       wallets,
       selectedWalletId,
       continueOpening,

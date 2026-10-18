@@ -14,6 +14,7 @@ import { ThemeOptions } from '../components/onboarding/ThemeOptions';
 import { WalletSelector } from '../components/onboarding/WalletSelector';
 import { ActionButton } from '../components/ui/ActionButton';
 import { layout, scale } from '../components/styles';
+import { ENV } from '../config/env';
 import {
   useTheme,
   useThemedStyles,
@@ -108,8 +109,11 @@ function HomeShell({ session }: { session: WalletSession }) {
   const styles = useThemedStyles(makeStyles);
   const { intent, payload, simulateIntent } = useIntents(null);
   const voice = useVoicePipeline(session.language);
+  const walletOpen = session.wallet !== null;
+  const nodeOffline = session.connection === 'offline';
   const channelProvisioning =
-    session.wallet !== null && !session.wallet.channelReady;
+    session.wallet !== null && !nodeOffline && !session.wallet.channelReady;
+  const { refreshWallet } = session;
 
   // The pipeline's outcome drives the frame: the validated card id opens
   // the matching card with its wallet-result payload; null keeps the
@@ -121,15 +125,18 @@ function HomeShell({ session }: { session: WalletSession }) {
     simulateIntent(voice.outcome.cardId, voice.outcome.walletResult);
   }, [voice.outcome, simulateIntent]);
 
-  // While the LSP has not provisioned the USDm channel yet, keep polling:
-  // readiness lands asynchronously after "Wallet connected".
+  // Polling keeps balances fresh and detects when an unreachable node comes
+  // back; channel readiness lands asynchronously, so it polls faster then.
   useEffect(() => {
-    if (!channelProvisioning) {
+    if (!walletOpen) {
       return undefined;
     }
-    const refreshTimer = setInterval(() => void session.refreshWallet(), CHANNEL_REFRESH_INTERVAL_MS);
+    const intervalMs = channelProvisioning
+      ? CHANNEL_REFRESH_INTERVAL_MS
+      : ENV.EXPO_PUBLIC_WALLET_STATUS_POLL_MS;
+    const refreshTimer = setInterval(() => void refreshWallet(), intervalMs);
     return () => clearInterval(refreshTimer);
-  }, [channelProvisioning, session]);
+  }, [walletOpen, channelProvisioning, refreshWallet]);
 
   const handleRecordingComplete = useCallback(
     (recordingUri: string | null) => {
@@ -151,13 +158,22 @@ function HomeShell({ session }: { session: WalletSession }) {
 
   return (
     <View style={styles.shell}>
-      <StatusHeader walletConnected={session.wallet !== null} />
+      <StatusHeader connection={!walletOpen ? 'closed' : nodeOffline ? 'offline' : 'connected'} />
       <BalancesCard balances={sessionBalances(session)} />
 
       <ScrollView
         style={styles.canvas}
         contentContainerStyle={styles.canvasContent}
       >
+        {nodeOffline && (
+          <View style={styles.provisioningNote}>
+            <Text style={styles.provisioningTitle}>Can't reach your wallet node</Text>
+            <Text style={styles.provisioningBody}>
+              Showing your last known balances. Sending and receiving resume when it is back.
+            </Text>
+          </View>
+        )}
+
         {channelProvisioning && (
           <View style={styles.provisioningNote}>
             <Text style={styles.provisioningTitle}>Opening your USDm channel…</Text>
@@ -172,7 +188,7 @@ function HomeShell({ session }: { session: WalletSession }) {
             label="Receive money"
             variant="primary"
             onPress={() => simulateIntent('create-usdm-invoice')}
-            disabled={channelProvisioning}
+            disabled={channelProvisioning || nodeOffline}
             grow
           />
           <ActionButton
