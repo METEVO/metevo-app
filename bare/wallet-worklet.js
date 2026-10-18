@@ -156,7 +156,7 @@ async function createUsdmInvoice({ amountBaseUnits }) {
   )
 }
 
-async function hasUsableChannelWith({ peerPubkey }) {
+async function checkUsableChannelWith({ peerPubkey }) {
   return hasUsableChannelWith(requireOpenWallet().account, peerPubkey)
 }
 
@@ -178,7 +178,7 @@ const handlers = {
   checkPayment,
   refreshTransfers,
   createUsdmInvoice,
-  hasUsableChannelWith,
+  hasUsableChannelWith: checkUsableChannelWith,
   connectPeer,
   shutdown,
 }
