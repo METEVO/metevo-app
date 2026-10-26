@@ -1,8 +1,10 @@
 name: metevo-regtest
 
 # Two RGB Lightning wallet nodes (alice, bob) on a private regtest chain.
-# Only the node REST APIs are published, bound to 127.0.0.1: they run
-# without authentication, so phones reach them through `adb reverse`.
+# Only the node REST APIs are published, and only on loopback: docker's
+# published ports do not receive inbound LAN traffic under WSL mirrored
+# networking. lan_proxy.py listens on 0.0.0.0:3101/3102 (plain sockets,
+# which mirrored networking does deliver) and forwards to these ports.
 services:
   bitcoind:
     image: registry.gitlab.com/hashbeam/docker/bitcoind:30.2
@@ -34,7 +36,7 @@ services:
       - --disable-authentication
       - /RLNdata
     ports:
-      - "127.0.0.1:${ALICE_API_HOST_PORT:-3101}:3001"
+      - "127.0.0.1:3111:3001"
     volumes:
       - rln-alice-data:/RLNdata
     depends_on:
@@ -51,7 +53,7 @@ services:
       - --disable-authentication
       - /RLNdata
     ports:
-      - "127.0.0.1:${BOB_API_HOST_PORT:-3102}:3001"
+      - "127.0.0.1:3112:3001"
     volumes:
       - rln-bob-data:/RLNdata
     depends_on:

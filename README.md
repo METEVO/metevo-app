@@ -82,12 +82,21 @@ The app boots straight into the home shell: there is no sign-in and no wallet cr
 cd infra/regtest
 ./regtest.sh up          # first run writes .env with random secrets (gitignored, mode 600)
 ./regtest.sh bootstrap   # init + unlock + fund alice and bob, issue USDM, open alice->bob channel
+python3 lan_proxy.py &   # re-expose the node APIs to the LAN (run in the background)
 ./regtest.sh status      # balances, channel, and the adb lines for step 3
 ```
 
 - `bootstrap` is idempotent, so a rerun changes nothing. Node mnemonics go to `infra/regtest/.secrets/` (gitignored, mode 600) and are never printed.
 - The channel starts with alice holding 400 USDm and bob 100 USDm, so both phones can pay. You can change this in `.env` (`CHANNEL_*`).
-- Only the two node APIs are published, on `127.0.0.1:3101` (alice) and `127.0.0.1:3102` (bob). They run without authentication, so do not expose them beyond localhost.
+- Only the two node APIs are published. Docker binds them to loopback
+  (`127.0.0.1:3111` alice, `127.0.0.1:3112` bob) because docker's published
+  ports do not receive inbound LAN traffic under WSL mirrored networking;
+  `python3 infra/regtest/lan_proxy.py` re-exposes them on plain
+  `0.0.0.0:3101`/`0.0.0.0:3102` sockets, which mirrored networking does
+  deliver. Phones reach the node over Wi-Fi at the host's LAN IP
+  (`EXPO_PUBLIC_RLN_NODE_URL=http://<host-ip>:3101`), with `adb reverse` as
+  the USB fallback. They run without authentication, so do not expose them
+  beyond the demo LAN.
 - After a restart (`./regtest.sh down` then `up`), nodes come back locked. Run `./regtest.sh unlock`.
 - `./regtest.sh reset` wipes all chain and node data.
 
@@ -110,6 +119,20 @@ adb -s <BOB_SERIAL>   install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
 (An x86_64 emulator needs `-PreactNativeArchitectures=x86_64`.)
+
+#### Voice models when the QVAC hub is unreachable
+
+By default the QVAC voice agent resolves Whisper and the Qwen LLM from the QVAC model registry and downloads them on first use. On networks where that hub is unreachable (TLS interception, offline demo rigs), sideload instead:
+
+```bash
+# .env.local — a value ending in .bin/.gguf selects a local file instead of a registry preset
+EXPO_PUBLIC_QVAC_WHISPER_MODEL_ENGLISH=en-small.bin
+
+# copy models/whisper/*.bin into the app sandbox (needs a debuggable build)
+node scripts/push-whisper-models.cjs
+```
+
+The Qwen LLM is cached at `<documents>/.qvac/models/<sha256(registryPath)[:16]>_<file>.gguf`; a file with the registry's exact size and sha256 checksum skips the download and is checksum-verified on load. The SDK validates every sideloaded model before use, so a wrong file fails loudly instead of silently.
 
 #### 3. Wire each phone to its own node
 
