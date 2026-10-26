@@ -1,10 +1,10 @@
 {
   "plugins": [
     "@qvac/sdk/llamacpp-completion/plugin",
-    "@qvac/sdk/whispercpp-transcription/plugin",
-    "@qvac/sdk/tts-ggml/plugin",
-    "@qvac/sdk/nmtcpp-translation/plugin"
+    "@qvac/sdk/whispercpp-transcription/plugin"
   ],
+  "loggerLevel": "debug",
+  "loggerConsoleOutput": true,
   "httpDownloadConcurrency": 3,
   "httpConnectionTimeoutMs": 10000,
   "registryDownloadMaxRetries": 5,

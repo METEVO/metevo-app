@@ -1,0 +1,198 @@
+diff --git a/node_modules/@qvac/sdk/dist/src/client/rpc/expo-addon-rewrite.js b/node_modules/@qvac/sdk/dist/src/client/rpc/expo-addon-rewrite.js
+new file mode 100644
+index 0000000..2744de8
+--- /dev/null
++++ b/node_modules/@qvac/sdk/dist/src/client/rpc/expo-addon-rewrite.js
+@@ -0,0 +1,124 @@
++/**
++ * Rewrites `linked:` addon references of a packed bare bundle into `file:`
++ * URLs inside the app's native library directory.
++ *
++ * Why: the worklet runtime resolves `linked:` specs only against the addon
++ * registry compiled into its prebuilt libbare-kit.so. Addons shipped as
++ * plain .so files in the APK (the QVAC expo plugin stages them there) are
++ * not in that registry when the bundle references a newer addon build, and
++ * the runtime rejects them with CANNOT_LOAD. file: URLs are dlopen'd
++ * directly, bypassing the registry - the same mechanism the wallet worklet
++ * uses (src/services/metevo/bundleAddonRewrite.ts).
++ *
++ * A bare bundle is "<headerLength>\n<JSON header><blob>", where the length
++ * includes the newline. Only the header changes, so the prefix is
++ * recomputed and the blob is passed through untouched.
++ */
++
++const LINKED_ADDON_PATTERN = /^linked:(.+)$/
++
++/** The number of addons that were rewritten to file: URLs. */
++export function rewriteLinkedAddons(bundleSource, nativeLibraryDir) {
++    const newlineIndex = bundleSource.indexOf('\n')
++    if (newlineIndex === -1) {
++        throw new Error('the worklet bundle is malformed: no header length')
++    }
++    const jsonStart = newlineIndex + 1
++
++    // Locate the end of the header JSON with a brace scan (the header
++    // contains string escapes, so a naive search is not enough).
++    let depth = 0
++    let inString = false
++    let escaped = false
++    let jsonEnd = -1
++    for (let i = jsonStart; i < bundleSource.length; i += 1) {
++        const c = bundleSource[i]
++        if (inString) {
++            if (escaped) {
++                escaped = false
++            } else if (c === '\\') {
++                escaped = true
++            } else if (c === '"') {
++                inString = false
++            }
++        } else if (c === '"') {
++            inString = true
++        } else if (c === '{') {
++            depth += 1
++        } else if (c === '}') {
++            depth -= 1
++            if (depth === 0) {
++                jsonEnd = i + 1
++                break
++            }
++        }
++    }
++    if (jsonEnd === -1) {
++        throw new Error('the worklet bundle is malformed: unterminated header')
++    }
++
++    const header = JSON.parse(bundleSource.slice(jsonStart, jsonEnd))
++
++    const toFileUrl = (name) => {
++        const match = name.match(LINKED_ADDON_PATTERN)
++        return match === null
++            ? name
++            : `file://${nativeLibraryDir.replace(/\/$/, '')}/${match[1]}`
++    }
++
++    let rewritten = 0
++    if (header.resolutions !== undefined) {
++        for (const entry of Object.values(header.resolutions)) {
++            for (const key of Object.keys(entry)) {
++                const value = entry[key]
++                if (
++                    value !== null &&
++                    typeof value === 'object' &&
++                    typeof value.addon === 'string' &&
++                    LINKED_ADDON_PATTERN.test(value.addon)
++                ) {
++                    entry[key] = { addon: toFileUrl(value.addon) }
++                    rewritten += 1
++                }
++                else if (
++                    value !== null &&
++                    typeof value === 'object' &&
++                    typeof value.addon === 'object' &&
++                    typeof value.addon.android === 'string' &&
++                    LINKED_ADDON_PATTERN.test(value.addon.android)
++                ) {
++                    // Split addons record a per-platform addon map; the
++                    // Android entry points at the staged .so in the APK.
++                    entry[key] = { addon: { ...value.addon, android: toFileUrl(value.addon.android) } }
++                    rewritten += 1
++                }
++            }
++        }
++    }
++    if (Array.isArray(header.addons)) {
++        header.addons = header.addons.map((name) => {
++            if (typeof name === 'string' && LINKED_ADDON_PATTERN.test(name)) {
++                rewritten += 1
++                return toFileUrl(name)
++            }
++            return name
++        })
++    }
++    if (rewritten === 0) {
++        throw new Error('the worklet bundle references no linked addons')
++    }
++
++    const newHeader = JSON.stringify(header)
++
++    // bare-bundle v0 stores a bundle as "<len>\n<JSON>\n<blob>", where the
++    // prefix length counts the leading newline, the JSON, and the separator
++    // newline before the blob (len = JSON.length + 2).
++    const blobStart = bundleSource[jsonEnd] === '\n' ? jsonEnd + 1 : jsonEnd
++    const source =
++        String(newHeader.length + 2) +
++        '\n' +
++        newHeader +
++        '\n' +
++        bundleSource.slice(blobStart)
++    return { source, rewritten }
++}
+diff --git a/node_modules/@qvac/sdk/dist/src/client/rpc/expo-rpc-client.js b/node_modules/@qvac/sdk/dist/src/client/rpc/expo-rpc-client.js
+index 11b760d..526f7c2 100644
+--- a/node_modules/@qvac/sdk/dist/src/client/rpc/expo-rpc-client.js
++++ b/node_modules/@qvac/sdk/dist/src/client/rpc/expo-rpc-client.js
+@@ -34,6 +34,33 @@ export function getWorkerLifeSignal() {
+ }
+ // No life signal on Expo, so the RPC layer never calls this — `#rpc` interface stub.
+ export function notifyChannelClosed() { }
++/**
++ * Reads the app's native library directory from the device config that
++ * scripts/push-device-config.cjs provisions into the app sandbox
++ * (metevo-wallet-config.json). Returns null when no config was pushed -
++ * the caller then keeps the bundle's linked: addon references unchanged.
++ */
++async function readProvisionedNativeLibraryDir(paths) {
++    const legacy = await import('expo-file-system/legacy');
++    const configUri = `${paths.document.uri}metevo-wallet-config.json`;
++    let raw;
++    try {
++        raw = await legacy.readAsStringAsync(configUri);
++    }
++    catch {
++        return null;
++    }
++    let parsed;
++    try {
++        parsed = JSON.parse(raw);
++    }
++    catch {
++        return null;
++    }
++    return typeof parsed.nativeLibraryDir === 'string' && parsed.nativeLibraryDir.length > 0
++        ? parsed.nativeLibraryDir
++        : null;
++}
+ export async function getRPC() {
+     if (rpcInstance) {
+         return rpcInstance;
+@@ -74,6 +101,29 @@ export async function getRPC() {
+             logger.error(message);
+             throw new RPCConnectionFailedError(message, error instanceof Error ? error : undefined);
+         }
++        // Rewrite linked: addon references to file: URLs inside the app's
++        // native library directory. The worklet runtime resolves linked:
++        // specs only against the registry compiled into its prebuilt
++        // libbare-kit.so, which lags the addon set the bundle references
++        // (e.g. fabric 0.19.0) and rejects it with CANNOT_LOAD. file: URLs
++        // are dlopen'd directly. The directory comes from the provisioned
++        // device config (scripts/push-device-config.cjs derives it from
++        // `pm path`); without it the bundle loads unchanged.
++        try {
++            const { rewriteLinkedAddons } = require('./expo-addon-rewrite.js');
++            const nativeLibraryDir = await readProvisionedNativeLibraryDir(Paths);
++            if (nativeLibraryDir) {
++                const rewritten = rewriteLinkedAddons(mobileBundle, nativeLibraryDir);
++                mobileBundle = rewritten.source;
++                console.log(`[metevo] QVAC: rewrote ${rewritten.rewritten} linked addons to file: URLs under ${nativeLibraryDir}`);
++            }
++            else {
++                console.log('[metevo] QVAC: no provisioned nativeLibraryDir found, linked addons stay unresolved by the registry');
++            }
++        }
++        catch (error) {
++            console.log(`[metevo] QVAC: linked addon rewrite skipped: ${String(error)}`);
++        }
+         worklet.start('worker.bundle', mobileBundle, [
+             // Normalize arg number across platforms
+             'react-native-bare-kit',

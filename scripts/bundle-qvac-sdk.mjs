@@ -37,36 +37,8 @@ if (!existsSync(mobileBundle)) {
 console.log(`[qvac] mobile worker bundle ready: ${mobileBundle}`);
 
 // The step above patches react-native-bare-kit's linker to link only the
-// addons in qvac/addons.manifest.json. The wallet worklet runs on the same
-// bare-kit, so its addons must be in that allowlist too, or the APK ships
-// without them.
-const WALLET_BUNDLE = join(projectRoot, 'bare/wallet.rlnbundle');
-const ADDONS_MANIFEST = join(projectRoot, 'qvac/addons.manifest.json');
-
-/** "linked:libutexo__rgb-lightning-node-bare.0.2.0-beta.4.so" -> "@utexo/rgb-lightning-node-bare" */
-function packageNameOfLinkedAddon(specifier) {
-  const match = specifier.match(/^linked:lib(.+?)\.\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\.so$/);
-  if (match === null) {
-    throw new Error(`unrecognised linked addon specifier: ${specifier}`);
-  }
-  const [scope, name] = match[1].split('__');
-  return name === undefined ? scope : `@${scope}/${name}`;
-}
-
-function walletBundleAddonPackages() {
-  const source = readFileSync(WALLET_BUNDLE, 'utf8');
-  const newline = source.indexOf('\n');
-  // Bare bundle header: "<length>\n<json>", where length counts the json and its newline.
-  const header = JSON.parse(source.slice(newline + 1, newline + Number(source.slice(0, newline))));
-  return header.addons.map(packageNameOfLinkedAddon);
-}
-
-const walletAddons = walletBundleAddonPackages();
-const unresolved = walletAddons.filter((name) => !existsSync(join(projectRoot, 'node_modules', name)));
-if (unresolved.length > 0) {
-  throw new Error(`wallet bundle addons not installed: ${unresolved.join(', ')}`);
-}
-const manifest = JSON.parse(readFileSync(ADDONS_MANIFEST, 'utf8'));
-manifest.addons = [...new Set([...manifest.addons, ...walletAddons])].sort();
-writeFileSync(ADDONS_MANIFEST, `${JSON.stringify(manifest, null, 2)}\n`);
-console.log(`[qvac] addons manifest: ${manifest.addons.length} addons (wallet worklet included)`);
+// addons in qvac/addons.manifest.json. The wallet worklet is NOT merged
+// into that allowlist: the wallet runs in remote mode (plain HTTP to the
+// regtest node) and never starts a worklet, so the on-device RLN addon
+// would only add ~117 MB to the APK. Reintroduce the merge if the wdk
+// transport comes back (see docs/known-issues/).
