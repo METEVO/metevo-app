@@ -27,7 +27,7 @@ export function BalancesCard({ balances }: BalancesCardProps) {
   const styles = useThemedStyles(makeStyles);
 
   return (
-    <View style={[styles.card, styles.grow]}>
+    <View style={styles.card}>
       {balances.map((entry) => (
         <View key={entry.label} style={styles.entry}>
           <Text style={theme.typography.caption}>{entry.label}</Text>
@@ -43,9 +43,6 @@ const makeStyles = (theme: MetevoTheme) => ({
     ...theme.cardBase,
     paddingVertical: 8,
     paddingHorizontal: 12,
-  },
-  grow: {
-    flex: 1,
     gap: 2,
   },
   entry: {
