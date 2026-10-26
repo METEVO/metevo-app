@@ -45,6 +45,20 @@ export function speakEnglish(text: string): void {
   })();
 }
 
+/** Stops the current system-voice playback (the barge-in path). Safe to
+ * call when nothing is speaking. */
+export function stopSpeaking(): void {
+  generation += 1; // a later speakEnglish must still win over this stop
+  void (async () => {
+    try {
+      speech ??= await import('expo-speech');
+      speech.stop();
+    } catch {
+      // Nothing to stop if the module never loaded.
+    }
+  })();
+}
+
 /** Surfaces the same sentence to screen readers (TalkBack/VoiceOver). */
 export function announceForAccessibility(text: string): void {
   if (text.trim().length > 0) {

@@ -16,15 +16,15 @@ import {
   type MetevoTheme,
 } from '../design/ThemeContext';
 import { useIntents } from '../hooks/useIntents';
-import { useVoiceAgent } from '../hooks/useVoiceAgent';
+import { useVoiceAssistant } from '../hooks/useVoiceAssistant';
 import { WalletSession, useWalletSession } from '../hooks/useWalletSession';
 import { archiveRecording } from '../utils/recordingArchive';
 
 /**
  * Main (only) screen. The app opens straight into the connected home shell:
  * the wallet (the Docker regtest node in remote mode) connects by itself on
- * mount and the English QVAC voice agent loads in the background. There is
- * no sign-in and no wallet creation.
+ * mount and the hold-to-talk voice agent is ready from the first frame.
+ * There is no sign-in and no wallet creation.
  */
 export function HomeScreen() {
   const session = useWalletSession();
@@ -41,8 +41,38 @@ function HomeShell({ session }: { session: WalletSession }) {
   const theme = useTheme();
   const styles = useThemedStyles(makeStyles);
   const { intent, payload, simulateIntent } = useIntents(null);
-  const voice = useVoiceAgent(({ cardId, payload: voicePayload }) =>
-    simulateIntent(cardId, voicePayload),
+
+  // Debug support: copy each finished recording into the user-chosen
+  // archive folder (SAF) so it is retrievable outside the app sandbox.
+  const handleRecordingFinished = useCallback((recordingUri: string | null) => {
+    if (recordingUri === null) {
+      return;
+    }
+    void archiveRecording(recordingUri).then((archivedUri) => {
+      if (archivedUri) {
+        console.log('[metevo] recording archived to:', archivedUri);
+      }
+    });
+  }, []);
+
+  const voice = useVoiceAssistant(
+    ({ cardId, payload: voicePayload }) => simulateIntent(cardId, voicePayload),
+    handleRecordingFinished,
+    {
+      // The balance answer speaks the live values, not just the template.
+      getBalances: () => {
+        if (session.wallet === null) {
+          return null;
+        }
+        return {
+          usdm:
+            session.wallet.balanceUsdmBaseUnits === null
+              ? null
+              : session.wallet.balanceUsdmBaseUnits / 10 ** USDM_PRECISION_DIGITS,
+          sats: session.wallet.btcSpendableSat,
+        };
+      },
+    },
   );
   const walletOpen = session.wallet !== null;
   const nodeOffline = session.connection === 'offline';
@@ -61,23 +91,6 @@ function HomeShell({ session }: { session: WalletSession }) {
     return () => clearInterval(refreshTimer);
   }, [walletOpen, channelProvisioning, refreshWallet]);
 
-  const handleRecordingComplete = useCallback(
-    (recordingUri: string | null) => {
-      if (recordingUri === null) {
-        return;
-      }
-      voice.handleRecording(recordingUri);
-
-      // Debug support: copy the finished recording into the user-chosen
-      // archive folder (SAF) so it is retrievable outside the app sandbox.
-      void archiveRecording(recordingUri).then((archivedUri) => {
-        if (archivedUri) {
-          console.log('[metevo] recording archived to:', archivedUri);
-        }
-      });
-    },
-    [voice],
-  );
 
   return (
     <View style={styles.shell}>
@@ -159,14 +172,16 @@ function HomeShell({ session }: { session: WalletSession }) {
         {voice.message !== null && (
           <Text
             accessibilityLiveRegion="polite"
-            style={[styles.voiceMessage, voice.status === 'failed' && styles.voiceError]}
+            style={[styles.voiceMessage, voice.messageIsError && styles.voiceError]}
           >
             {voice.message}
           </Text>
         )}
         <RecordingControls
-          onRecordingComplete={handleRecordingComplete}
-          disabled={!voice.ready}
+          recording={voice.recording}
+          onPressIn={voice.onPressIn}
+          onPressOut={voice.onPressOut}
+          lastClipUri={voice.lastClipUri}
         />
 
         <HistorySpendingLinks />

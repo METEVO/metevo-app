@@ -9,71 +9,53 @@ import {
   useTheme,
   useThemedStyles,
 } from '../design/ThemeContext';
-import { useAudioRecorder } from '../hooks/useAudioRecorder';
 import { chooseArchiveDirectory } from '../utils/recordingArchive';
 import { layout } from './styles';
 
 interface RecordingControlsProps {
-  /** Called once per finished recording with its file uri (or null on
-   * failure). The home shell hands it to the QVAC voice agent. */
-  onRecordingComplete: (recordingUri: string | null) => void;
-  /** True while the voice agent cannot accept a recording yet (models
-   * loading or a command still being understood). */
-  disabled?: boolean;
+  /** True while the mic is live (the hold button is held down). */
+  recording: boolean;
+  /** Hold started: begins capture (barge-in when a turn is running). */
+  onPressIn: () => void;
+  /** Hold released: the captured clip enters the voice turn. */
+  onPressOut: () => void;
+  /** The most recent finished clip uri, for the debug replay button. */
+  lastClipUri: string | null;
 }
 
 /**
- * Bottom shell region: the stateful voice control centered with a small
+ * Bottom shell region: the hold-to-talk button centered with a small
  * debug replay button on the left. The audio on/off toggle lives in the
  * StatusHeader.
  *
- * Voice states follow the design handoff: idle shows the microphone
- * silhouette and starts recording; listening shows the stop square with a
- * solid outer ring and stops recording. Stopping never implies acceptance,
- * and the processing, success and attention states arrive with the
- * functional phases.
- *
- * TODO(debug): the left button exists only for on-device verification -
- * short-press replays the last recording, long-press opens the folder
- * picker that chooses where recordings are archived. Replace it with the
- * language picker in phase 2.
- *
- * Separation rule: this component knows nothing about intents or the
- * DynamicFrame - it only runs the recording state machine and reports the
- * result through `onRecordingComplete`.
+ * Separation rule: this component knows nothing about intents, the
+ * recording state machine or the DynamicFrame - it only renders the hold
+ * state and reports press and release. The voice orchestrator owns the
+ * turn.
  */
-export function RecordingControls({ onRecordingComplete, disabled = false }: RecordingControlsProps) {
+export function RecordingControls({
+  recording,
+  onPressIn,
+  onPressOut,
+  lastClipUri,
+}: RecordingControlsProps) {
   const theme = useTheme();
   const styles = useThemedStyles(makeStyles);
-  const lastUriRef = useRef<string | null>(null);
   const playerRef = useRef<AudioPlayer | null>(null);
 
-  const handleCompleted = useCallback(
-    (uri: string | null) => {
-      lastUriRef.current = uri;
-      onRecordingComplete(uri);
-    },
-    [onRecordingComplete],
-  );
-
   const replayLast = useCallback(() => {
-    const uri = lastUriRef.current;
-    if (!uri) {
+    if (!lastClipUri) {
       return;
     }
     playerRef.current?.remove();
-    playerRef.current = createAudioPlayer(uri);
+    playerRef.current = createAudioPlayer(lastClipUri);
     playerRef.current.play();
-  }, []);
+  }, [lastClipUri]);
 
   const pickArchiveFolder = useCallback(async () => {
     const directoryUri = await chooseArchiveDirectory();
     console.log('[metevo] archive folder:', directoryUri ?? 'not chosen');
   }, []);
-
-  const { phase, start, stop } = useAudioRecorder(handleCompleted);
-
-  const recording = phase === 'recording';
 
   return (
     <View style={styles.row}>
@@ -90,15 +72,14 @@ export function RecordingControls({ onRecordingComplete, disabled = false }: Rec
         <Text style={styles.sideLabel}>▶</Text>
       </TouchableOpacity>
 
-
       <TouchableOpacity
         style={styles.voiceButton}
-        onPress={recording ? stop : start}
-        disabled={disabled && !recording}
+        onPressIn={onPressIn}
+        onPressOut={onPressOut}
+        delayPressIn={80}
         accessibilityRole="button"
-        accessibilityLabel={recording ? 'Stop talking' : 'Talk'}
-        accessibilityHint="Press once to talk to METEVO; press again or stay silent to stop."
-        accessibilityState={{ disabled: disabled && !recording }}
+        accessibilityLabel={recording ? 'Release to send' : 'Hold to talk'}
+        accessibilityHint="Hold the button and speak; release when done."
       >
         {recording ? (
           <ListeningVoice

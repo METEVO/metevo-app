@@ -43,7 +43,13 @@ export interface UseAudioRecorderValue {
   phase: RecordingPhase;
   /** Latest mic level in dB (-160..0), or null while idle. */
   currentLevelDb: number | null;
-  start: () => void;
+  /** Synchronous phase check backed by the ref: the `phase` state lags one
+   * render, but the voice turn needs recording truth at press time. */
+  isRecording: () => boolean;
+  /** Resolves once the mic is actually recording (permission, audio mode
+   * and prepare all done) — the voice turn awaits it before trusting the
+   * recording state. */
+  start: () => Promise<void>;
   stop: () => void;
 }
 
@@ -197,13 +203,13 @@ export function useAudioRecorder(
   // ...and unmounting does too.
   useEffect(() => clearSilenceTimer, [clearSilenceTimer]);
 
-  const start = useCallback(() => {
-    void startRecording();
-  }, [startRecording]);
+  const start = useCallback(() => startRecording(), [startRecording]);
 
   const stop = useCallback(() => {
     void stopRecording();
   }, [stopRecording]);
 
-  return { phase, currentLevelDb: recorderState.metering ?? null, start, stop };
+  const isRecording = useCallback(() => phaseRef.current === 'recording', []);
+
+  return { phase, currentLevelDb: recorderState.metering ?? null, isRecording, start, stop };
 }

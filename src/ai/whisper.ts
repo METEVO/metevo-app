@@ -1,6 +1,7 @@
 import { loadModel, transcribe, unloadModel } from '@qvac/sdk';
 
 import { RegistryModelDescriptor } from './engine/modelRegistry';
+import { toFilesystemPath } from './localModel';
 
 /**
  * QVAC Whisper transcription, the on-device speech-to-text engine behind
@@ -64,9 +65,12 @@ export async function transcribeAudio(audioFilePath: string): Promise<string> {
     throw new Error('Whisper model is not initialized');
   }
 
+  // The QVAC worklet reads audio through plain filesystem paths, not
+  // file:// uris; the recorder hands out uris, so strip the scheme here —
+  // a literal "file:/..." path fails accessSync with AUDIO_FILE_NOT_FOUND.
   const segments = await transcribe({
     modelId: whisperModelId,
-    audioChunk: audioFilePath,
+    audioChunk: toFilesystemPath(audioFilePath),
     metadata: true,
   });
 

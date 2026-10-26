@@ -131,6 +131,14 @@ const baseAppEnvSchema = z.object({
    * model file name resolved under <documents>/models/whisper for offline
    * sideloading. The voice agent runs English only. */
   EXPO_PUBLIC_QVAC_WHISPER_MODEL_ENGLISH: stringFromEnv('WHISPER_EN_SMALL_Q8_0'),
+  /** Qwen LLM model: a QVAC registry preset name (downloaded on device on
+   * first use) or a local model file name resolved under
+   * <documents>/models/qwen for offline sideloading — the registry hub is
+   * not reachable from every demo network. Unset means registry-first. */
+  EXPO_PUBLIC_QVAC_LLM_MODEL_FILE: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string().min(1).optional(),
+  ),
   /** TTS model: a QVAC registry preset name or a local model file path. */
   EXPO_PUBLIC_QVAC_TTS_MODEL: stringFromEnv('TTS_MULTILINGUAL_SUPERTONIC3_Q8_0'),
   /** Speech synthesis engine behind the loaded TTS model. */

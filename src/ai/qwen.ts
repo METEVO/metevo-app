@@ -1,5 +1,7 @@
-import { completion, loadModel, QWEN3_600M_INST_Q4 } from '@qvac/sdk';
+import { completion, loadModel, unloadModel, QWEN3_600M_INST_Q4 } from '@qvac/sdk';
 
+import { ENV } from '../config/env';
+import { localModelPath } from './localModel';
 import { ModelDownloadProgress } from './whisper';
 
 /**
@@ -62,8 +64,12 @@ If the request does not match any intent, return UNKNOWN.
 
 let modelId: string | null = null;
 
-/** QWEN3_600M_INST_Q4 is a QVAC registry descriptor: the SDK downloads and
- * checksum-verifies the weights on first use, then caches them on device. */
+/**
+ * The Qwen weights load from a sideloaded local file when one is
+ * provisioned (files/models/qwen/<name>), and from the QVAC registry
+ * otherwise. Local-first keeps the demo independent of the registry hub,
+ * which is not reachable from every network.
+ */
 export async function initializeQwen(
   onProgress?: (progress: ModelDownloadProgress) => void,
 ): Promise<void> {
@@ -71,10 +77,43 @@ export async function initializeQwen(
     return;
   }
 
+  const localFile = ENV.EXPO_PUBLIC_QVAC_LLM_MODEL_FILE;
+  const localPath = localFile ? localModelPath('qwen', localFile) : null;
+  if (localPath !== null) {
+    console.log('[metevo] qwen loads from the sideloaded file:', localFile);
+    modelId = await loadModel({
+      modelSrc: localPath,
+      modelType: 'llamacpp-completion',
+    });
+    return;
+  }
+
   modelId = await loadModel({
     modelSrc: QWEN3_600M_INST_Q4,
     onProgress,
   });
+}
+
+/** Loads Qwen from an explicit local model file (sideloaded or downloaded
+ * by the runtime). The runtime owns the model's lifecycle state. */
+export async function loadQwenModel(modelSrc: string): Promise<string> {
+  if (modelId !== null) {
+    return modelId;
+  }
+  modelId = await loadModel({
+    modelSrc,
+    modelType: 'llamacpp-completion',
+  });
+  return modelId;
+}
+
+/** Frees the loaded Qwen weights (memory-pressure support). */
+export async function releaseQwenModel(): Promise<void> {
+  if (modelId === null) {
+    return;
+  }
+  await unloadModel({ modelId });
+  modelId = null;
 }
 
 export interface WalletInstruction {
