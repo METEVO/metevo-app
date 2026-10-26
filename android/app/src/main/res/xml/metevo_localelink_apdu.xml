@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The receiver's credential tag: METEVO private AID (non-payment). -->
+<host-apdu-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/metevo_localelink_name"
+    android:requireDeviceUnlock="false">
+    <aid-group
+        android:category="other">
+        <aid-filter android:name="F04D455445564F01" />
+    </aid-group>
+</host-apdu-service>

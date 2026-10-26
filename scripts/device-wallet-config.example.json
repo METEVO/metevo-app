@@ -1,0 +1,12 @@
+{
+  "lspApiUrl": "http://192.168.1.10:8080",
+  "lspBearerToken": "REPLACE-WITH-THE-LSP-APAY_BEARER_TOKEN",
+  "lspPeerUri": "REPLACE-WITH-LSP-PUBKEY@192.168.1.10:9735",
+  "bitcoindRpcHost": "192.168.1.10",
+  "bitcoindRpcPort": 18443,
+  "bitcoindRpcUsername": "REPLACE-WITH-REGTEST-RPC-USER",
+  "bitcoindRpcPassword": "REPLACE-WITH-REGTEST-RPC-PASSWORD",
+  "rgbIndexerUrl": "192.168.1.10:50001",
+  "rgbProxyEndpoint": "http://192.168.1.10:3001",
+  "nativeLibraryDir": "filled-in automatically by push-device-config.cjs from pm path"
+}

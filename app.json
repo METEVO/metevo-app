@@ -1,0 +1,34 @@
+{
+  "expo": {
+    "name": "METEVO",
+    "slug": "metevo",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "android": {
+      "package": "app.metevo.wallet"
+    },
+    "plugins": [
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "METEVO listens only while you press the talk button, and processes your voice on this device."
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 29
+          }
+        }
+      ],
+      [
+        "@qvac/sdk/expo-plugin",
+        {
+          "installMissingPrebuilds": true
+        }
+      ]
+    ]
+  }
+}

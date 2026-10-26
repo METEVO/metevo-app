@@ -1,0 +1,17 @@
+diff --git a/node_modules/@tetherto/wdk-wallet/bare.js b/node_modules/@tetherto/wdk-wallet/bare.js
+index d290f63..89ddb63 100644
+--- a/node_modules/@tetherto/wdk-wallet/bare.js
++++ b/node_modules/@tetherto/wdk-wallet/bare.js
+@@ -15,6 +15,10 @@
+ 
+ import 'bare-node-runtime/global'
+ 
+-export * from './index.js' with { imports: 'bare-node-runtime/imports' }
++// NOTE(METEVO patch): `with { imports }` removed — the remap is applied at
++// bundle time by bare-pack --imports (older Bare runtimes in
++// react-native-bare-kit 0.15.x cannot parse import attributes).
+ 
+-export { default } from './index.js' with { imports: 'bare-node-runtime/imports' }
++export * from './index.js'
++
++export { default } from './index.js'

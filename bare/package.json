@@ -1,0 +1,7 @@
+{
+  "name": "metevo-worklet",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "wallet-worklet.js"
+}
