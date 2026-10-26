@@ -233,8 +233,10 @@ export function createRlnRestClient(config: RlnRestClientConfig): RlnRestClient 
     },
 
     async listTransfers(assetId) {
+      // The node's AssetFilter is a serde enum discriminated by `type`; the
+      // Id variant carries the asset in `value` (openapi.yaml: AssetFilterId).
       const response = await call('POST', '/listtransfers', z.object({ transfers: z.array(transferSchema) }), {
-        asset_filter: { type: 'Id', asset_id: assetId },
+        asset_filter: { type: 'Id', value: assetId },
       });
       return response.transfers;
     },

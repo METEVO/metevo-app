@@ -16,20 +16,30 @@ import { ActionButton } from '../ui/ActionButton';
 
 type ReceiveStage =
   | 'compose'
+  | 'creating'
   | 'waiting'
   | 'received'
+  | 'request-error'
   | 'local-preparing'
   | 'local-serving'
   | 'local-received'
   | 'local-error';
 
+/** The request amount when the voice command named none. */
+const DEFAULT_AMOUNT_USD = 20;
+const USDM_BASE_UNITS_PER_USD = 10 ** 8;
 const MOCK_RECEIVE_AMOUNT = '20.00 USDm';
 const MOCK_RECEIVE_AMOUNT_BASE_UNITS = 2_000_000_000; // precision 8
-const MOCK_INVOICE = 'rgb:mock-usdm-receive-request (demo only, not payable)';
 
 const WAITING_NOTE = 'Waiting is not a receipt.';
-/** Demo-only stand-in for the wallet-confirmed settlement event. */
-const MOCK_SETTLEMENT_DELAY_MS = 3_000;
+
+/** Validates the voice payload's amount (absent/invalid -> the default). */
+function readPayloadAmount(payload: unknown): number {
+  const raw = (payload as { amountUsd?: unknown } | null | undefined)?.amountUsd;
+  return typeof raw === 'number' && Number.isFinite(raw) && raw > 0
+    ? raw
+    : DEFAULT_AMOUNT_USD;
+}
 
 /** Generates the session secrets shown on the tag (never a stored secret). */
 async function generateLocalLinkSecrets(): Promise<{ sessionId: string; passphrase: string }> {
@@ -49,17 +59,24 @@ async function generateLocalLinkSecrets(): Promise<{ sessionId: string; passphra
  * the receipt. The waiting stage never counts as a receipt; only the
  * wallet-confirmed transition shows the success state.
  *
+ * The request is a REAL invoice on this node for the amount the voice
+ * command carried ("a payment request of 30 dollars" -> 30 USDm; the
+ * default applies when no amount was spoken). The settlement comes from
+ * the transfer watcher, never from a timer.
+ *
  * "Receive in person" starts the NFC + Wi-Fi Direct local link: the phone
  * emulates the credential tag, forms the 2.4 GHz group and serves the
  * invoice over the P2P socket. stopGroup() runs in a finally block - the
  * hardware is released on success, error AND cancel.
  */
-export function ReceiveRequestCard() {
+export function ReceiveRequestCard({ payload }: { payload?: unknown }) {
   const styles = useThemedStyles(makeStyles);
   const { createUsdmInvoice } = useWalletSession();
   const watcher = useTransferWatcher();
   const [stage, setStage] = useState<ReceiveStage>('compose');
   const [note, setNote] = useState<string | null>(null);
+  const [amountUsd] = useState<number>(() => readPayloadAmount(payload));
+  const [invoice, setInvoice] = useState<string | null>(null);
   const linkRef = useRef<ReturnType<typeof getLocalLink> | null>(null);
   const localStageRef = useRef<ReceiveStage>('compose');
   const cancelledRef = useRef(false);
@@ -82,13 +99,43 @@ export function ReceiveRequestCard() {
     };
   }, [isLocalLinkActive]);
 
-  useEffect(() => {
-    if (stage !== 'waiting') {
-      return undefined;
+  const createRequest = useCallback(async () => {
+    setNote(null);
+    setStage('creating');
+    let created: { invoice: string; paymentHash: string | null };
+    try {
+      created = await createUsdmInvoice(
+        Math.round(amountUsd * USDM_BASE_UNITS_PER_USD),
+      );
+    } catch (cause) {
+      console.log(
+        '[metevo] invoice creation failed:',
+        cause instanceof Error ? cause.message : 'unknown',
+      );
+      setNote('The invoice could not be created. Try again.');
+      setStage('request-error');
+      return;
     }
-    const settlementTimer = setTimeout(() => setStage('received'), MOCK_SETTLEMENT_DELAY_MS);
-    return () => clearTimeout(settlementTimer);
-  }, [stage]);
+    setInvoice(created.invoice);
+    setStage('waiting');
+    // The watcher owns the outcome: only a wallet-confirmed settlement
+    // reaches the success state. LN invoices settle through the payment
+    // list (the on-chain transfer list never shows them), so watch the
+    // payment hash; blind invoices fall back to the transfer watch.
+    const result = created.paymentHash
+      ? await watcher.watchPayment(created.paymentHash)
+      : await watcher.watch();
+    if (result.status === 'settled') {
+      setStage('received');
+    } else {
+      setNote(
+        result.status === 'failed'
+          ? 'The payment failed before it settled.'
+          : 'No settled payment arrived in time.',
+      );
+      setStage('request-error');
+    }
+  }, [amountUsd, createUsdmInvoice, watcher]);
 
   const startLocalReceive = useCallback(async () => {
     setNote(null);
@@ -153,6 +200,11 @@ export function ReceiveRequestCard() {
     setStage('compose');
   }, [watcher]);
 
+  const stopWaiting = useCallback(() => {
+    watcher.stopWatching();
+    setStage('compose');
+  }, [watcher]);
+
   if (stage === 'local-received') {
     return (
       <View style={styles.centered}>
@@ -196,11 +248,33 @@ export function ReceiveRequestCard() {
     );
   }
 
+  if (stage === 'creating') {
+    return (
+      <View style={styles.centered}>
+        <Text style={styles.title}>Creating your request…</Text>
+        <Text style={styles.body}>
+          Asking your node for a {amountUsd.toFixed(2)} USDm invoice.
+        </Text>
+      </View>
+    );
+  }
+
   if (stage === 'received') {
     return (
       <View style={styles.centered}>
         <SuccessVoice width={64} height={64} />
-        <Text style={styles.title}>Received {MOCK_RECEIVE_AMOUNT}</Text>
+        <Text style={styles.title}>Received {amountUsd.toFixed(2)} USDm</Text>
+        <ActionButton label="Done" variant="primary" onPress={() => setStage('compose')} />
+      </View>
+    );
+  }
+
+  if (stage === 'request-error') {
+    return (
+      <View style={styles.centered}>
+        <AttentionVoice width={64} height={64} />
+        <Text style={styles.title}>The request stopped</Text>
+        <Text style={styles.caption}>{note ?? 'Nothing was received.'}</Text>
         <ActionButton label="Done" variant="primary" onPress={() => setStage('compose')} />
       </View>
     );
@@ -211,13 +285,15 @@ export function ReceiveRequestCard() {
       <View style={styles.canvas}>
         <Text style={styles.title}>Request ready</Text>
         <Text style={styles.body}>
-          Share your request to receive {MOCK_RECEIVE_AMOUNT}.
+          Share your request to receive {amountUsd.toFixed(2)} USDm.
         </Text>
         <View style={styles.invoiceBox}>
-          <Text style={styles.invoice}>{MOCK_INVOICE}</Text>
+          <Text style={styles.invoice} selectable>
+            {invoice}
+          </Text>
         </View>
         <Text style={styles.caption}>{WAITING_NOTE}</Text>
-        <ActionButton label="Back" variant="outlined" onPress={() => setStage('compose')} />
+        <ActionButton label="Back" variant="outlined" onPress={stopWaiting} />
       </View>
     );
   }
@@ -225,11 +301,13 @@ export function ReceiveRequestCard() {
   return (
     <View style={styles.canvas}>
       <Text style={styles.title}>Receive money</Text>
-      <Text style={styles.body}>Create a request to receive.</Text>
+      <Text style={styles.body}>
+        Create a request to receive {amountUsd.toFixed(2)} USDm.
+      </Text>
       <ActionButton
         label="Create request"
         variant="primary"
-        onPress={() => setStage('waiting')}
+        onPress={() => void createRequest()}
       />
       <ActionButton
         label="Receive in person"

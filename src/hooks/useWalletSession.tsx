@@ -100,6 +100,7 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       console.log(
         '[metevo] wallet open failed:',
         cause instanceof Error ? cause.name : 'unknown',
+        cause instanceof Error ? cause.message : '',
       );
       setErrorMessage(describeWalletError(cause));
     } finally {

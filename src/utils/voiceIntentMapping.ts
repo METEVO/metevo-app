@@ -64,8 +64,11 @@ export function intentActionFromInstruction(
     case 'RECEIVE_PAYMENT':
       return {
         cardId: 'create-usdm-invoice',
-        payload: null,
-        announcement: 'Opening your payment request.',
+        payload: { amountUsd: instruction.amount },
+        announcement:
+          instruction.amount !== null
+            ? `Creating a payment request for ${instruction.amount} dollars.`
+            : 'Opening your payment request.',
         transcript,
       };
     case 'CHECK_BALANCE':

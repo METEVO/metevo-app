@@ -5,6 +5,7 @@ import { playTacton } from '../services/metevo/tacton';
 import {
   TransferInfo,
   TransferWatchResult,
+  watchPaymentToTerminal,
   watchTransfersToTerminal,
 } from '../services/metevo/transferWatcher';
 import { speakAnnouncement } from '../services/spokenInteraction';
@@ -40,12 +41,14 @@ const TACTON_BY_OUTCOME: Record<
  * starting a competing loop over the same node.
  */
 export function useTransferWatcher() {
-  const { refreshTransfers } = useWalletSession();
+  const { refreshTransfers, checkPayment } = useWalletSession();
   const [phase, setPhase] = useState<TransferWatchPhase>('idle');
   const [transfer, setTransfer] = useState<TransferInfo | null>(null);
   const mountedRef = useRef(true);
   const cancelledRef = useRef(false);
   const watchRef = useRef<Promise<TransferWatchResult> | null>(null);
+  const checkPaymentRef = useRef(checkPayment);
+  checkPaymentRef.current = checkPayment;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -104,8 +107,50 @@ export function useTransferWatcher() {
     cancelledRef.current = true;
   }, []);
 
+  /** Watches a Lightning invoice's payment hash through the node's
+   * payment list: LN-received payments never appear in the on-chain
+   * transfer list, so invoice receives poll this way instead. Same
+   * haptic/voice semantics as watch(). */
+  const watchPayment = useCallback(
+    (paymentHash: string): Promise<TransferWatchResult> => {
+      if (watchRef.current !== null) {
+        return watchRef.current;
+      }
+      cancelledRef.current = false;
+      setPhase('watching');
+      playTacton('attention');
+      const run = watchPaymentToTerminal({
+        check: () => checkPaymentRef.current(paymentHash),
+        intervalMs: ENV.EXPO_PUBLIC_TRANSFER_POLL_INTERVAL_MS,
+        timeoutMs: ENV.EXPO_PUBLIC_TRANSFER_SETTLE_TIMEOUT_MS,
+        shouldStop: () => mountedRef.current === false || cancelledRef.current,
+      })
+        .then((result) => {
+          const outcome =
+            result.status === 'settled' || result.status === 'failed'
+              ? result.status
+              : 'unknown';
+          if (mountedRef.current) {
+            setPhase(outcome);
+            setTransfer(null);
+          }
+          if (!cancelledRef.current) {
+            playTacton(TACTON_BY_OUTCOME[outcome]);
+            speakAnnouncement(VOICE_BY_OUTCOME[outcome]);
+          }
+          return result;
+        })
+        .finally(() => {
+          watchRef.current = null;
+        });
+      watchRef.current = run;
+      return run;
+    },
+    [],
+  );
+
   return useMemo(
-    () => ({ phase, transfer, watch, stopWatching }),
-    [phase, transfer, watch, stopWatching],
+    () => ({ phase, transfer, watch, watchPayment, stopWatching }),
+    [phase, transfer, watch, watchPayment, stopWatching],
   );
 }

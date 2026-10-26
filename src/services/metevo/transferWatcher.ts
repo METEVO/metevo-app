@@ -143,3 +143,49 @@ export async function watchTransfersToTerminal(
     await delay(Math.min(options.intervalMs, remaining));
   }
 }
+
+export interface PaymentWatchOptions {
+  /** One poll: the node's payment-list status for the watched hash. */
+  check: () => Promise<'settled' | 'failed' | 'pending' | 'unknown'>;
+  /** Poll cadence in ms. */
+  intervalMs: number;
+  /** Max wall time in ms before the outcome becomes unknown. */
+  timeoutMs: number;
+  /** Cooperative cancellation; checked between polls (React unmount). */
+  shouldStop?: () => boolean;
+  /** Injected clock for deterministic tests. */
+  now?: () => number;
+  /** Injected delay for deterministic tests. */
+  delay?: (ms: number) => Promise<void>;
+}
+
+/**
+ * Lightning-invoice settlement watcher: poll the node's payment list for
+ * the watched payment hash until it reaches a terminal state or the
+ * deadline turns the outcome into "unknown" - never a guessed success.
+ * LN-received payments never appear in /listtransfers (on-chain only),
+ * so invoice receives watch this way instead.
+ */
+export async function watchPaymentToTerminal(
+  options: PaymentWatchOptions,
+): Promise<TransferWatchResult> {
+  const now = options.now ?? defaultNow;
+  const delay = options.delay ?? defaultDelay;
+  const startedAt = now();
+
+  while (true) {
+    if (options.shouldStop?.() === true) {
+      return { status: 'unknown', transfer: null };
+    }
+    const status = await options.check();
+    if (status === 'settled' || status === 'failed') {
+      return { status, transfer: null };
+    }
+    const elapsed = now() - startedAt;
+    if (elapsed >= options.timeoutMs) {
+      return { status: 'unknown', transfer: null };
+    }
+    const remaining = options.timeoutMs - elapsed;
+    await delay(Math.min(options.intervalMs, remaining));
+  }
+}
