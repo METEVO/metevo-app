@@ -3,6 +3,8 @@ import { Text, TouchableOpacity, View } from 'react-native';
 
 import AudioOnDark from '../assets/audio_on_dark.svg';
 import AudioOnLight from '../assets/audio_on_light.svg';
+import LogoMarkDark from '../assets/logo_mark_dark.svg';
+import LogoMarkLight from '../assets/logo_mark_light.svg';
 import {
   MetevoTheme,
   useTheme,
@@ -14,6 +16,7 @@ import { ProfileLink } from './ProfileLink';
 
 /** Intrinsic reference sizes from the design asset SVG viewBoxes. */
 const AUDIO_ICON_REFERENCE = { width: 16, height: 15 } as const;
+const LOGO_REFERENCE = { width: 44, height: 23 } as const;
 
 export type WalletConnectionState = 'connected' | 'offline' | 'closed';
 
@@ -40,11 +43,17 @@ export function StatusHeader({ connection }: StatusHeaderProps) {
   const styles = useThemedStyles(makeStyles);
 
   const AudioOnIcon = theme.mode === 'dark' ? AudioOnDark : AudioOnLight;
+  const LogoMark = theme.mode === 'dark' ? LogoMarkDark : LogoMarkLight;
 
   return (
     <View style={styles.stack}>
       <View style={styles.row}>
         <ProfileLink />
+        <LogoMark
+          width={scale(LOGO_REFERENCE.width)}
+          height={scale(LOGO_REFERENCE.height)}
+          accessibilityLabel="METEVO"
+        />
         <TouchableOpacity
           style={styles.audioChip}
           onPress={() => undefined}

@@ -233,7 +233,8 @@ const makeStyles = (theme: MetevoTheme) => ({
     flex: 1,
     paddingHorizontal: layout.screenPadding,
     paddingTop: scale(10),
-    paddingBottom: scale(8),
+    // Reference inset under the bottom controls (512 - 450.2 - 28.32).
+    paddingBottom: scale(33.5),
     gap: layout.sectionGap,
   },
   spacer: {
