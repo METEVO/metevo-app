@@ -9,6 +9,7 @@ import {
 import { findContactByName, isValidNodePubkey } from '../services/metevo/contacts';
 import { loadRelayClient } from '../services/metevo/relayClient';
 import { PaymentVoiceIntent } from '../services/metevo/paymentIntent';
+import { SubmittedPayment } from '../services/metevo/wallet-gateway';
 import { playTacton } from '../services/metevo/tacton';
 import { speakAnnouncement } from '../services/spokenInteraction';
 import { useTransferWatcher } from './useTransferWatcher';
@@ -195,8 +196,9 @@ export function usePaymentFlow() {
       return;
     }
     enterStage('submitting');
+    let submitted: SubmittedPayment;
     try {
-      await submitPayment({ invoice: proposal.invoice });
+      submitted = await submitPayment({ invoice: proposal.invoice });
     } catch (cause) {
       console.log(
         '[metevo] payment submission failed:',
@@ -208,7 +210,12 @@ export function usePaymentFlow() {
       return;
     }
     enterStage('watching');
-    const result = await watcher.watch();
+    // A Lightning payment never appears in the on-chain transfer list, so
+    // watch its payment hash; the transfer watcher is for on-chain sends.
+    const result =
+      submitted.paymentHash === null
+        ? await watcher.watch()
+        : await watcher.watchPayment(submitted.paymentHash);
     if (result.status === 'settled') {
       enterStage('settled');
     } else if (result.status === 'failed') {
