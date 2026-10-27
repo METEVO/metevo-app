@@ -29,17 +29,42 @@ type ReceiveStage =
 /** The request amount when the voice command named none. */
 const DEFAULT_AMOUNT_USD = 20;
 const USDM_BASE_UNITS_PER_USD = 10 ** 8;
-const MOCK_RECEIVE_AMOUNT = '20.00 USDm';
-const MOCK_RECEIVE_AMOUNT_BASE_UNITS = 2_000_000_000; // precision 8
+const DEFAULT_AMOUNT_BASE_UNITS = DEFAULT_AMOUNT_USD * USDM_BASE_UNITS_PER_USD;
 
 const WAITING_NOTE = 'Waiting is not a receipt.';
 
+/** Formats base units as the panel's "20.00". */
+function formatAmount(baseUnits: number): string {
+  return (baseUnits / USDM_BASE_UNITS_PER_USD).toFixed(2);
+}
+
+/**
+ * Strict parse of the typed amount into base units. Accepts "20", "20.5",
+ * "20,5" (decimal-pad comma) and at most 8 decimals; anything else (thousand
+ * separators, exponent notation, trailing text) is rejected instead of being
+ * truncated to a different amount.
+ */
+function parseAmountBaseUnits(raw: string): number | null {
+  const match = /^(\d{1,9})(?:[.,](\d{1,8}))?$/.exec(raw.trim());
+  if (match === null) {
+    return null;
+  }
+  const whole = Number(match[1]);
+  const fraction = Number((match[2] ?? '').padEnd(8, '0'));
+  const baseUnits = whole * USDM_BASE_UNITS_PER_USD + fraction;
+  return Number.isSafeInteger(baseUnits) && baseUnits > 0 ? baseUnits : null;
+}
+
 /** Validates the voice payload's amount (absent/invalid -> the default). */
-function readPayloadAmount(payload: unknown): number {
+function readPayloadBaseUnits(payload: unknown): number {
   const raw = (payload as { amountUsd?: unknown } | null | undefined)?.amountUsd;
-  return typeof raw === 'number' && Number.isFinite(raw) && raw > 0
-    ? raw
-    : DEFAULT_AMOUNT_USD;
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) {
+    return DEFAULT_AMOUNT_BASE_UNITS;
+  }
+  const baseUnits = Math.round(raw * USDM_BASE_UNITS_PER_USD);
+  return Number.isSafeInteger(baseUnits) && baseUnits > 0
+    ? baseUnits
+    : DEFAULT_AMOUNT_BASE_UNITS;
 }
 
 /** Generates the session secrets shown on the tag (never a stored secret). */
@@ -82,14 +107,20 @@ export function ReceiveRequestCard({
   const watcher = useTransferWatcher();
   const [stage, setStage] = useState<ReceiveStage>('compose');
   const [note, setNote] = useState<string | null>(null);
-  const [amountUsd, setAmountUsd] = useState<number>(() => readPayloadAmount(payload));
+  const [amountBaseUnits, setAmountBaseUnits] = useState<number>(() =>
+    readPayloadBaseUnits(payload),
+  );
   const [amountDraft, setAmountDraft] = useState<string>(() =>
-    readPayloadAmount(payload).toFixed(2),
+    formatAmount(readPayloadBaseUnits(payload)),
   );
   const [invoice, setInvoice] = useState<string | null>(null);
   const linkRef = useRef<ReturnType<typeof getLocalLink> | null>(null);
   const localStageRef = useRef<ReceiveStage>('compose');
   const cancelledRef = useRef(false);
+  /** The pending public-request watch, so the local flow can wait it out. */
+  const publicWatchRef = useRef<Promise<unknown> | null>(null);
+  /** Set when the user leaves a public request: its outcome is discarded. */
+  const abandonedRef = useRef(false);
 
   const isLocalLinkActive =
     stage === 'local-preparing' || stage === 'local-serving';
@@ -110,14 +141,13 @@ export function ReceiveRequestCard({
   }, [isLocalLinkActive]);
 
   const createRequest = useCallback(
-    async (amount: number) => {
+    async (baseUnits: number) => {
       setNote(null);
+      abandonedRef.current = false;
       setStage('creating');
       let created: { invoice: string; paymentHash: string | null };
       try {
-        created = await createUsdmInvoice(
-          Math.round(amount * USDM_BASE_UNITS_PER_USD),
-        );
+        created = await createUsdmInvoice(baseUnits);
       } catch (cause) {
         console.log(
           '[metevo] invoice creation failed:',
@@ -128,17 +158,25 @@ export function ReceiveRequestCard({
         return;
       }
       setInvoice(created.invoice);
-      // Public payment request: log it so a demo operator can pay it from the
-      // regtest CLI without copying the long string off the screen.
-      console.log('[metevo] invoice ready:', created.invoice);
+      if (__DEV__) {
+        // Public payment request (no secret): lets a demo operator pay it from
+        // the regtest CLI without copying the long string off the screen.
+        console.log('[metevo] invoice ready:', created.invoice);
+      }
       setStage('waiting');
       // The watcher owns the outcome: only a wallet-confirmed settlement
       // reaches the success state. LN invoices settle through the payment
       // list (the on-chain transfer list never shows them), so watch the
       // payment hash; blind invoices fall back to the transfer watch.
-      const result = created.paymentHash
-        ? await watcher.watchPayment(created.paymentHash)
-        : await watcher.watch();
+      const pending = created.paymentHash
+        ? watcher.watchPayment(created.paymentHash)
+        : watcher.watch();
+      publicWatchRef.current = pending;
+      const result = await pending;
+      publicWatchRef.current = null;
+      if (abandonedRef.current) {
+        return; // the user left: a cancelled watch must not show an outcome
+      }
       if (result.status === 'settled') {
         setStage('received');
       } else {
@@ -155,18 +193,30 @@ export function ReceiveRequestCard({
 
   /** Done on the amount panel: validates the typed amount, then invoices. */
   const submitAmount = useCallback(() => {
-    const parsed = Number.parseFloat(amountDraft.replace(',', '.'));
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      setNote('Enter an amount greater than zero.');
+    const baseUnits = parseAmountBaseUnits(amountDraft);
+    if (baseUnits === null) {
+      setNote('Enter an amount like 20 or 20.50, up to 8 decimals.');
       return;
     }
-    setAmountUsd(parsed);
-    void createRequest(parsed);
+    setAmountBaseUnits(baseUnits);
+    setAmountDraft(formatAmount(baseUnits));
+    void createRequest(baseUnits);
   }, [amountDraft, createRequest]);
 
   const startLocalReceive = useCallback(async () => {
     setNote(null);
     cancelledRef.current = false;
+    // The watcher is single-flight: end the pending public request and let it
+    // unwind first, otherwise the local flow would inherit its promise and
+    // report its outcome as this one.
+    abandonedRef.current = true;
+    watcher.stopWatching();
+    const pending = publicWatchRef.current;
+    if (pending !== null) {
+      await pending;
+      publicWatchRef.current = null;
+    }
+    abandonedRef.current = false;
     setStage('local-preparing');
     const link = getLocalLink();
     linkRef.current = link;
@@ -178,7 +228,7 @@ export function ReceiveRequestCard({
         sessionId,
       });
       const group = await link.startGroup(48_444);
-      const { invoice } = await createUsdmInvoice(MOCK_RECEIVE_AMOUNT_BASE_UNITS);
+      const { invoice } = await createUsdmInvoice(amountBaseUnits);
       await link.serveInvoice({ sessionId, invoice });
 
       setStage('local-serving');
@@ -228,16 +278,25 @@ export function ReceiveRequestCard({
   }, [watcher]);
 
   const stopWaiting = useCallback(() => {
+    abandonedRef.current = true;
     watcher.stopWatching();
     setStage('compose');
   }, [watcher]);
+
+  /** Terminal screens return to the amount panel without their stale note. */
+  const backToCompose = useCallback(() => {
+    setNote(null);
+    setStage('compose');
+  }, []);
 
   if (stage === 'local-received') {
     return (
       <View style={styles.centered}>
         <SuccessVoice width={64} height={64} />
-        <Text style={styles.title}>Received {MOCK_RECEIVE_AMOUNT} in person</Text>
-        <ActionButton label="Done" variant="primary" onPress={() => setStage('compose')} />
+        <Text style={styles.title}>
+          Received {formatAmount(amountBaseUnits)} USDm in person
+        </Text>
+        <ActionButton label="Done" variant="primary" onPress={backToCompose} />
       </View>
     );
   }
@@ -248,7 +307,7 @@ export function ReceiveRequestCard({
         <AttentionVoice width={64} height={64} />
         <Text style={styles.title}>The local receive stopped</Text>
         <Text style={styles.caption}>{note ?? 'Nothing was received.'}</Text>
-        <ActionButton label="Done" variant="primary" onPress={() => setStage('compose')} />
+        <ActionButton label="Done" variant="primary" onPress={backToCompose} />
       </View>
     );
   }
@@ -280,7 +339,7 @@ export function ReceiveRequestCard({
       <View style={styles.centered}>
         <Text style={styles.title}>Creating your request…</Text>
         <Text style={styles.body}>
-          Asking your node for a {amountUsd.toFixed(2)} USDm invoice.
+          Asking your node for a {formatAmount(amountBaseUnits)} USDm invoice.
         </Text>
       </View>
     );
@@ -290,8 +349,8 @@ export function ReceiveRequestCard({
     return (
       <View style={styles.centered}>
         <SuccessVoice width={64} height={64} />
-        <Text style={styles.title}>Received {amountUsd.toFixed(2)} USDm</Text>
-        <ActionButton label="Done" variant="primary" onPress={() => setStage('compose')} />
+        <Text style={styles.title}>Received {formatAmount(amountBaseUnits)} USDm</Text>
+        <ActionButton label="Done" variant="primary" onPress={backToCompose} />
       </View>
     );
   }
@@ -302,7 +361,7 @@ export function ReceiveRequestCard({
         <AttentionVoice width={64} height={64} />
         <Text style={styles.title}>The request stopped</Text>
         <Text style={styles.caption}>{note ?? 'Nothing was received.'}</Text>
-        <ActionButton label="Done" variant="primary" onPress={() => setStage('compose')} />
+        <ActionButton label="Done" variant="primary" onPress={backToCompose} />
       </View>
     );
   }
@@ -312,7 +371,7 @@ export function ReceiveRequestCard({
       <View style={styles.canvas}>
         <Text style={styles.title}>Request ready</Text>
         <Text style={styles.body}>
-          Share your request to receive {amountUsd.toFixed(2)} USDm.
+          Share your request to receive {formatAmount(amountBaseUnits)} USDm.
         </Text>
         <View style={styles.invoiceBox}>
           <ScrollView style={styles.invoiceScroll}>
