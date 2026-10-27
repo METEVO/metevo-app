@@ -1,27 +1,25 @@
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Text, TouchableOpacity, View } from 'react-native';
 
 import AudioOnDark from '../assets/audio_on_dark.svg';
 import AudioOnLight from '../assets/audio_on_light.svg';
-import LogoMarkDark from '../assets/logo_mark_dark.svg';
-import LogoMarkLight from '../assets/logo_mark_light.svg';
 import {
   MetevoTheme,
   useTheme,
   useThemedStyles,
 } from '../design/ThemeContext';
-import { layout, scale } from './styles';
+import { metevoDesignTokens } from '../design/designTokens';
+import { scale } from './styles';
 import { ProfileLink } from './ProfileLink';
 
 /** Intrinsic reference sizes from the design asset SVG viewBoxes. */
-const LOGO_MARK_REFERENCE = { width: 44, height: 23 } as const;
 const AUDIO_ICON_REFERENCE = { width: 16, height: 15 } as const;
 
 export type WalletConnectionState = 'connected' | 'offline' | 'closed';
 
 const CONNECTION_LABELS: Record<WalletConnectionState, string> = {
   connected: 'Wallet connected',
-  offline: 'Wallet node unreachable',
+  offline: 'Wallet offline',
   closed: 'No wallet open',
 };
 
@@ -30,9 +28,8 @@ interface StatusHeaderProps {
 }
 
 /**
- * Fixed top shell region: profile on the left, the METEVO mark centered,
- * and the audio state toggle on the right, with the wallet connection
- * state underneath.
+ * Fixed top shell region of the design: the profile chip and the audio
+ * state chip, then the wallet connection state with the DEMO marker.
  *
  * The audio toggle keeps its foundation-phase placeholder press behavior;
  * the design handoff assigns audio state ownership to the existing audio
@@ -43,52 +40,57 @@ export function StatusHeader({ connection }: StatusHeaderProps) {
   const styles = useThemedStyles(makeStyles);
 
   const AudioOnIcon = theme.mode === 'dark' ? AudioOnDark : AudioOnLight;
-  const LogoMark = theme.mode === 'dark' ? LogoMarkDark : LogoMarkLight;
 
   return (
     <View style={styles.stack}>
       <View style={styles.row}>
         <ProfileLink />
-        <LogoMark
-          width={scale(LOGO_MARK_REFERENCE.width)}
-          height={scale(LOGO_MARK_REFERENCE.height)}
-        />
         <TouchableOpacity
-          style={styles.audioToggle}
+          style={styles.audioChip}
           onPress={() => undefined}
           accessibilityRole="button"
-          accessibilityLabel="Audio on or off"
+          accessibilityLabel="Audio on"
           accessibilityState={{ checked: true }}
         >
           <AudioOnIcon
             width={scale(AUDIO_ICON_REFERENCE.width)}
             height={scale(AUDIO_ICON_REFERENCE.height)}
           />
+          <Text style={styles.audioLabel}>Audio on</Text>
         </TouchableOpacity>
       </View>
-      <Text style={styles.connectionState}>{CONNECTION_LABELS[connection]}</Text>
+      <View style={styles.row}>
+        <Text style={styles.connectionState}>{CONNECTION_LABELS[connection]}</Text>
+        <Text style={styles.demo}>DEMO</Text>
+      </View>
     </View>
   );
 }
 
 const makeStyles = (theme: MetevoTheme) => ({
   stack: {
-    gap: layout.rowGap / 4,
+    gap: scale(8),
   },
   row: {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
     justifyContent: 'space-between' as const,
   },
-  audioToggle: {
-    width: layout.secondaryButton,
-    height: layout.secondaryButton,
-    borderRadius: layout.secondaryButton / 2,
+  audioChip: {
+    minHeight: scale(metevoDesignTokens.layout.actionHeight),
+    flexDirection: 'row' as const,
     alignItems: 'center' as const,
-    justifyContent: 'center' as const,
+    gap: scale(4),
+    paddingHorizontal: scale(8),
+    borderRadius: scale(metevoDesignTokens.layout.cardRadius),
+    borderWidth: 1,
+    borderColor: theme.colors.controlBorder,
+    backgroundColor: theme.colors.background,
   },
-  connectionState: {
+  audioLabel: {
     ...theme.typography.caption,
-    textAlign: 'center' as const,
+    color: theme.colors.text,
   },
+  connectionState: theme.typography.caption,
+  demo: theme.typography.micro,
 });

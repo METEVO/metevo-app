@@ -38,7 +38,8 @@ export const metevoDesignTokens = {
         "ink": "#FF8A4C",
         "soft": "#27201B"
       }
-    }
+    },
+    "controlBorder": "#9DB5B2"
   },
   "light": {
     "background": "#FFFFFF",
@@ -73,7 +74,8 @@ export const metevoDesignTokens = {
         "ink": "#A44816",
         "soft": "#FFF1E8"
       }
-    }
+    },
+    "controlBorder": "#526B65"
   },
   "typography": {
     "family": "Arial",
@@ -170,5 +172,14 @@ export const metevoDesignTokens = {
     },
     "assetViewBox": "-8 -8 80 80",
     "assetPlacement": "Preserve the original 63-unit fill diameter and centre; the expanded viewport accommodates outlines. Do not fit the 80-unit asset into the old 64-unit box."
+  },
+  "nativeLayout": {
+    "bodyMinSp": 16,
+    "secondaryMinSp": 14,
+    "touchTargetMinDp": 48,
+    "fontScale": "Respect system scaling; reflow and scroll the task panel",
+    "currencySpoken": "U S D M",
+    "screenArtwork": "236.8 x 512 reference units; not a fixed native bitmap",
+    "navigation": "One HomeScreen with panel state; no new router dependency"
   }
 } as const;

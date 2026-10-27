@@ -1,14 +1,14 @@
 import React, { useCallback, useEffect } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 
 import { BalancesCard } from '../components/BalancesCard';
 import { DynamicFrame } from '../components/DynamicFrame';
 import { HistorySpendingLinks } from '../components/HistorySpendingLinks';
 import { RecordingControls } from '../components/RecordingControls';
 import { StatusHeader } from '../components/StatusHeader';
-import { TransactionList } from '../components/TransactionList';
+import { TaskPanel } from '../components/TaskPanel';
 import { ActionButton } from '../components/ui/ActionButton';
-import { layout } from '../components/styles';
+import { layout, scale } from '../components/styles';
 import { ENV } from '../config/env';
 import {
   useTheme,
@@ -32,10 +32,15 @@ export function HomeScreen() {
 }
 
 /**
- * The connected home shell. A finished recording goes through the on-device
- * QVAC voice agent (Whisper -> Qwen instruction -> intent mapping) and lands
- * as a card in the DynamicFrame with a spoken reply. Cards also stay
- * reachable from the quick actions via `simulateIntent` directly.
+ * The connected home shell of the design (HOME-01): profile and audio
+ * chips, the wallet state row, the balance box, the fixed task card and
+ * the microphone anchored below it. The card holds the idle menu or the
+ * active intent panel; the offline and connection states replace it with
+ * the design's attention card.
+ *
+ * A finished recording goes through the on-device QVAC voice agent
+ * (Whisper -> Qwen instruction -> intent mapping) and lands as a card with
+ * a spoken reply.
  */
 function HomeShell({ session }: { session: WalletSession }) {
   const theme = useTheme();
@@ -78,6 +83,7 @@ function HomeShell({ session }: { session: WalletSession }) {
   const nodeOffline = session.connection === 'offline';
   const channelProvisioning =
     session.wallet !== null && !nodeOffline && !session.wallet.channelReady;
+  const connecting = session.connecting || (walletOpen ? false : !nodeOffline && session.errorMessage === null);
   const { refreshWallet } = session;
 
   useEffect(() => {
@@ -91,101 +97,99 @@ function HomeShell({ session }: { session: WalletSession }) {
     return () => clearInterval(refreshTimer);
   }, [walletOpen, channelProvisioning, refreshWallet]);
 
+  const connection = !walletOpen
+    ? 'closed'
+    : nodeOffline
+      ? 'offline'
+      : 'connected';
 
   return (
     <View style={styles.shell}>
-      <StatusHeader connection={!walletOpen ? 'closed' : nodeOffline ? 'offline' : 'connected'} />
-      <BalancesCard balances={sessionBalances(session)} />
+      <StatusHeader connection={connection} />
+      <BalancesCard
+        label={nodeOffline ? 'Last known balance' : 'Available balance'}
+        usdm={formatUsdmBalance(session.wallet?.balanceUsdmBaseUnits ?? null)}
+        sats={formatSats(session.wallet?.btcSpendableSat ?? null)}
+      />
 
-      <ScrollView
-        style={styles.canvas}
-        contentContainerStyle={styles.canvasContent}
-      >
-        {session.errorMessage !== null && (
-          <View style={styles.provisioningNote}>
-            <Text style={styles.provisioningTitle}>The wallet did not connect</Text>
-            <Text style={styles.provisioningBody}>{session.errorMessage}</Text>
+      {nodeOffline ? (
+        <TaskPanel variant="attention">
+          <View style={styles.statusPanel}>
+            <View style={styles.statusCopy}>
+              <Text style={styles.statusTitle}>{'Wallet unavailable'}</Text>
+              <Text style={styles.statusBody}>No payment was submitted.</Text>
+              <Text style={styles.statusBody}>Reconnect to continue.</Text>
+            </View>
+            <ActionButton
+              label="Reconnect"
+              variant="outlined"
+              attention
+              onPress={() => void session.openWallet()}
+            />
+          </View>
+        </TaskPanel>
+      ) : session.errorMessage !== null ? (
+        <TaskPanel variant="attention">
+          <View style={styles.statusPanel}>
+            <View style={styles.statusCopy}>
+              <Text style={styles.statusTitle}>{'The wallet did not connect'}</Text>
+              <Text style={styles.statusBody}>{session.errorMessage}</Text>
+            </View>
             <ActionButton
               label="Try again"
               variant="primary"
               onPress={() => void session.openWallet()}
             />
           </View>
-        )}
-
-        {session.connecting && session.errorMessage === null && (
-          <View style={styles.provisioningNote}>
-            <Text style={styles.provisioningTitle}>Connecting to your wallet node…</Text>
-            <Text style={styles.provisioningBody}>
+        </TaskPanel>
+      ) : connecting ? (
+        <TaskPanel>
+          <View style={styles.statusCopy}>
+            <Text style={styles.panelTitle}>{'Connecting to your wallet node…'}</Text>
+            <Text style={styles.statusBody}>
               Balances and payments appear as soon as it is ready.
             </Text>
           </View>
-        )}
-
-        {nodeOffline && !session.connecting && (
-          <View style={styles.provisioningNote}>
-            <Text style={styles.provisioningTitle}>Can't reach your wallet node</Text>
-            <Text style={styles.provisioningBody}>
-              Showing your last known balances. Sending and receiving resume when it is back.
-            </Text>
-          </View>
-        )}
-
-        {channelProvisioning && (
-          <View style={styles.provisioningNote}>
-            <Text style={styles.provisioningTitle}>Opening your USDm channel…</Text>
-            <Text style={styles.provisioningBody}>
+        </TaskPanel>
+      ) : channelProvisioning ? (
+        <TaskPanel>
+          <View style={styles.statusCopy}>
+            <Text style={styles.panelTitle}>{'Opening your USDm channel…'}</Text>
+            <Text style={styles.statusBody}>
               Sending and receiving unlock when it is ready.
             </Text>
           </View>
-        )}
-
-        <View style={styles.quickActions}>
-          <ActionButton
-            label="Receive money"
-            variant="primary"
-            onPress={() => simulateIntent('create-usdm-invoice')}
-            disabled={channelProvisioning || nodeOffline}
-            grow
-          />
-          <ActionButton
-            label="Contacts"
-            variant="outlined"
-            onPress={() => simulateIntent('contacts')}
-            grow
-          />
-        </View>
-
-        {/* TODO: wire real transaction history once the gateway exposes
-            it; a freshly opened wallet has none, so this starts empty
-            rather than showing fixture data. */}
-        <TransactionList transactions={[]} />
-
+        </TaskPanel>
+      ) : (
         <DynamicFrame
           intent={intent}
           onClearIntent={() => simulateIntent(null)}
+          onSelectIntent={(next) => simulateIntent(next)}
           payload={payload}
         />
-      </ScrollView>
+      )}
 
-      <View style={styles.bottomRegion}>
-        {voice.message !== null && (
-          <Text
-            accessibilityLiveRegion="polite"
-            style={[styles.voiceMessage, voice.messageIsError && styles.voiceError]}
-          >
-            {voice.message}
-          </Text>
-        )}
+      <View style={styles.spacer} />
+
+      <View style={styles.voiceRegion}>
         <RecordingControls
           recording={voice.recording}
+          state={nodeOffline ? 'attention' : 'idle'}
           onPressIn={voice.onPressIn}
           onPressOut={voice.onPressOut}
           lastClipUri={voice.lastClipUri}
         />
-
-        <HistorySpendingLinks />
+        {(voice.message !== null || nodeOffline) && (
+          <Text
+            accessibilityLiveRegion="polite"
+            style={[styles.voiceMessage, voice.messageIsError && styles.voiceError]}
+          >
+            {voice.message ?? 'Needs attention'}
+          </Text>
+        )}
       </View>
+
+      <HistorySpendingLinks />
     </View>
   );
 }
@@ -203,52 +207,52 @@ function formatUsdmBalance(baseUnits: number | null): string {
   return `${(baseUnits / 10 ** USDM_PRECISION_DIGITS).toFixed(2)} USDm`;
 }
 
-function sessionBalances(session: WalletSession) {
-  if (session.wallet === null) {
-    return [];
+function formatSats(sats: number | null): string {
+  if (sats === null) {
+    return '— sats';
   }
-  return [
-    { label: 'USDm BAL', value: formatUsdmBalance(session.wallet.balanceUsdmBaseUnits) },
-    { label: 'SATS BAL', value: `${session.wallet.btcSpendableSat} sats` },
-  ];
+  // Fixed grouping: the reference design shows 99,678,917 regardless of locale.
+  return `${sats.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')} sats`;
 }
 
 const makeStyles = (theme: MetevoTheme) => ({
   shell: {
     flex: 1,
     paddingHorizontal: layout.screenPadding,
+    paddingTop: scale(10),
+    paddingBottom: scale(8),
     gap: layout.sectionGap,
   },
-  canvas: {
+  spacer: {
     flex: 1,
+    minHeight: scale(8),
   },
-  canvasContent: {
-    gap: layout.sectionGap,
-    paddingBottom: layout.sectionGap,
-  },
-  provisioningNote: {
-    ...theme.cardBase,
-    borderColor: theme.voiceStates.attention.fill,
-    gap: layout.rowGap / 4,
-  },
-  provisioningTitle: {
-    ...theme.typography.body,
-    fontWeight: '700' as const,
-  },
-  provisioningBody: theme.typography.caption,
-  quickActions: {
-    flexDirection: 'row' as const,
+  statusPanel: {
+    flex: 1,
+    justifyContent: 'space-between' as const,
     gap: layout.rowGap,
+  },
+  statusCopy: {
+    gap: layout.rowGap / 2,
+  },
+  panelTitle: {
+    ...theme.typography.title,
+    color: theme.voiceStates.idle.ink,
+  },
+  statusTitle: {
+    ...theme.typography.title,
+    color: theme.voiceStates.attention.ink,
+  },
+  statusBody: theme.typography.body,
+  voiceRegion: {
+    gap: layout.rowGap,
+    alignItems: 'center' as const,
   },
   voiceMessage: {
     ...theme.typography.body,
     textAlign: 'center' as const,
   },
   voiceError: {
-    color: theme.voiceStates.attention.fill,
-  },
-  bottomRegion: {
-    gap: layout.rowGap,
-    paddingBottom: layout.rowGap,
+    color: theme.voiceStates.attention.ink,
   },
 });

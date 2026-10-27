@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, TextInput, View } from 'react-native';
 
 import AttentionVoice from '../../assets/voice_attention_dark.svg';
 import ProcessingVoice from '../../assets/voice_processing_dark.svg';
@@ -20,11 +20,12 @@ import {
   PaymentVoiceIntent,
   parseVoicePaymentIntent,
 } from '../../services/metevo/paymentIntent';
-import { layout } from '../styles';
+import { metevoDesignTokens } from '../../design/designTokens';
+import { layout, scale } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
 import { IntentCardProps } from './IntentCard';
 
-type PaymentStage = 'review' | 'pending' | 'settled' | 'failed' | 'unknown';
+type PaymentStage = 'amount' | 'review' | 'pending' | 'settled' | 'failed' | 'unknown';
 
 /**
  * The design's demo proposal (section 20/21 storyboard). Real amounts,
@@ -32,13 +33,19 @@ type PaymentStage = 'review' | 'pending' | 'settled' | 'failed' | 'unknown';
  * demo invoice is clearly marked and never reaches a real node in mock
  * mode.
  */
-const MOCK_PROPOSAL = [
-  { label: 'To', value: 'Maria' },
-  { label: 'Destination', value: 'rgb:mock-destination…f0' },
-  { label: 'Amount', value: '10.00 USDm' },
-  { label: 'Fee', value: '0.02 USDm' },
-  { label: 'Total', value: '10.02 USDm' },
-] as const;
+const DEMO_RECIPIENT = 'Maria';
+const DEMO_DESTINATION = 'rgb:mock-destination…f0';
+const DEMO_FEE_USD = 0.02;
+
+function demoProposal(amountUsd: number) {
+  return [
+    { label: 'To', value: DEMO_RECIPIENT },
+    { label: 'Destination', value: DEMO_DESTINATION },
+    { label: 'Amount', value: `${amountUsd.toFixed(2)} USDm` },
+    { label: 'Fee', value: `${DEMO_FEE_USD.toFixed(2)} USDm` },
+    { label: 'Total', value: `${(amountUsd + DEMO_FEE_USD).toFixed(2)} USDm` },
+  ] as const;
+}
 
 const DEMO_INVOICE = 'rgb:mock-destination-invoice (demo only)';
 const DEMO_NOTE = 'Demo proposal - not a real payment.';
@@ -258,9 +265,23 @@ function DemoSendPaymentCard({
   const styles = useThemedStyles(makeStyles);
   const { submitPayment, checkPayment } = useWalletSession();
 
-  const [stage, setStage] = useState<PaymentStage>('review');
+  const [stage, setStage] = useState<PaymentStage>('amount');
   const [rejectionNote, setRejectionNote] = useState<string | null>(null);
+  const [amountDraft, setAmountDraft] = useState('10.00');
+  const [amountUsd, setAmountUsd] = useState(10);
   const paymentHashRef = useRef<string | null>(null);
+
+  /** Done on the amount panel: validates, then shows the demo proposal. */
+  const submitAmount = useCallback(() => {
+    const parsed = Number.parseFloat(amountDraft.replace(',', '.'));
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setRejectionNote('Enter an amount greater than zero.');
+      return;
+    }
+    setRejectionNote(null);
+    setAmountUsd(parsed);
+    setStage('review');
+  }, [amountDraft]);
 
   const confirm = useCallback(async () => {
     setRejectionNote(null);
@@ -329,6 +350,38 @@ function DemoSendPaymentCard({
     // Still unconfirmed stays unknown: pending is not resubmitted.
   }, [checkPayment]);
 
+  if (stage === 'amount') {
+    return (
+      <View style={styles.panel}>
+        <View style={styles.header}>
+          <Text style={styles.title}>Enter the amount</Text>
+          <Text style={styles.body}>Amount in USDm</Text>
+          <TextInput
+            style={styles.amountInput}
+            value={amountDraft}
+            onChangeText={setAmountDraft}
+            keyboardType="decimal-pad"
+            accessibilityLabel="Amount in USDm"
+            selectTextOnFocus
+          />
+          <Text style={styles.caption}>Use the number keyboard.</Text>
+          {rejectionNote !== null && (
+            <Text style={styles.rejection}>{rejectionNote}</Text>
+          )}
+        </View>
+        <View style={styles.actions}>
+          <ActionButton
+            label="Cancel"
+            variant="outlined"
+            onPress={() => onClearIntent?.()}
+            grow
+          />
+          <ActionButton label="Done" variant="primary" onPress={submitAmount} grow />
+        </View>
+      </View>
+    );
+  }
+
   if (stage === 'pending') {
     return (
       <View style={styles.centered}>
@@ -344,7 +397,9 @@ function DemoSendPaymentCard({
       <View style={styles.centered}>
         <SuccessVoice width={64} height={64} />
         <Text style={styles.title}>Settled</Text>
-        <Text style={styles.body}>10.00 USDm sent to Maria.</Text>
+        <Text style={styles.body}>
+          {amountUsd.toFixed(2)} USDm sent to {DEMO_RECIPIENT}.
+        </Text>
         <ActionButton
           label="Done"
           variant="primary"
@@ -392,7 +447,7 @@ function DemoSendPaymentCard({
   return (
     <View style={styles.canvas}>
       <Text style={styles.title}>Send USDm</Text>
-      {MOCK_PROPOSAL.map((row) => (
+      {demoProposal(amountUsd).map((row) => (
         <View key={row.label} style={styles.row}>
           <Text style={styles.caption}>{row.label}</Text>
           <Text style={styles.value}>{row.value}</Text>
@@ -403,7 +458,12 @@ function DemoSendPaymentCard({
         <Text style={styles.rejection}>{rejectionNote}</Text>
       )}
       <View style={styles.actions}>
-        <ActionButton label="Cancel" variant="outlined" onPress={() => setStage('review')} grow />
+        <ActionButton
+          label="Cancel"
+          variant="outlined"
+          onPress={() => onClearIntent?.()}
+          grow
+        />
         <ActionButton label="Confirm payment" variant="primary" onPress={() => void confirm()} grow />
       </View>
       <ActionButton
@@ -416,6 +476,14 @@ function DemoSendPaymentCard({
 }
 
 const makeStyles = (theme: MetevoTheme) => ({
+  panel: {
+    flex: 1,
+    justifyContent: 'space-between' as const,
+    gap: layout.rowGap,
+  },
+  header: {
+    gap: layout.rowGap / 2,
+  },
   canvas: {
     width: '100%' as const,
     gap: layout.rowGap,
@@ -425,9 +493,22 @@ const makeStyles = (theme: MetevoTheme) => ({
     alignItems: 'center' as const,
     gap: layout.rowGap,
   },
-  title: theme.typography.title,
+  title: {
+    ...theme.typography.title,
+    color: theme.voiceStates.idle.ink,
+  },
   body: theme.typography.body,
   caption: theme.typography.caption,
+  amountInput: {
+    ...theme.typography.body,
+    minHeight: scale(metevoDesignTokens.layout.actionHeight),
+    paddingHorizontal: scale(8),
+    borderRadius: scale(metevoDesignTokens.layout.cardRadius),
+    borderWidth: 1,
+    borderColor: theme.colors.controlBorder,
+    backgroundColor: theme.colors.background,
+    color: theme.colors.text,
+  },
   row: {
     flexDirection: 'row' as const,
     alignItems: 'baseline' as const,
@@ -444,10 +525,10 @@ const makeStyles = (theme: MetevoTheme) => ({
   },
   rejection: {
     ...theme.typography.caption,
-    color: theme.voiceStates.attention.fill,
+    color: theme.voiceStates.attention.ink,
   },
   actions: {
     flexDirection: 'row' as const,
-    gap: layout.rowGap,
+    gap: scale(metevoDesignTokens.layout.pairedActionGap),
   },
 });

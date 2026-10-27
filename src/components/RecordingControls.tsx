@@ -1,9 +1,13 @@
 import React, { useCallback, useRef } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Text, TouchableOpacity, View } from 'react-native';
 import { createAudioPlayer, type AudioPlayer } from 'expo-audio';
 
-import IdleVoice from '../assets/voice_idle_dark.svg';
-import ListeningVoice from '../assets/voice_listening_dark.svg';
+import AttentionDark from '../assets/voice_attention_dark.svg';
+import AttentionLight from '../assets/voice_attention_light.svg';
+import IdleDark from '../assets/voice_idle_dark.svg';
+import IdleLight from '../assets/voice_idle_light.svg';
+import ListeningDark from '../assets/voice_listening_dark.svg';
+import ListeningLight from '../assets/voice_listening_light.svg';
 import {
   MetevoTheme,
   useTheme,
@@ -12,9 +16,13 @@ import {
 import { chooseArchiveDirectory } from '../utils/recordingArchive';
 import { layout } from './styles';
 
+export type VoiceControlState = 'idle' | 'listening' | 'attention';
+
 interface RecordingControlsProps {
   /** True while the mic is live (the hold button is held down). */
   recording: boolean;
+  /** Draws the attention cue when the wallet is unavailable. */
+  state?: VoiceControlState;
   /** Hold started: begins capture (barge-in when a turn is running). */
   onPressIn: () => void;
   /** Hold released: the captured clip enters the voice turn. */
@@ -24,9 +32,9 @@ interface RecordingControlsProps {
 }
 
 /**
- * Bottom shell region: the hold-to-talk button centered with a small
- * debug replay button on the left. The audio on/off toggle lives in the
- * StatusHeader.
+ * Bottom shell region: the hold-to-talk microphone centered, with the
+ * voice state cue of the design (idle, listening, attention). The audio
+ * on/off toggle lives in the StatusHeader.
  *
  * Separation rule: this component knows nothing about intents, the
  * recording state machine or the DynamicFrame - it only renders the hold
@@ -35,6 +43,7 @@ interface RecordingControlsProps {
  */
 export function RecordingControls({
   recording,
+  state = 'idle',
   onPressIn,
   onPressOut,
   lastClipUri,
@@ -57,10 +66,25 @@ export function RecordingControls({
     console.log('[metevo] archive folder:', directoryUri ?? 'not chosen');
   }, []);
 
+  const dark = theme.mode === 'dark';
+  const effective = recording ? 'listening' : state;
+  const VoiceCue =
+    effective === 'listening'
+      ? dark
+        ? ListeningDark
+        : ListeningLight
+      : effective === 'attention'
+        ? dark
+          ? AttentionDark
+          : AttentionLight
+        : dark
+          ? IdleDark
+          : IdleLight;
+
   return (
     <View style={styles.row}>
       <TouchableOpacity
-        style={styles.sideButton}
+        style={styles.debugButton}
         onPress={replayLast}
         onLongPress={() => {
           void pickArchiveFolder();
@@ -69,7 +93,7 @@ export function RecordingControls({
         accessibilityRole="button"
         accessibilityLabel="Replay last recording; long-press to choose the archive folder"
       >
-        <Text style={styles.sideLabel}>▶</Text>
+        <Text style={styles.debugLabel}>▶</Text>
       </TouchableOpacity>
 
       <TouchableOpacity
@@ -81,17 +105,7 @@ export function RecordingControls({
         accessibilityLabel={recording ? 'Release to send' : 'Hold to talk'}
         accessibilityHint="Hold the button and speak; release when done."
       >
-        {recording ? (
-          <ListeningVoice
-            width={layout.voiceViewport}
-            height={layout.voiceViewport}
-          />
-        ) : (
-          <IdleVoice
-            width={layout.voiceViewport}
-            height={layout.voiceViewport}
-          />
-        )}
+        <VoiceCue width={layout.voiceViewport} height={layout.voiceViewport} />
       </TouchableOpacity>
 
       <View style={styles.sideSpacer} />
@@ -110,18 +124,15 @@ const makeStyles = (theme: MetevoTheme) => ({
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
   },
-  sideButton: {
+  debugButton: {
     width: layout.secondaryButton,
     height: layout.secondaryButton,
-    borderRadius: layout.secondaryButton / 2,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface,
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
-    paddingHorizontal: 4,
-    paddingVertical: 4,
   },
-  sideLabel: { ...theme.typography.caption, textAlign: 'center' as const },
+  debugLabel: {
+    ...theme.typography.caption,
+    opacity: 0.35,
+  },
   sideSpacer: { width: layout.secondaryButton },
 });

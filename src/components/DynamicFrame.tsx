@@ -1,44 +1,41 @@
 import React from 'react';
-import { StyleSheet, View } from 'react-native';
 
-import { useThemedStyles, type MetevoTheme } from '../design/ThemeContext';
 import { IntentCard } from './intent-cards';
+import { TaskPanel } from './TaskPanel';
 import { IntentId } from '../types/intents';
-import { layout } from './styles';
 
 interface DynamicFrameProps {
-  /** Current intent id; null shows the idle placeholder. */
+  /** Current intent id; null shows the idle menu. */
   intent: IntentId | null;
-  /** Hands a card's Done action the way back to the idle hint. */
+  /** Hands a card's Done action the way back to the idle menu. */
   onClearIntent?: () => void;
+  /** Starts an intent from the idle menu's quick actions. */
+  onSelectIntent?: (intent: IntentId) => void;
   /** The voice pipeline's structured answer; cards validate their own shape. */
   payload?: unknown;
 }
 
 /**
- * The dynamic "black box" area of the sketch.
+ * The dynamic task card of the design.
  *
  * Rendering strategy (deliberately NOT a router): a lookup map over intent
  * ids inside `IntentCard`. The frame never decides what an intent does -
- * it only renders the card for the given intent.
- * TODO(phase 2): `intent` comes from `useIntents`, fed by the QVAC
- * voice-to-intent pipeline.
+ * it only renders the card for the given intent inside the fixed panel.
  */
-export function DynamicFrame({ intent, onClearIntent, payload }: DynamicFrameProps) {
-  const styles = useThemedStyles(makeStyles);
-
+export function DynamicFrame({
+  intent,
+  onClearIntent,
+  onSelectIntent,
+  payload,
+}: DynamicFrameProps) {
   return (
-    <View style={styles.frame}>
-      <IntentCard id={intent} onClearIntent={onClearIntent} payload={payload} />
-    </View>
+    <TaskPanel>
+      <IntentCard
+        id={intent}
+        onClearIntent={onClearIntent}
+        onSelectIntent={onSelectIntent}
+        payload={payload}
+      />
+    </TaskPanel>
   );
 }
-
-const makeStyles = (theme: MetevoTheme) => ({
-  frame: {
-    ...theme.cardBase,
-    minHeight: layout.cardMinHeight,
-    alignItems: 'center' as const,
-    justifyContent: 'center' as const,
-  },
-});

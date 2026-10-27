@@ -8,6 +8,8 @@ export interface MetevoThemeColors {
   background: string;
   surface: string;
   border: string;
+  /** Visible outline for controls (the design's controlBorder token). */
+  controlBorder: string;
   text: string;
   textMuted: string;
   accent: string;
@@ -33,6 +35,8 @@ export interface MetevoTheme {
     title: TextStyle;
     body: TextStyle;
     caption: TextStyle;
+    /** The design's 7.08-unit micro label ("DEMO", status annotations). */
+    micro: TextStyle;
   };
   cardBase: {
     backgroundColor: string;
@@ -69,6 +73,7 @@ export function createTheme(mode: ThemeMode): MetevoTheme {
       background: palette.background,
       surface: palette.surface,
       border: palette.border,
+      controlBorder: palette.controlBorder,
       text: palette.text,
       textMuted: palette.muted,
       accent: palette.states.idle.fill,
@@ -89,6 +94,11 @@ export function createTheme(mode: ThemeMode): MetevoTheme {
       caption: {
         fontSize: scale(typeTokens.label.size),
         fontWeight: textStyleWeight(typeTokens.label.weight),
+        color: palette.muted,
+      },
+      micro: {
+        fontSize: scale(typeTokens.demo.size),
+        fontWeight: textStyleWeight(typeTokens.demo.weight),
         color: palette.muted,
       },
     },

@@ -1,10 +1,11 @@
 import React from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Text, TouchableOpacity, View } from 'react-native';
 
 import HistoryDark from '../assets/history_dark.svg';
 import HistoryLight from '../assets/history_light.svg';
 import SpendingDark from '../assets/spending_dark.svg';
 import SpendingLight from '../assets/spending_light.svg';
+import { metevoDesignTokens } from '../design/designTokens';
 import {
   MetevoTheme,
   useTheme,
@@ -16,12 +17,13 @@ import { layout, scale } from './styles';
 const ACTION_ICON_REFERENCE = { width: 16, height: 17 } as const;
 
 const LINKS = [
-  { label: 'HISTORY', Dark: HistoryDark, Light: HistoryLight },
-  { label: 'SPENDING', Dark: SpendingDark, Light: SpendingLight },
+  { label: 'History', Dark: HistoryDark, Light: HistoryLight },
+  { label: 'Spending', Dark: SpendingDark, Light: SpendingLight },
 ] as const;
 
 /**
- * Bottom "HISTORY" and "SPENDING" shell controls of the design.
+ * Bottom "History" and "Spending" shell controls of the design (paired
+ * half-width outlined buttons).
  * Non-functional placeholders by design (no navigation in this phase).
  * TODO(phase 2): trigger the read-transactions / read-spending-overview
  * intents directly (voice-first product; these stay as visible shortcuts).
@@ -40,7 +42,7 @@ export function HistorySpendingLinks() {
             style={styles.link}
             onPress={() => undefined}
             accessibilityRole="button"
-            accessibilityLabel={label.charAt(0) + label.slice(1).toLowerCase()}
+            accessibilityLabel={label}
           >
             <Icon
               width={scale(ACTION_ICON_REFERENCE.width)}
@@ -57,16 +59,19 @@ export function HistorySpendingLinks() {
 const makeStyles = (theme: MetevoTheme) => ({
   row: {
     flexDirection: 'row' as const,
-    gap: layout.rowGap,
+    gap: scale(6),
   },
   link: {
-    ...theme.cardBase,
     flex: 1,
     minHeight: layout.secondaryButton,
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
-    gap: layout.rowGap,
+    gap: scale(8),
+    borderRadius: scale(metevoDesignTokens.layout.cardRadius),
+    borderWidth: 1,
+    borderColor: theme.colors.controlBorder,
+    backgroundColor: theme.colors.background,
   },
-  label: theme.typography.caption,
+  label: theme.typography.body,
 });

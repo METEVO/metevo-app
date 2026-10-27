@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import AttentionVoice from '../../assets/voice_attention_dark.svg';
 import SuccessVoice from '../../assets/voice_success_dark.svg';
@@ -11,7 +11,8 @@ import { useKeepScreenOn } from '../../hooks/useKeepScreenOn';
 import { useTransferWatcher } from '../../hooks/useTransferWatcher';
 import { useWalletSession } from '../../hooks/useWalletSession';
 import { getLocalLink, isLocalLinkNative } from '../../services/localelink';
-import { layout } from '../styles';
+import { metevoDesignTokens } from '../../design/designTokens';
+import { layout, scale } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
 
 type ReceiveStage =
@@ -69,13 +70,22 @@ async function generateLocalLinkSecrets(): Promise<{ sessionId: string; passphra
  * invoice over the P2P socket. stopGroup() runs in a finally block - the
  * hardware is released on success, error AND cancel.
  */
-export function ReceiveRequestCard({ payload }: { payload?: unknown }) {
+export function ReceiveRequestCard({
+  payload,
+  onClearIntent,
+}: {
+  payload?: unknown;
+  onClearIntent?: () => void;
+}) {
   const styles = useThemedStyles(makeStyles);
   const { createUsdmInvoice } = useWalletSession();
   const watcher = useTransferWatcher();
   const [stage, setStage] = useState<ReceiveStage>('compose');
   const [note, setNote] = useState<string | null>(null);
-  const [amountUsd] = useState<number>(() => readPayloadAmount(payload));
+  const [amountUsd, setAmountUsd] = useState<number>(() => readPayloadAmount(payload));
+  const [amountDraft, setAmountDraft] = useState<string>(() =>
+    readPayloadAmount(payload).toFixed(2),
+  );
   const [invoice, setInvoice] = useState<string | null>(null);
   const linkRef = useRef<ReturnType<typeof getLocalLink> | null>(null);
   const localStageRef = useRef<ReceiveStage>('compose');
@@ -99,43 +109,60 @@ export function ReceiveRequestCard({ payload }: { payload?: unknown }) {
     };
   }, [isLocalLinkActive]);
 
-  const createRequest = useCallback(async () => {
-    setNote(null);
-    setStage('creating');
-    let created: { invoice: string; paymentHash: string | null };
-    try {
-      created = await createUsdmInvoice(
-        Math.round(amountUsd * USDM_BASE_UNITS_PER_USD),
-      );
-    } catch (cause) {
-      console.log(
-        '[metevo] invoice creation failed:',
-        cause instanceof Error ? cause.message : 'unknown',
-      );
-      setNote('The invoice could not be created. Try again.');
-      setStage('request-error');
+  const createRequest = useCallback(
+    async (amount: number) => {
+      setNote(null);
+      setStage('creating');
+      let created: { invoice: string; paymentHash: string | null };
+      try {
+        created = await createUsdmInvoice(
+          Math.round(amount * USDM_BASE_UNITS_PER_USD),
+        );
+      } catch (cause) {
+        console.log(
+          '[metevo] invoice creation failed:',
+          cause instanceof Error ? cause.message : 'unknown',
+        );
+        setNote('The invoice could not be created. Try again.');
+        setStage('request-error');
+        return;
+      }
+      setInvoice(created.invoice);
+      // Public payment request: log it so a demo operator can pay it from the
+      // regtest CLI without copying the long string off the screen.
+      console.log('[metevo] invoice ready:', created.invoice);
+      setStage('waiting');
+      // The watcher owns the outcome: only a wallet-confirmed settlement
+      // reaches the success state. LN invoices settle through the payment
+      // list (the on-chain transfer list never shows them), so watch the
+      // payment hash; blind invoices fall back to the transfer watch.
+      const result = created.paymentHash
+        ? await watcher.watchPayment(created.paymentHash)
+        : await watcher.watch();
+      if (result.status === 'settled') {
+        setStage('received');
+      } else {
+        setNote(
+          result.status === 'failed'
+            ? 'The payment failed before it settled.'
+            : 'No settled payment arrived in time.',
+        );
+        setStage('request-error');
+      }
+    },
+    [createUsdmInvoice, watcher],
+  );
+
+  /** Done on the amount panel: validates the typed amount, then invoices. */
+  const submitAmount = useCallback(() => {
+    const parsed = Number.parseFloat(amountDraft.replace(',', '.'));
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setNote('Enter an amount greater than zero.');
       return;
     }
-    setInvoice(created.invoice);
-    setStage('waiting');
-    // The watcher owns the outcome: only a wallet-confirmed settlement
-    // reaches the success state. LN invoices settle through the payment
-    // list (the on-chain transfer list never shows them), so watch the
-    // payment hash; blind invoices fall back to the transfer watch.
-    const result = created.paymentHash
-      ? await watcher.watchPayment(created.paymentHash)
-      : await watcher.watch();
-    if (result.status === 'settled') {
-      setStage('received');
-    } else {
-      setNote(
-        result.status === 'failed'
-          ? 'The payment failed before it settled.'
-          : 'No settled payment arrived in time.',
-      );
-      setStage('request-error');
-    }
-  }, [amountUsd, createUsdmInvoice, watcher]);
+    setAmountUsd(parsed);
+    void createRequest(parsed);
+  }, [amountDraft, createRequest]);
 
   const startLocalReceive = useCallback(async () => {
     setNote(null);
@@ -288,37 +315,64 @@ export function ReceiveRequestCard({ payload }: { payload?: unknown }) {
           Share your request to receive {amountUsd.toFixed(2)} USDm.
         </Text>
         <View style={styles.invoiceBox}>
-          <Text style={styles.invoice} selectable>
-            {invoice}
-          </Text>
+          <ScrollView style={styles.invoiceScroll}>
+            <Text style={styles.invoice} selectable>
+              {invoice}
+            </Text>
+          </ScrollView>
         </View>
         <Text style={styles.caption}>{WAITING_NOTE}</Text>
-        <ActionButton label="Back" variant="outlined" onPress={stopWaiting} />
+        <View style={styles.actions}>
+          <ActionButton label="Back" variant="outlined" onPress={stopWaiting} grow />
+          <ActionButton
+            label="Receive in person"
+            variant="outlined"
+            onPress={() => void startLocalReceive()}
+            grow
+          />
+        </View>
       </View>
     );
   }
 
   return (
-    <View style={styles.canvas}>
-      <Text style={styles.title}>Receive money</Text>
-      <Text style={styles.body}>
-        Create a request to receive {amountUsd.toFixed(2)} USDm.
-      </Text>
-      <ActionButton
-        label="Create request"
-        variant="primary"
-        onPress={() => void createRequest()}
-      />
-      <ActionButton
-        label="Receive in person"
-        variant="outlined"
-        onPress={() => void startLocalReceive()}
-      />
+    <View style={styles.panel}>
+      <View style={styles.header}>
+        <Text style={styles.title}>Request amount</Text>
+        <Text style={styles.body}>Amount in USDm</Text>
+        <TextInput
+          style={styles.amountInput}
+          value={amountDraft}
+          onChangeText={setAmountDraft}
+          keyboardType="decimal-pad"
+          accessibilityLabel="Amount in USDm"
+          selectTextOnFocus
+        />
+        <Text style={styles.caption}>Use the number keyboard.</Text>
+        {note !== null && <Text style={styles.rejection}>{note}</Text>}
+      </View>
+      <View style={styles.actions}>
+        <ActionButton
+          label="Cancel"
+          variant="outlined"
+          onPress={() => onClearIntent?.()}
+          grow
+        />
+        <ActionButton label="Done" variant="primary" onPress={submitAmount} grow />
+      </View>
     </View>
   );
 }
 
 const makeStyles = (theme: MetevoTheme) => ({
+  panel: {
+    flex: 1,
+    justifyContent: 'space-between' as const,
+    gap: layout.rowGap,
+  },
+  header: {
+    gap: layout.rowGap / 2,
+  },
   canvas: {
     width: '100%' as const,
     gap: layout.rowGap,
@@ -328,14 +382,39 @@ const makeStyles = (theme: MetevoTheme) => ({
     alignItems: 'center' as const,
     gap: layout.rowGap,
   },
-  title: theme.typography.title,
+  title: {
+    ...theme.typography.title,
+    color: theme.voiceStates.idle.ink,
+  },
   body: theme.typography.body,
   caption: theme.typography.caption,
+  amountInput: {
+    ...theme.typography.body,
+    minHeight: scale(metevoDesignTokens.layout.actionHeight),
+    paddingHorizontal: scale(8),
+    borderRadius: scale(metevoDesignTokens.layout.cardRadius),
+    borderWidth: 1,
+    borderColor: theme.colors.controlBorder,
+    backgroundColor: theme.colors.background,
+    color: theme.colors.text,
+  },
+  rejection: {
+    ...theme.typography.caption,
+    color: theme.voiceStates.attention.ink,
+  },
+  actions: {
+    flexDirection: 'row' as const,
+    gap: scale(metevoDesignTokens.layout.pairedActionGap),
+  },
   invoiceBox: {
     width: '100%' as const,
     padding: layout.rowGap,
     borderRadius: 8,
     backgroundColor: theme.cardBase.backgroundColor,
+  },
+  /** Keeps the long invoice from pushing the actions out of the panel. */
+  invoiceScroll: {
+    maxHeight: scale(26),
   },
   invoice: theme.typography.caption,
 });

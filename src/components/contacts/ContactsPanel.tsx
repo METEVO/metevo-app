@@ -188,27 +188,40 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
   }
 
   return (
-    <View style={styles.canvas}>
-      <View style={styles.headerRow}>
-        <Text style={theme.typography.title}>Contacts</Text>
-        <ActionButton label="Done" variant="outlined" onPress={() => onClearIntent?.()} />
+    <View style={styles.panel}>
+      <View style={styles.header}>
+        <Text style={styles.title}>Contacts</Text>
+        <Text style={theme.typography.body}>Saved only on this phone.</Text>
+        {contacts.length === 0 && (
+          <Text style={theme.typography.body}>No contacts yet.</Text>
+        )}
       </View>
-      {contacts.map((contact) => (
-        <TouchableOpacity
-          key={contact.id}
-          style={styles.rowCard}
-          onPress={() => {
-            setSelectedId(contact.id);
-            setStage('details');
-          }}
-          accessibilityRole="button"
-          accessibilityLabel={contact.name}
-        >
-          <Text style={styles.rowTitle}>{contact.name}</Text>
-          <Text style={theme.typography.caption}>{contact.phone ?? 'No details yet'}</Text>
-        </TouchableOpacity>
-      ))}
-      <ActionButton label="Add contact" variant="primary" onPress={startAdd} />
+      <View style={styles.list}>
+        {contacts.map((contact) => (
+          <TouchableOpacity
+            key={contact.id}
+            style={styles.rowCard}
+            onPress={() => {
+              setSelectedId(contact.id);
+              setStage('details');
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={contact.name}
+          >
+            <Text style={styles.rowTitle}>{contact.name}</Text>
+            <Text style={theme.typography.caption}>{contact.phone ?? 'No details yet'}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <View style={styles.actions}>
+        <ActionButton
+          label="Close"
+          variant="outlined"
+          onPress={() => onClearIntent?.()}
+          grow
+        />
+        <ActionButton label="Add contact" variant="primary" onPress={startAdd} grow />
+      </View>
     </View>
   );
 }
@@ -248,17 +261,28 @@ function normalizePhoneNumber(raw: string): string | null {
 }
 
 const makeStyles = (theme: MetevoTheme) => ({
+  panel: {
+    flex: 1,
+    justifyContent: 'space-between' as const,
+    gap: layout.rowGap,
+  },
+  header: {
+    gap: layout.rowGap / 2,
+  },
+  title: {
+    ...theme.typography.title,
+    color: theme.voiceStates.idle.ink,
+  },
+  list: {
+    gap: layout.rowGap / 2,
+  },
   canvas: {
     width: '100%' as const,
     gap: layout.rowGap,
   },
-  headerRow: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    justifyContent: 'space-between' as const,
-  },
   rowCard: {
     ...theme.cardBase,
+    padding: scale(4),
     minHeight: scale(14.16),
     gap: layout.rowGap / 4,
   },

@@ -6,6 +6,7 @@ import {
   useTheme,
   useThemedStyles,
 } from '../../design/ThemeContext';
+import { metevoDesignTokens } from '../../design/designTokens';
 import { layout, scale } from '../styles';
 
 export type ActionButtonVariant = 'primary' | 'outlined';
@@ -72,21 +73,23 @@ export function ActionButton({
 const makeStyles = (theme: MetevoTheme) => ({
   base: {
     minHeight: layout.secondaryButton,
-    borderRadius: scale(5),
+    borderRadius: scale(metevoDesignTokens.layout.cardRadius),
     paddingHorizontal: 16,
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
   },
   primary: {
     backgroundColor: theme.colors.accent,
+    borderWidth: 1,
+    borderColor: theme.voiceStates.idle.ink,
   },
   outlined: {
     borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface,
+    borderColor: theme.colors.controlBorder,
+    backgroundColor: theme.colors.background,
   },
   attention: {
-    borderColor: theme.voiceStates.attention.fill,
+    borderColor: theme.voiceStates.attention.ink,
   },
   selected: {
     borderWidth: 2,
@@ -100,7 +103,6 @@ const makeStyles = (theme: MetevoTheme) => ({
   },
   label: {
     ...theme.typography.body,
-    fontWeight: '700' as const,
   },
   primaryLabel: {
     color: theme.colors.accentText,
