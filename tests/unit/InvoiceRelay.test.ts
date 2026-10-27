@@ -14,6 +14,8 @@ function jsonResponse(status: number, body: unknown): Response {
 
 const REQUEST_ID = 'a24672c1b3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0';
 const DEMO_INVOICE = 'lntb1070n1mockrelayinvoice';
+const RECIPIENT_PUBKEY = `02${'ab'.repeat(32)}`;
+const SENDER_PUBKEY = `03${'cd'.repeat(32)}`;
 
 function makeClient(responder: (url: string, body: unknown) => Response) {
   const fetchImpl = jest.fn(async (url: string, init?: RequestInit) => {
@@ -38,7 +40,8 @@ describe('LSP invoice relay client', () => {
     const relay = createLspInvoiceRelay(client);
 
     const result = await relay.requestInvoice({
-      recipient: 'Maria',
+      recipientPubkey: RECIPIENT_PUBKEY,
+      senderPubkey: SENDER_PUBKEY,
       assetId: 'rgb:usdm-contract-id',
       amountUsd: 10,
     });
@@ -47,7 +50,8 @@ describe('LSP invoice relay client', () => {
     const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('http://127.0.0.1:8080/metevo/invoice-request');
     expect(JSON.parse(String(init.body))).toEqual({
-      recipient: 'Maria',
+      recipient_pubkey: RECIPIENT_PUBKEY,
+      sender_pubkey: SENDER_PUBKEY,
       asset_id: 'rgb:usdm-contract-id',
       amount_usd: 10,
     });
@@ -59,8 +63,26 @@ describe('LSP invoice relay client', () => {
     );
     const relay = createLspInvoiceRelay(client);
     await expect(
-      relay.requestInvoice({ recipient: 'Maria', assetId: null, amountUsd: 1 }),
+      relay.requestInvoice({
+        recipientPubkey: RECIPIENT_PUBKEY,
+        senderPubkey: null,
+        assetId: null,
+        amountUsd: 1,
+      }),
     ).rejects.toBeInstanceOf(MetevoLspError);
+  });
+
+  test('requestInvoice rejects a recipient that is not a node pubkey', async () => {
+    const { client } = makeClient(() => jsonResponse(200, {}));
+    const relay = createLspInvoiceRelay(client);
+    await expect(
+      relay.requestInvoice({
+        recipientPubkey: 'Maria',
+        senderPubkey: null,
+        assetId: null,
+        amountUsd: 1,
+      }),
+    ).rejects.toBeInstanceOf(TypeError);
   });
 
   test('pollResponse passes through pending without an invoice', async () => {
@@ -103,6 +125,85 @@ describe('LSP invoice relay client', () => {
     await expect(relay.pollResponse(REQUEST_ID)).rejects.toBeInstanceOf(MetevoLspError);
   });
 
+  test('pollResponse maps declined and expired answers', async () => {
+    const declined = makeClient(() =>
+      jsonResponse(200, { status: 'declined' }),
+    );
+    await expect(
+      createLspInvoiceRelay(declined.client).pollResponse(REQUEST_ID),
+    ).resolves.toEqual({ status: 'declined' });
+
+    const expired = makeClient(() => jsonResponse(200, { status: 'expired' }));
+    await expect(
+      createLspInvoiceRelay(expired.client).pollResponse(REQUEST_ID),
+    ).resolves.toEqual({ status: 'expired' });
+  });
+
+  test('listInvoiceInbox GETs the recipient inbox and validates entries', async () => {
+    const { client, fetchImpl } = makeClient((url) =>
+      url.includes('/metevo/invoice-inbox')
+        ? jsonResponse(200, {
+            requests: [
+              {
+                request_id: REQUEST_ID,
+                sender_pubkey: SENDER_PUBKEY.toUpperCase(),
+                amount_usd: 20,
+                expires_at: 1_787_164_542,
+              },
+              {
+                request_id: REQUEST_ID,
+                sender_pubkey: 'not-a-pubkey',
+                amount_usd: '5',
+                asset_id: 'rgb:usdm-contract-id',
+                expires_at: 1_787_164_542,
+              },
+            ],
+          })
+        : jsonResponse(404, 'nope'),
+    );
+
+    const inbox = await client.listInvoiceInbox(RECIPIENT_PUBKEY.toUpperCase());
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      `http://127.0.0.1:8080/metevo/invoice-inbox?pubkey=${RECIPIENT_PUBKEY}`,
+    );
+    expect((fetchImpl.mock.calls[0][1] as RequestInit).method).toBe('GET');
+    expect(inbox).toEqual([
+      {
+        requestId: REQUEST_ID,
+        senderPubkey: SENDER_PUBKEY,
+        amountUsd: 20,
+        assetId: null,
+        expiresAt: 1_787_164_542,
+      },
+      {
+        requestId: REQUEST_ID,
+        senderPubkey: null,
+        amountUsd: 5,
+        assetId: 'rgb:usdm-contract-id',
+        expiresAt: 1_787_164_542,
+      },
+    ]);
+  });
+
+  test('answerInvoiceRequest posts the invoice answer', async () => {
+    const { client, fetchImpl } = makeClient(() => jsonResponse(200, { ok: true }));
+    await client.answerInvoiceRequest({
+      requestId: REQUEST_ID,
+      recipientPubkey: RECIPIENT_PUBKEY,
+      invoice: DEMO_INVOICE,
+      paymentHash: REQUEST_ID,
+      declined: false,
+    });
+    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://127.0.0.1:8080/metevo/invoice-answer');
+    expect(JSON.parse(String(init.body))).toEqual({
+      request_id: REQUEST_ID,
+      recipient_pubkey: RECIPIENT_PUBKEY,
+      invoice: DEMO_INVOICE,
+      payment_hash: REQUEST_ID,
+    });
+  });
+
   test('pollResponse rejects an unknown status', async () => {
     const { client } = makeClient((url) =>
       url.endsWith('/metevo/invoice-response')
@@ -125,7 +226,8 @@ describe('mock invoice relay', () => {
     });
 
     const request = await relay.requestInvoice({
-      recipient: 'Maria',
+      recipientPubkey: 'Maria',
+      senderPubkey: null,
       assetId: 'rgb:usdm-contract-id',
       amountUsd: 10,
     });
@@ -151,12 +253,14 @@ describe('mock invoice relay', () => {
       createInvoice: async () => 'lntb1secondinvoice',
     });
     const first = await relay.requestInvoice({
-      recipient: 'Maria',
+      recipientPubkey: 'Maria',
+      senderPubkey: null,
       assetId: null,
       amountUsd: 1,
     });
     const second = await relay.requestInvoice({
-      recipient: 'Bob',
+      recipientPubkey: 'Bob',
+      senderPubkey: null,
       assetId: null,
       amountUsd: 2,
     });

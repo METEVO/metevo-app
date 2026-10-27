@@ -43,7 +43,20 @@ export interface MetevoInvoiceRequestResult {
 
 export type MetevoInvoiceRelayResponse =
   | { status: 'pending' }
+  | { status: 'declined' }
+  | { status: 'expired' }
   | { status: 'delivered'; invoice: string; paymentHash: string | null };
+
+/** A pending request in the recipient's relay inbox. */
+export interface MetevoInvoiceInboxEntry {
+  requestId: string;
+  /** The requesting node; resolved to a contact name on the recipient side. */
+  senderPubkey: string | null;
+  amountUsd: number;
+  assetId: string | null;
+  /** Unix milliseconds. */
+  expiresAt: number;
+}
 
 export class MetevoLspError extends Error {
   readonly endpoint: string;
@@ -105,22 +118,29 @@ export class MetevoLspClient {
 
   /**
    * Asks the LSP to relay a dynamic USDm invoice request to the recipient's
-   * active node. The response only acknowledges the request; the payable
-   * invoice arrives through pollInvoiceResponse.
+   * node. The recipient is a node pubkey (a contact), never a display name:
+   * the LSP never sees who the payer calls them.
    */
   async requestInvoice(params: {
-    recipient: string;
+    recipientPubkey: string;
+    senderPubkey: string | null;
     assetId: string | null;
     amountUsd: number;
   }): Promise<MetevoInvoiceRequestResult> {
-    if (params.recipient.trim().length === 0) {
-      throw new TypeError('requestInvoice: recipient is required');
+    if (!NODE_PUBKEY_PATTERN.test(params.recipientPubkey.trim())) {
+      throw new TypeError('requestInvoice: recipientPubkey must be a 66-hex node pubkey');
+    }
+    if (params.senderPubkey !== null && !NODE_PUBKEY_PATTERN.test(params.senderPubkey.trim())) {
+      throw new TypeError('requestInvoice: senderPubkey must be a 66-hex node pubkey');
     }
     if (!Number.isSafeInteger(params.amountUsd) || params.amountUsd <= 0) {
       throw new TypeError('requestInvoice: amountUsd must be a positive integer (whole USD)');
     }
     const body = await this.request('POST', '/metevo/invoice-request', {
-      recipient: params.recipient,
+      recipient_pubkey: params.recipientPubkey.trim().toLowerCase(),
+      ...(params.senderPubkey !== null
+        ? { sender_pubkey: params.senderPubkey.trim().toLowerCase() }
+        : {}),
       ...(params.assetId !== null ? { asset_id: params.assetId } : {}),
       amount_usd: params.amountUsd,
     });
@@ -139,7 +159,50 @@ export class MetevoLspClient {
     return parseInvoiceRelayResponse(body);
   }
 
-  private async request(method: 'POST', endpoint: string, payload: unknown): Promise<unknown> {
+  /** The recipient's inbox: requests that are still pending and unexpired. */
+  async listInvoiceInbox(nodePubkey: string): Promise<MetevoInvoiceInboxEntry[]> {
+    if (!NODE_PUBKEY_PATTERN.test(nodePubkey.trim())) {
+      throw new TypeError('listInvoiceInbox: nodePubkey must be a 66-hex node pubkey');
+    }
+    const body = await this.request(
+      'GET',
+      `/metevo/invoice-inbox?pubkey=${encodeURIComponent(nodePubkey.trim().toLowerCase())}`,
+      undefined,
+    );
+    return parseInvoiceInbox(body);
+  }
+
+  /** The recipient's answer: a real invoice from its own node, or a decline. */
+  async answerInvoiceRequest(params: {
+    requestId: string;
+    recipientPubkey: string;
+    invoice: string | null;
+    paymentHash: string | null;
+    declined: boolean;
+  }): Promise<void> {
+    if (!/^[0-9a-f]{64}$/i.test(params.requestId)) {
+      throw new TypeError('answerInvoiceRequest: requestId must be a 64-hex hash');
+    }
+    if (!NODE_PUBKEY_PATTERN.test(params.recipientPubkey.trim())) {
+      throw new TypeError('answerInvoiceRequest: recipientPubkey must be a 66-hex node pubkey');
+    }
+    if (!params.declined && (params.invoice === null || !params.invoice.startsWith('ln'))) {
+      throw new TypeError('answerInvoiceRequest: a bolt11 invoice is required unless declined');
+    }
+    await this.request('POST', '/metevo/invoice-answer', {
+      request_id: params.requestId,
+      recipient_pubkey: params.recipientPubkey.trim().toLowerCase(),
+      ...(params.invoice !== null ? { invoice: params.invoice } : {}),
+      ...(params.paymentHash !== null ? { payment_hash: params.paymentHash } : {}),
+      ...(params.declined ? { declined: true } : {}),
+    });
+  }
+
+  private async request(
+    method: 'GET' | 'POST',
+    endpoint: string,
+    payload: unknown,
+  ): Promise<unknown> {
     const controller = new AbortController();
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
@@ -158,7 +221,7 @@ export class MetevoLspClient {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${this.bearerToken}`,
           },
-          body: JSON.stringify(payload),
+          ...(method === 'POST' ? { body: JSON.stringify(payload) } : {}),
           signal: controller.signal,
         });
         const text = await response.text();
@@ -195,6 +258,9 @@ export class MetevoLspClient {
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
+
+/** Compressed secp256k1 node pubkey: 33 bytes, hex. */
+const NODE_PUBKEY_PATTERN = /^(02|03)[0-9a-f]{64}$/i;
 
 /**
  * Strict validators for untrusted LSP responses: a malicious or buggy LSP
@@ -326,5 +392,42 @@ function parseInvoiceRelayResponse(value: unknown): MetevoInvoiceRelayResponse {
         rawHash === undefined || rawHash === null ? null : requireHexHash(rawHash, ENDPOINT, 'payment_hash'),
     };
   }
-  throw new MetevoLspError(ENDPOINT, 200, `response status ${status} is not pending or delivered`);
+  if (status === 'declined' || status === 'expired') {
+    return { status };
+  }
+  throw new MetevoLspError(
+    ENDPOINT,
+    200,
+    `response status ${status} is not pending, delivered, declined or expired`,
+  );
 }
+
+function parseInvoiceInbox(value: unknown): MetevoInvoiceInboxEntry[] {
+  const ENDPOINT = '/metevo/invoice-inbox';
+  if (typeof value !== 'object' || value === null) {
+    throw new MetevoLspError(ENDPOINT, 200, 'response is not an object');
+  }
+  const raw = (value as Record<string, unknown>)['requests'];
+  if (!Array.isArray(raw)) {
+    throw new MetevoLspError(ENDPOINT, 200, 'response field requests is not an array');
+  }
+  return raw.map((item) => {
+    if (typeof item !== 'object' || item === null) {
+      throw new MetevoLspError(ENDPOINT, 200, 'inbox entry is not an object');
+    }
+    const record = item as Record<string, unknown>;
+    const rawSender = record['sender_pubkey'];
+    const rawAsset = record['asset_id'];
+    return {
+      requestId: requireHexHash(record['request_id'], ENDPOINT, 'request_id'),
+      senderPubkey:
+        typeof rawSender === 'string' && NODE_PUBKEY_PATTERN.test(rawSender)
+          ? rawSender.toLowerCase()
+          : null,
+      amountUsd: requireFiniteInteger(record['amount_usd'], ENDPOINT, 'amount_usd', 1),
+      assetId: typeof rawAsset === 'string' && rawAsset.length > 0 ? rawAsset : null,
+      expiresAt: requireFiniteInteger(record['expires_at'], ENDPOINT, 'expires_at', 0),
+    };
+  });
+}
+

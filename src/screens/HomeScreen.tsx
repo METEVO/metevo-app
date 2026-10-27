@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { Text, View } from 'react-native';
 
 import { BalancesCard } from '../components/BalancesCard';
@@ -13,6 +13,7 @@ import { layout, scale } from '../components/styles';
 import { ENV } from '../config/env';
 import { useTheme, useThemedStyles, type MetevoTheme } from '../design/ThemeContext';
 import { designFrameWidth } from '../design/theme';
+import { InvoiceInboxProvider, useInvoiceInbox } from '../hooks/useInvoiceInbox';
 import { useIntents } from '../hooks/useIntents';
 import { useVoiceAssistant } from '../hooks/useVoiceAssistant';
 import { WalletSession, useWalletSession } from '../hooks/useWalletSession';
@@ -26,10 +27,20 @@ import { archiveRecording } from '../utils/recordingArchive';
  */
 export function HomeScreen() {
   const session = useWalletSession();
+  // The inbox needs a live node: answering a request creates an invoice.
+  const inboxEnabled =
+    session.wallet !== null &&
+    session.connection === 'online' &&
+    session.wallet.channelReady;
   return (
-    <AttentionSignalProvider>
-      <HomeShell session={session} />
-    </AttentionSignalProvider>
+    <InvoiceInboxProvider
+      nodePubkey={session.wallet?.nodePubkey ?? null}
+      enabled={inboxEnabled}
+    >
+      <AttentionSignalProvider>
+        <HomeShell session={session} />
+      </AttentionSignalProvider>
+    </InvoiceInboxProvider>
   );
 }
 
@@ -48,6 +59,22 @@ function HomeShell({ session }: { session: WalletSession }) {
   const theme = useTheme();
   const styles = useThemedStyles(makeStyles);
   const { intent, payload, simulateIntent } = useIntents(null);
+  const inbox = useInvoiceInbox();
+  const openedRequestRef = useRef<string | null>(null);
+
+  // A relayed invoice request opens its card on its own, but never replaces
+  // a card the user is already working in.
+  useEffect(() => {
+    const pending = inbox.pending;
+    if (pending === null || openedRequestRef.current === pending.requestId) {
+      return;
+    }
+    if (intent !== null && intent !== 'invoice-request') {
+      return;
+    }
+    openedRequestRef.current = pending.requestId;
+    simulateIntent('invoice-request', pending);
+  }, [inbox.pending, intent, simulateIntent]);
 
   // Debug support: copy each finished recording into the user-chosen
   // archive folder (SAF) so it is retrievable outside the app sandbox.

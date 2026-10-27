@@ -11,6 +11,7 @@ const INTENT_DESCRIPTIONS: Record<IntentId, string> = {
   'read-spending-overview': 'Summarise spending over time',
   'read-balance': 'Read all balances out loud',
   contacts: 'Open your contacts',
+  'invoice-request': 'Answer an invoice request relayed by the LSP',
 };
 
 /**

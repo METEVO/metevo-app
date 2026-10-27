@@ -18,6 +18,13 @@ export interface StoredContact {
 
 const CONTACTS_KEY = 'metevo.contacts.index';
 
+/** Compressed secp256k1 key: the only recipient identity a payment can use. */
+const NODE_PUBKEY_PATTERN = /^(02|03)[0-9a-f]{64}$/i;
+
+export function isValidNodePubkey(nodePubkey: string): boolean {
+  return NODE_PUBKEY_PATTERN.test(nodePubkey.trim());
+}
+
 function normalizePubkey(nodePubkey: string): string {
   return nodePubkey.trim().toLowerCase();
 }
@@ -55,6 +62,9 @@ export async function rememberContact(name: string, nodePubkey: string): Promise
   if (trimmedName.length === 0) {
     throw new Error('contact name is required');
   }
+  if (!isValidNodePubkey(pubkey)) {
+    throw new Error('contact node pubkey is invalid');
+  }
   const contacts = await readIndex();
   const existing = contacts.findIndex((entry) => entry.nodePubkey === pubkey);
   const entry: StoredContact = {
@@ -76,3 +86,28 @@ export async function isKnownContact(nodePubkey: string): Promise<boolean> {
   const contacts = await readIndex();
   return contacts.some((entry) => entry.nodePubkey === pubkey);
 }
+
+/** The contact whose label matches the spoken recipient (case-insensitive). */
+export async function findContactByName(name: string): Promise<StoredContact | null> {
+  const needle = name.trim().toLowerCase();
+  if (needle.length === 0) {
+    return null;
+  }
+  const contacts = await readIndex();
+  return contacts.find((entry) => entry.name.trim().toLowerCase() === needle) ?? null;
+}
+
+/** The contact that owns a node pubkey, used to name an incoming request. */
+export async function findContactByPubkey(nodePubkey: string): Promise<StoredContact | null> {
+  const pubkey = normalizePubkey(nodePubkey);
+  const contacts = await readIndex();
+  return contacts.find((entry) => entry.nodePubkey === pubkey) ?? null;
+}
+
+export async function forgetContact(nodePubkey: string): Promise<void> {
+  const pubkey = normalizePubkey(nodePubkey);
+  const contacts = await readIndex();
+  const remaining = contacts.filter((entry) => entry.nodePubkey !== pubkey);
+  await SecureStore.setItemAsync(CONTACTS_KEY, JSON.stringify(remaining));
+}
+

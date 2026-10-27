@@ -1,34 +1,22 @@
-import React, { useState } from 'react';
-import { StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Text, TextInput, TouchableOpacity, View } from 'react-native';
 
+import { MetevoTheme, useTheme, useThemedStyles } from '../../design/ThemeContext';
 import {
-  MetevoTheme,
-  useTheme,
-  useThemedStyles,
-} from '../../design/ThemeContext';
+  StoredContact,
+  forgetContact,
+  isValidNodePubkey,
+  listContacts,
+  rememberContact,
+} from '../../services/metevo/contacts';
 import { layout, scale } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
 
 /**
- * Local contacts mock for the design sections 30-34. Contacts are local to
- * the phone; the real store, resolver and legacy-data handling arrive with
- * the contacts functional phase.
+ * The contact book. A contact is a local label plus the node pubkey the
+ * relay needs: the spoken name never leaves the phone, and a payment can
+ * only be addressed to a saved node.
  */
-interface MockContact {
-  id: string;
-  name: string;
-  bitcoinAddress?: string;
-  lightningKey?: string;
-  phone?: string;
-  /** Demo payment count driving the delete confirmation rule. */
-  paymentCount: number;
-}
-
-const INITIAL_CONTACTS: MockContact[] = [
-  { id: 'maria', name: 'Maria', phone: '+256772123456', paymentCount: 3 },
-  { id: 'luca', name: 'Luca', paymentCount: 0 },
-];
-
 type ContactsStage = 'list' | 'details' | 'add' | 'alias' | 'delete';
 
 interface ContactsPanelProps {
@@ -36,30 +24,30 @@ interface ContactsPanelProps {
   onClearIntent?: () => void;
 }
 
-/**
- * Design sections 30-34: contacts list and details, manual add, alias
- * confirmation (never auto-save) and transaction-aware soft deletion.
- * Name is required; payment fields are pasted, never dictated.
- */
 export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
   const theme = useTheme();
   const styles = useThemedStyles(makeStyles);
-  const [contacts, setContacts] = useState<MockContact[]>(INITIAL_CONTACTS);
+  const [contacts, setContacts] = useState<StoredContact[] | null>(null);
   const [stage, setStage] = useState<ContactsStage>('list');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedPubkey, setSelectedPubkey] = useState<string | null>(null);
   const [nameDraft, setNameDraft] = useState('');
-  const [bitcoinDraft, setBitcoinDraft] = useState('');
-  const [lightningDraft, setLightningDraft] = useState('');
-  const [phoneDraft, setPhoneDraft] = useState('');
+  const [pubkeyDraft, setPubkeyDraft] = useState('');
   const [fieldError, setFieldError] = useState<string | null>(null);
 
-  const selected = contacts.find((contact) => contact.id === selectedId) ?? null;
+  const selected =
+    contacts?.find((contact) => contact.nodePubkey === selectedPubkey) ?? null;
+
+  const reload = useCallback(async () => {
+    setContacts(await listContacts());
+  }, []);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
 
   function resetDraft() {
     setNameDraft('');
-    setBitcoinDraft('');
-    setLightningDraft('');
-    setPhoneDraft('');
+    setPubkeyDraft('');
     setFieldError(null);
   }
 
@@ -73,8 +61,8 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
       setFieldError('Enter a name for the contact.');
       return;
     }
-    if (phoneDraft.trim().length > 0 && normalizePhoneNumber(phoneDraft) === null) {
-      setFieldError('Enter the phone number with country code, e.g. +256 772 123 456.');
+    if (!isValidNodePubkey(pubkeyDraft)) {
+      setFieldError('Paste their node pubkey (66 hex characters, starting 02 or 03).');
       return;
     }
     setFieldError(null);
@@ -82,34 +70,28 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
   }
 
   function confirmAlias() {
-    const next: MockContact = {
-      id: `contact-${Date.now()}`,
-      name: nameDraft.trim(),
-      ...(bitcoinDraft.trim().length > 0 ? { bitcoinAddress: bitcoinDraft.trim() } : {}),
-      ...(lightningDraft.trim().length > 0 ? { lightningKey: lightningDraft.trim() } : {}),
-      ...(phoneDraft.trim().length > 0 ? { phone: normalizePhoneNumber(phoneDraft) ?? undefined } : {}),
-      paymentCount: 0,
-    };
-    setContacts((current) => [...current, next]);
-    resetDraft();
-    setSelectedId(next.id);
-    setStage('details');
-  }
-
-  /** Soft deletion: zero payments hides immediately; otherwise confirm. */
-  function requestDelete(contact: MockContact) {
-    setSelectedId(contact.id);
-    if (contact.paymentCount === 0) {
-      removeSelected();
-      return;
-    }
-    setStage('delete');
+    void rememberContact(nameDraft, pubkeyDraft)
+      .then((saved) => {
+        resetDraft();
+        setSelectedPubkey(saved.nodePubkey);
+        setStage('details');
+        return reload();
+      })
+      .catch(() => {
+        setFieldError('The contact could not be saved.');
+        setStage('add');
+      });
   }
 
   function removeSelected() {
-    setContacts((current) => current.filter((contact) => contact.id !== selectedId));
-    setSelectedId(null);
-    setStage('list');
+    if (selected === null) {
+      return;
+    }
+    void forgetContact(selected.nodePubkey).then(() => {
+      setSelectedPubkey(null);
+      setStage('list');
+      return reload();
+    });
   }
 
   if (stage === 'add') {
@@ -117,9 +99,11 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
       <View style={styles.canvas}>
         <Text style={theme.typography.title}>Add a contact</Text>
         <LabeledField label="Full name" value={nameDraft} onChangeText={setNameDraft} />
-        <LabeledField label="Bitcoin address (paste only)" value={bitcoinDraft} onChangeText={setBitcoinDraft} />
-        <LabeledField label="Lightning key (paste only)" value={lightningDraft} onChangeText={setLightningDraft} />
-        <LabeledField label="Phone (with country code)" value={phoneDraft} onChangeText={setPhoneDraft} />
+        <LabeledField
+          label="Node pubkey (paste only)"
+          value={pubkeyDraft}
+          onChangeText={setPubkeyDraft}
+        />
         {fieldError !== null && <Text style={styles.error}>{fieldError}</Text>}
         <View style={styles.actions}>
           <ActionButton label="Back" variant="outlined" onPress={() => setStage('list')} />
@@ -134,6 +118,7 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
       <View style={styles.canvas}>
         <Text style={theme.typography.title}>Save the contact?</Text>
         <Text style={theme.typography.body}>{nameDraft.trim()}</Text>
+        <Text style={styles.pubkey}>{pubkeyDraft.trim().toLowerCase()}</Text>
         <View style={styles.actions}>
           <ActionButton label="Try again" variant="outlined" onPress={() => setStage('add')} />
           <ActionButton label="Yes" variant="primary" onPress={confirmAlias} grow />
@@ -147,14 +132,20 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
       <View style={styles.canvas}>
         <Text style={theme.typography.title}>Delete {selected.name}?</Text>
         <Text style={theme.typography.body}>
-          You have {selected.paymentCount} payments with this contact. Delete anyway?
+          You will no longer be able to pay this node by name.
         </Text>
         <Text style={theme.typography.caption}>
           Transaction records stay linked and history is preserved.
         </Text>
         <View style={styles.actions}>
           <ActionButton label="Keep" variant="outlined" onPress={() => setStage('details')} grow />
-          <ActionButton label="Delete" variant="primary" attention onPress={removeSelected} grow />
+          <ActionButton
+            label="Delete"
+            variant="primary"
+            attention
+            onPress={removeSelected}
+            grow
+          />
         </View>
       </View>
     );
@@ -164,22 +155,15 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
     return (
       <View style={styles.canvas}>
         <Text style={theme.typography.title}>{selected.name}</Text>
-        {selected.bitcoinAddress !== undefined && (
-          <Text style={theme.typography.body}>Bitcoin: {selected.bitcoinAddress}</Text>
-        )}
-        {selected.lightningKey !== undefined && (
-          <Text style={theme.typography.body}>Lightning: {selected.lightningKey}</Text>
-        )}
-        {selected.phone !== undefined && (
-          <Text style={theme.typography.body}>Phone: {selected.phone}</Text>
-        )}
+        <Text style={styles.pubkey}>{selected.nodePubkey}</Text>
+        <Text style={theme.typography.caption}>Payments are addressed to this node.</Text>
         <View style={styles.actions}>
           <ActionButton label="Back" variant="outlined" onPress={() => setStage('list')} />
           <ActionButton
             label="Delete"
             variant="primary"
             attention
-            onPress={() => requestDelete(selected)}
+            onPress={() => setStage('delete')}
             grow
           />
         </View>
@@ -192,24 +176,26 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
       <View style={styles.header}>
         <Text style={styles.title}>Contacts</Text>
         <Text style={theme.typography.body}>Saved only on this phone.</Text>
-        {contacts.length === 0 && (
+        {contacts !== null && contacts.length === 0 && (
           <Text style={theme.typography.body}>No contacts yet.</Text>
         )}
       </View>
       <View style={styles.list}>
-        {contacts.map((contact) => (
+        {(contacts ?? []).map((contact) => (
           <TouchableOpacity
-            key={contact.id}
+            key={contact.nodePubkey}
             style={styles.rowCard}
             onPress={() => {
-              setSelectedId(contact.id);
+              setSelectedPubkey(contact.nodePubkey);
               setStage('details');
             }}
             accessibilityRole="button"
             accessibilityLabel={contact.name}
           >
             <Text style={styles.rowTitle}>{contact.name}</Text>
-            <Text style={theme.typography.caption}>{contact.phone ?? 'No details yet'}</Text>
+            <Text style={theme.typography.caption}>
+              {contact.nodePubkey.slice(0, 10)}…{contact.nodePubkey.slice(-6)}
+            </Text>
           </TouchableOpacity>
         ))}
       </View>
@@ -250,16 +236,6 @@ function LabeledField({ label, value, onChangeText }: LabeledFieldProps) {
   );
 }
 
-/**
- * Design rule: strip spaces, dashes and brackets, require an explicit
- * country code and never guess one. "0772 123 456" is rejected;
- * "+256 772 123 456" normalizes to "+256772123456".
- */
-function normalizePhoneNumber(raw: string): string | null {
-  const stripped = raw.replace(/[\s\-.()]/g, '');
-  return /^\+\d{8,15}$/.test(stripped) ? stripped : null;
-}
-
 const makeStyles = (theme: MetevoTheme) => ({
   panel: {
     flex: 1,
@@ -298,6 +274,10 @@ const makeStyles = (theme: MetevoTheme) => ({
     ...theme.typography.body,
     color: theme.colors.text,
     padding: 0,
+  },
+  pubkey: {
+    ...theme.typography.caption,
+    color: theme.colors.text,
   },
   error: {
     ...theme.typography.caption,

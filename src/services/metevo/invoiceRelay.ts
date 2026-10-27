@@ -15,7 +15,10 @@ import {
  */
 export interface InvoiceRelay {
   requestInvoice(params: {
-    recipient: string;
+    /** Node pubkey of the contact receiving the request. */
+    recipientPubkey: string;
+    /** The payer's own node pubkey, so the recipient can name the request. */
+    senderPubkey: string | null;
     assetId: string | null;
     amountUsd: number;
   }): Promise<MetevoInvoiceRequestResult>;
@@ -65,9 +68,12 @@ export function createMockInvoiceRelay(options: MockInvoiceRelayOptions): Invoic
   return {
     async requestInvoice(params) {
       sequence += 1;
-      const requestId = mockRequestId(`${params.recipient}:${sequence}`);
+      const requestId = mockRequestId(`${params.recipientPubkey}:${sequence}`);
       requests.set(requestId, {
-        params: { recipient: params.recipient, amountUsd: params.amountUsd },
+        params: {
+          recipient: params.recipientPubkey,
+          amountUsd: params.amountUsd,
+        },
         invoice: null,
         paymentHash: null,
       });

@@ -15,6 +15,7 @@ const REPLY_TEMPLATES: Record<IntentId, string> = {
   'read-spending-overview': 'Reading your spending summary.',
   'read-balance': 'Reading your balances.',
   contacts: 'Opening your contacts.',
+  'invoice-request': 'Opening the invoice request.',
 };
 
 const NOT_UNDERSTOOD = 'I did not understand. Please say it again, or type it.';

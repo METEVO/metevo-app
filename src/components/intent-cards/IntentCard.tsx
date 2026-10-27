@@ -15,6 +15,7 @@ import { ReadTransactionsCard } from './ReadTransactionsCard';
 import { ReceiveRequestCard } from './ReceiveRequestCard';
 import { SendBtcCard } from './SendBtcCard';
 import { SendPaymentCard } from './SendPaymentCard';
+import { InvoiceRequestCard } from './InvoiceRequestCard';
 import { IntentCardShell } from './IntentCardShell';
 
 const IDLE_TITLE = 'Ready when you are';
@@ -45,6 +46,7 @@ const CARDS: Record<IntentId, React.ComponentType<IntentCardProps>> = {
   'read-spending-overview': ReadSpendingOverviewCard,
   'read-balance': ReadBalanceCard,
   contacts: ContactsPanel,
+  'invoice-request': InvoiceRequestCard,
 };
 
 /** The design's HOME-01 panel: title plus the three quick actions. */

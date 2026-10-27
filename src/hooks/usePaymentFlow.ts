@@ -6,7 +6,8 @@ import {
   createLspInvoiceRelay,
   createMockInvoiceRelay,
 } from '../services/metevo/invoiceRelay';
-import { MetevoLspClient } from '../services/metevo/lsp-api';
+import { findContactByName, isValidNodePubkey } from '../services/metevo/contacts';
+import { loadRelayClient } from '../services/metevo/relayClient';
 import { PaymentVoiceIntent } from '../services/metevo/paymentIntent';
 import { playTacton } from '../services/metevo/tacton';
 import { speakAnnouncement } from '../services/spokenInteraction';
@@ -39,16 +40,33 @@ export interface PaymentFlowProposal {
   requestId: string;
 }
 
-/** Relay answer polling: the recipient node needs a moment to answer. */
+/** Relay answer polling: the recipient has up to 90 s to confirm the
+ * request and create the invoice on their own node. */
 const RELAY_POLL_INTERVAL_MS = 1_500;
-const RELAY_ANSWER_TIMEOUT_MS = 30_000;
+const RELAY_ANSWER_TIMEOUT_MS = 90_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * The spoken name never leaves the phone: the relay only accepts a node
+ * pubkey, and the contact book is the only name -> node mapping. Mock mode
+ * has no server, so the label stays local.
+ */
+async function resolveRecipientPubkey(recipient: string): Promise<string | null> {
+  if (ENV.EXPO_PUBLIC_WALLET_MODE === 'mock') {
+    return recipient.trim();
+  }
+  const contact = await findContactByName(recipient);
+  if (contact === null || !isValidNodePubkey(contact.nodePubkey)) {
+    return null;
+  }
+  return contact.nodePubkey;
+}
+
 export function usePaymentFlow() {
-  const { submitPayment } = useWalletSession();
+  const { submitPayment, wallet } = useWalletSession();
   const watcher = useTransferWatcher();
   const [stage, setStage] = useState<PaymentFlowStage>('idle');
   const [proposal, setProposal] = useState<PaymentFlowProposal | null>(null);
@@ -84,16 +102,7 @@ export function usePaymentFlow() {
       });
       return relayRef.current;
     }
-    const { loadDeviceWalletConfig } = await import(
-      '../services/metevo/deviceConfig'
-    );
-    const device = await loadDeviceWalletConfig();
-    relayRef.current = createLspInvoiceRelay(
-      new MetevoLspClient({
-        baseUrl: device.lspApiUrl,
-        bearerToken: device.lspBearerToken,
-      }),
-    );
+    relayRef.current = createLspInvoiceRelay(await loadRelayClient());
     return relayRef.current;
   }, []);
 
@@ -102,9 +111,19 @@ export function usePaymentFlow() {
       enterStage('requesting');
       setNote(null);
       try {
+        const recipientPubkey = await resolveRecipientPubkey(intent.recipient);
+        if (recipientPubkey === null) {
+          enterStage('error');
+          setNote(
+            `No contact named ${intent.recipient}. Add their node pubkey in Contacts first.`,
+          );
+          playTacton('error');
+          return;
+        }
         const relay = await ensureRelay();
         const request = await relay.requestInvoice({
-          recipient: intent.recipient,
+          recipientPubkey,
+          senderPubkey: wallet?.nodePubkey ?? null,
           assetId: null,
           amountUsd: intent.amount,
         });
@@ -123,6 +142,18 @@ export function usePaymentFlow() {
             speakAnnouncement('Invoice ready. Review and confirm.');
             return;
           }
+          if (answer.status === 'declined') {
+            enterStage('error');
+            setNote(`${intent.recipient} declined the request.`);
+            playTacton('error');
+            return;
+          }
+          if (answer.status === 'expired') {
+            enterStage('error');
+            setNote('The request expired before the invoice arrived.');
+            playTacton('error');
+            return;
+          }
           await sleep(RELAY_POLL_INTERVAL_MS);
         }
         enterStage('error');
@@ -138,7 +169,7 @@ export function usePaymentFlow() {
         playTacton('error');
       }
     },
-    [ensureRelay, enterStage],
+    [ensureRelay, enterStage, wallet?.nodePubkey],
   );
 
   const confirm = useCallback(async () => {
