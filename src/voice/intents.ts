@@ -71,7 +71,8 @@ function readRecipient(transcript: string): string | null {
   if (match === null) {
     return null;
   }
-  const recipient = match[1].trim().replace(/\s+/g, ' ');
+  // Speech recognizers append punctuation: "to Bob." must not yield "Bob.".
+  const recipient = match[1].trim().replace(/\s+/g, ' ').replace(/[.!?,;:]+$/, '');
   return recipient.length > 0 ? recipient : null;
 }
 
