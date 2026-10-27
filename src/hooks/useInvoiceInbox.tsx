@@ -92,11 +92,17 @@ export function InvoiceInboxProvider({
         if (cancelled) {
           return;
         }
-        setPending((current) =>
-          current !== null && current.requestId === next.requestId
-            ? current
-            : { ...next, senderName: sender?.name ?? null },
-        );
+        setPending((current) => {
+          // Never swap the card under the user's finger: keep the request
+          // that is already on screen while the relay still lists it.
+          if (
+            current !== null &&
+            inbox.some((entry) => entry.requestId === current.requestId)
+          ) {
+            return current;
+          }
+          return next === null ? null : { ...next, senderName: sender?.name ?? null };
+        });
         setError(null);
       } catch (cause) {
         if (!cancelled) {
@@ -125,24 +131,25 @@ export function InvoiceInboxProvider({
 
   const accept = useCallback(
     async (requestId: string, invoice: string, paymentHash: string | null) => {
-      // The card shows one request; only that request may be answered.
-      if (pending === null || nodePubkey === null || pending.requestId !== requestId) {
-        throw new Error('the pending invoice request changed');
+      if (nodePubkey === null) {
+        throw new Error('the wallet is not connected');
       }
+      // Answer the request the card was rendered for, never whichever
+      // request happens to be pending now.
       await (
         await loadRelayClient()
       ).answerInvoiceRequest({
-        requestId: pending.requestId,
+        requestId,
         recipientPubkey: nodePubkey,
         invoice,
         paymentHash,
         declined: false,
       });
-      handledRef.current.add(pending.requestId);
-      setPending(null);
+      handledRef.current.add(requestId);
+      setPending((current) => (current?.requestId === requestId ? null : current));
       setError(null);
     },
-    [pending, nodePubkey],
+    [nodePubkey],
   );
 
   const decline = useCallback(async () => {
