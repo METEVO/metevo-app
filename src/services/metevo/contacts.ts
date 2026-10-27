@@ -66,6 +66,16 @@ export async function rememberContact(name: string, nodePubkey: string): Promise
     throw new Error('contact node pubkey is invalid');
   }
   const contacts = await readIndex();
+  // A spoken name must resolve to exactly one node, so two contacts cannot
+  // share a name: otherwise "send to Alice" could pay the wrong node.
+  const clash = contacts.find(
+    (entry) =>
+      entry.nodePubkey !== pubkey &&
+      entry.name.trim().toLowerCase() === trimmedName.toLowerCase(),
+  );
+  if (clash !== undefined) {
+    throw new Error('another contact already uses that name');
+  }
   const existing = contacts.findIndex((entry) => entry.nodePubkey === pubkey);
   const entry: StoredContact = {
     name: trimmedName,

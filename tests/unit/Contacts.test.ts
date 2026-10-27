@@ -70,6 +70,16 @@ describe('contact store (node id verification for in-person payments)', () => {
     await expect(findContactByPubkey('03' + 'a'.repeat(64))).resolves.toBeNull();
   });
 
+  test('a name cannot point at two different nodes', async () => {
+    await rememberContact('Alice', PEER);
+
+    await expect(rememberContact('alice', '03' + 'b'.repeat(64))).rejects.toThrow(
+      'already uses that name',
+    );
+    // The same node can be renamed.
+    await expect(rememberContact('Alice B.', PEER)).resolves.toMatchObject({ name: 'Alice B.' });
+  });
+
   test('forgetContact removes only the requested node', async () => {
     await rememberContact('Bob', PEER);
     await rememberContact('Maria', '03' + 'b'.repeat(64));
