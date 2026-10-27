@@ -73,13 +73,13 @@ describe('wallet instruction -> intent card mapping', () => {
     ).toBe('read-spending-overview');
   });
 
-  test('receive opens the payment request card', () => {
+  test('receive opens the payment request card with the spoken amount', () => {
     const action = intentActionFromInstruction(
       instruction({ intent: 'RECEIVE_PAYMENT', amount: 20, currency: 'USDM' }),
       'Create a request for 20 USDm',
     );
     expect(action!.cardId).toBe('create-usdm-invoice');
-    expect(action!.payload).toBeNull();
+    expect(action!.payload).toEqual({ amountUsd: 20 });
   });
 
   test('unknown and swap instructions are not understood', () => {
