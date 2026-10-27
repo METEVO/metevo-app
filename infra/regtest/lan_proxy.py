@@ -41,6 +41,9 @@ def handle(client: socket.socket, upstream: tuple[str, int]) -> None:
     print(f"accepted {client.getpeername()} -> {upstream}", flush=True)
     try:
         node = socket.create_connection(upstream, timeout=5)
+        # create_connection's timeout also governs later reads; the node can
+        # spend far longer than that syncing the chain on the first call.
+        node.settimeout(180)
     except OSError as exc:
         print(f"upstream dial failed: {exc}", flush=True)
         client.close()
