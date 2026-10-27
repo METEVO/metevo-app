@@ -1,6 +1,11 @@
 import { ENV } from '../../config/env';
 import { WalletConfigError } from './deviceConfig';
-import { assertPayableInvoice, getPaymentStatus } from './paymentGuard';
+import {
+  PaymentValidationError,
+  assertPayableInvoice,
+  describeInvoiceMismatch,
+  getPaymentStatus,
+} from './paymentGuard';
 import { loadRemoteNodeBearerToken } from './remoteNodeCredentials';
 import {
   RlnChannel,
@@ -142,7 +147,19 @@ export function createRemoteRlnWalletSessionGateway(
 
     async submitPayment(proposal) {
       assertPayableInvoice(proposal.invoice);
-      const sent = await openClient().sendPayment(proposal.invoice);
+      const node = openClient();
+      if (proposal.expected !== undefined) {
+        // The invoice may come from the relay, so the node pays only what
+        // the user reviewed: same payee, same USDm asset, same amount.
+        const decoded = await node.decodeLnInvoice(proposal.invoice);
+        const mismatch = describeInvoiceMismatch(decoded, proposal.expected, usdmAssetId);
+        if (mismatch !== null) {
+          throw new PaymentValidationError(
+            `the invoice ${mismatch} does not match the reviewed payment; nothing was submitted`,
+          );
+        }
+      }
+      const sent = await node.sendPayment(proposal.invoice);
       return { paymentHash: sent.paymentHash };
     },
 

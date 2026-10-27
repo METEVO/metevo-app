@@ -7,6 +7,8 @@ import {
   createMockInvoiceRelay,
 } from '../services/metevo/invoiceRelay';
 import { findContactByName, isValidNodePubkey } from '../services/metevo/contacts';
+import { PaymentValidationError } from '../services/metevo/paymentGuard';
+import { ReviewedPayment } from '../services/metevo/wallet-gateway';
 import { loadRelayClient } from '../services/metevo/relayClient';
 import { PaymentVoiceIntent } from '../services/metevo/paymentIntent';
 import { SubmittedPayment } from '../services/metevo/wallet-gateway';
@@ -39,12 +41,17 @@ export interface PaymentFlowProposal {
   amount: number;
   invoice: string;
   requestId: string;
+  /** What the user reviewed; the gateway refuses a mismatching invoice. */
+  expected: ReviewedPayment;
 }
 
 /** Relay answer polling: the recipient has up to 90 s to confirm the
  * request and create the invoice on their own node. */
 const RELAY_POLL_INTERVAL_MS = 1_500;
 const RELAY_ANSWER_TIMEOUT_MS = 90_000;
+
+/** USDm has 8 decimals: 20 USDm = 2_000_000_000 base units. */
+const USDM_BASE_UNITS_PER_USD = 10 ** 8;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -138,6 +145,14 @@ export function usePaymentFlow() {
               amount: intent.amount,
               invoice: answer.invoice,
               requestId: request.requestId,
+              expected: {
+                // In mock mode the "recipient" is a label, not a node.
+                payeePubkey:
+                  ENV.EXPO_PUBLIC_WALLET_MODE === 'mock'
+                    ? null
+                    : recipientPubkey,
+                assetAmountBaseUnits: intent.amount * USDM_BASE_UNITS_PER_USD,
+              },
             });
             enterStage('review');
             speakAnnouncement('Invoice ready. Review and confirm.');
@@ -198,24 +213,37 @@ export function usePaymentFlow() {
     enterStage('submitting');
     let submitted: SubmittedPayment;
     try {
-      submitted = await submitPayment({ invoice: proposal.invoice });
+      submitted = await submitPayment({
+        invoice: proposal.invoice,
+        expected: proposal.expected,
+      });
     } catch (cause) {
       console.log(
         '[metevo] payment submission failed:',
         cause instanceof Error ? cause.name : 'unknown',
       );
+      if (cause instanceof PaymentValidationError) {
+        // The node refused the invoice before sending anything.
+        enterStage('error');
+        setNote('The invoice does not match what you reviewed. Nothing was paid.');
+        playTacton('error');
+        return;
+      }
       // Submission may or may not have reached the node; the honest stage
       // is unknown - never an automatic resend.
       enterStage('unknown');
       return;
     }
-    enterStage('watching');
     // A Lightning payment never appears in the on-chain transfer list, so
     // watch its payment hash; the transfer watcher is for on-chain sends.
-    const result =
-      submitted.paymentHash === null
-        ? await watcher.watch()
-        : await watcher.watchPayment(submitted.paymentHash);
+    if (submitted.paymentHash === null) {
+      // No hash to follow: never fall back to the on-chain watcher, which
+      // could report an unrelated transfer as this payment.
+      enterStage('unknown');
+      return;
+    }
+    enterStage('watching');
+    const result = await watcher.watchPayment(submitted.paymentHash);
     if (result.status === 'settled') {
       enterStage('settled');
     } else if (result.status === 'failed') {

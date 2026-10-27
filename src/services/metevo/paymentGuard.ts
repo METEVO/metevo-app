@@ -26,6 +26,48 @@ export function assertPayableInvoice(invoice: string): void {
   }
 }
 
+/** What the user reviewed and confirmed, before any invoice is trusted. */
+export interface ReviewedPayment {
+  /** The contact's node pubkey; null when the payer has no addressable node. */
+  payeePubkey: string | null;
+  assetAmountBaseUnits: number;
+}
+
+/** The decoded bolt11 fields the payment boundary checks. */
+export interface DecodedInvoiceView {
+  payeePubkey: string | null;
+  assetId: string | null;
+  assetAmount: number | null;
+}
+
+/**
+ * The relay (or any third party) supplies the invoice, so the node must only
+ * pay one that matches what the user saw. Returns the first mismatched field,
+ * or null when the invoice is the reviewed payment. A missing asset amount is
+ * a mismatch: a zero-amount invoice cannot satisfy a fixed-amount review.
+ */
+export function describeInvoiceMismatch(
+  decoded: DecodedInvoiceView,
+  reviewed: ReviewedPayment,
+  expectedAssetId: string | null,
+): 'destination' | 'asset' | 'amount' | null {
+  const payee = decoded.payeePubkey?.toLowerCase() ?? null;
+  const wanted = reviewed.payeePubkey?.toLowerCase() ?? null;
+  if (payee !== null && wanted !== null && payee !== wanted) {
+    return 'destination';
+  }
+  if (expectedAssetId !== null && decoded.assetId !== expectedAssetId) {
+    return 'asset';
+  }
+  if (
+    decoded.assetAmount === null ||
+    decoded.assetAmount !== reviewed.assetAmountBaseUnits
+  ) {
+    return 'amount';
+  }
+  return null;
+}
+
 /** Network settlement status per the design rules: pending is not success,
  * failed requires a confirmed failure, and no match stays unknown. */
 export type MetevoPaymentStatus = 'pending' | 'settled' | 'failed' | 'unknown';

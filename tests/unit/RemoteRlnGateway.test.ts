@@ -36,6 +36,13 @@ function fakeClient(overrides: Partial<RlnRestClient> = {}): jest.Mocked<RlnRest
     listPayments: jest.fn(async () => []),
     createLnInvoice: jest.fn(async () => 'lnbcrt1invoice'),
     decodeLnInvoicePaymentHash: jest.fn(async () => 'f'.repeat(64)),
+    decodeLnInvoice: jest.fn(async () => ({
+      paymentHash: 'e'.repeat(64),
+      payeePubkey: PEER_PUBKEY,
+      amountMsat: 3_000_000,
+      assetId: USDM,
+      assetAmount: 2_000_000_000,
+    })),
     sendPayment: jest.fn(async () => ({ paymentHash: 'e'.repeat(64), status: 'Pending' })),
     connectPeer: jest.fn(async () => undefined),
     refreshTransfers: jest.fn(async () => undefined),
@@ -152,6 +159,45 @@ describe('remote RLN wallet gateway', () => {
       name: 'PaymentValidationError',
     });
     expect(client.sendPayment).not.toHaveBeenCalled();
+  });
+
+  test('a relayed invoice for another amount never reaches sendPayment', async () => {
+    const client = fakeClient();
+    const { gateway } = await openedGateway(client);
+    await expect(
+      gateway.submitPayment({
+        invoice: 'lnbcrt1validdemo',
+        expected: { payeePubkey: PEER_PUBKEY, assetAmountBaseUnits: 5_000_000_000 },
+      }),
+    ).rejects.toMatchObject({ name: 'PaymentValidationError' });
+    expect(client.sendPayment).not.toHaveBeenCalled();
+  });
+
+  test('a relayed invoice for another payee never reaches sendPayment', async () => {
+    const client = fakeClient();
+    const { gateway } = await openedGateway(client);
+    await expect(
+      gateway.submitPayment({
+        invoice: 'lnbcrt1validdemo',
+        expected: {
+          payeePubkey: `02${'c'.repeat(64)}`,
+          assetAmountBaseUnits: 2_000_000_000,
+        },
+      }),
+    ).rejects.toMatchObject({ name: 'PaymentValidationError' });
+    expect(client.sendPayment).not.toHaveBeenCalled();
+  });
+
+  test('the reviewed invoice is the only one paid', async () => {
+    const client = fakeClient();
+    const { gateway } = await openedGateway(client);
+    await expect(
+      gateway.submitPayment({
+        invoice: 'lnbcrt1validdemo',
+        expected: { payeePubkey: PEER_PUBKEY, assetAmountBaseUnits: 2_000_000_000 },
+      }),
+    ).resolves.toMatchObject({ paymentHash: 'e'.repeat(64) });
+    expect(client.sendPayment).toHaveBeenCalledWith('lnbcrt1validdemo');
   });
 
   test('payment status comes from the node payment list, never guessed', async () => {

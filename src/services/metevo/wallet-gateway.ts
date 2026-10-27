@@ -1,6 +1,7 @@
 import { ENV } from '../../config/env';
 import { createBareWalletSessionGateway } from './bareGateway';
 import { createRemoteRlnWalletSessionGateway } from './remoteRlnGateway';
+import type { ReviewedPayment } from './paymentGuard';
 import type { TransferInfo } from './transferWatcher';
 import type { StoredWalletMeta } from './secure-store';
 
@@ -10,6 +11,7 @@ export type { StoredWalletMeta };
 // same compiled module); re-exported here to keep the established import
 // path.
 export { PaymentValidationError } from './paymentGuard';
+export type { ReviewedPayment } from './paymentGuard';
 
 /**
  * Setup flow stages in the design's order (section 29): the node is
@@ -40,6 +42,12 @@ export type WalletProgressListener = (step: WalletSetupStep, message: string) =>
  */
 export interface PaymentProposal {
   invoice: string;
+  /**
+   * The payment the user reviewed. A gateway that can decode the invoice
+   * refuses to submit when it does not match: the invoice may come from a
+   * relay, never from the local intent alone.
+   */
+  expected?: ReviewedPayment;
 }
 
 export interface SubmittedPayment {

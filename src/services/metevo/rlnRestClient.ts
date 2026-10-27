@@ -107,6 +107,14 @@ export interface RlnRestClientConfig {
   fetchImpl?: typeof fetch;
 }
 
+export interface RlnDecodedInvoice {
+  paymentHash: string;
+  payeePubkey: string | null;
+  amountMsat: number | null;
+  assetId: string | null;
+  assetAmount: number | null;
+}
+
 export interface RlnRestClient {
   nodeInfo(): Promise<RlnNodeInfo>;
   btcBalance(skipSync: boolean): Promise<RlnBtcBalance>;
@@ -115,6 +123,7 @@ export interface RlnRestClient {
   listChannels(): Promise<RlnChannel[]>;
   listPayments(): Promise<RlnPayment[]>;
   createLnInvoice(request: RlnLnInvoiceRequest): Promise<string>;
+  decodeLnInvoice(invoice: string): Promise<RlnDecodedInvoice>;
   decodeLnInvoicePaymentHash(invoice: string): Promise<string>;
   sendPayment(invoice: string): Promise<{ paymentHash: string | null; status: string }>;
   connectPeer(peerUri: string): Promise<void>;
@@ -172,6 +181,30 @@ export function createRlnRestClient(config: RlnRestClientConfig): RlnRestClient 
 
   const anyBody = z.unknown();
 
+  async function decodeInvoice(invoice: string): Promise<RlnDecodedInvoice> {
+    const decoded = await call(
+      'POST',
+      '/decodelninvoice',
+      z
+        .object({
+          payment_hash: z.string(),
+          payee_pubkey: z.string().nullable().optional(),
+          amt_msat: z.number().int().nullable().optional(),
+          asset_id: z.string().nullable().optional(),
+          asset_amount: z.number().int().nullable().optional(),
+        })
+        .passthrough(),
+      { invoice },
+    );
+    return {
+      paymentHash: decoded.payment_hash,
+      payeePubkey: decoded.payee_pubkey ?? null,
+      amountMsat: decoded.amt_msat ?? null,
+      assetId: decoded.asset_id ?? null,
+      assetAmount: decoded.asset_amount ?? null,
+    };
+  }
+
   return {
     nodeInfo: () => call('GET', '/nodeinfo', nodeInfoSchema),
 
@@ -207,11 +240,12 @@ export function createRlnRestClient(config: RlnRestClientConfig): RlnRestClient 
       return response.invoice;
     },
 
+    async decodeLnInvoice(invoice) {
+      return decodeInvoice(invoice);
+    },
+
     async decodeLnInvoicePaymentHash(invoice) {
-      const decoded = await call('POST', '/decodelninvoice', z.object({ payment_hash: z.string() }).passthrough(), {
-        invoice,
-      });
-      return decoded.payment_hash;
+      return (await decodeInvoice(invoice)).paymentHash;
     },
 
     async sendPayment(invoice) {
