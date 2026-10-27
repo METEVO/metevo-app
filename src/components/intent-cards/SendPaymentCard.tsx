@@ -4,6 +4,7 @@ import { StyleSheet, Text, TextInput, View } from 'react-native';
 import AttentionVoice from '../../assets/voice_attention_dark.svg';
 import ProcessingVoice from '../../assets/voice_processing_dark.svg';
 import SuccessVoice from '../../assets/voice_success_dark.svg';
+import { useAttentionSignal } from '../AttentionSignal';
 import { InPersonPaymentCard } from './InPersonPaymentCard';
 import {
   MetevoTheme,
@@ -100,6 +101,9 @@ function VoiceSendPaymentCard({
 }: { intent: PaymentVoiceIntent } & IntentCardProps & { onPayInPerson?: () => void }) {
   const styles = useThemedStyles(makeStyles);
   const { stage, proposal, note, start, confirm, cancel } = usePaymentFlow();
+  useAttentionSignal(
+    stage === 'failed' || stage === 'unknown' || stage === 'error',
+  );
 
   useEffect(() => {
     // The voice command already decided "pay"; the invoice request starts
@@ -155,7 +159,7 @@ function VoiceSendPaymentCard({
     return (
       <View style={styles.centered}>
         <AttentionVoice width={64} height={64} />
-        <Text style={styles.title}>{FAILED_TITLE}</Text>
+        <Text style={[styles.title, styles.errorTitle]}>{FAILED_TITLE}</Text>
         <Text style={styles.caption}>
           The node reported a confirmed failure. Nothing was resent.
         </Text>
@@ -168,7 +172,7 @@ function VoiceSendPaymentCard({
     return (
       <View style={styles.centered}>
         <AttentionVoice width={64} height={64} />
-        <Text style={styles.title}>{UNKNOWN_TITLE}</Text>
+        <Text style={[styles.title, styles.errorTitle]}>{UNKNOWN_TITLE}</Text>
         <Text style={styles.caption}>{UNKNOWN_NOTE}</Text>
         <ActionButton label="Done" variant="primary" onPress={finish} />
       </View>
@@ -179,7 +183,7 @@ function VoiceSendPaymentCard({
     return (
       <View style={styles.centered}>
         <AttentionVoice width={64} height={64} />
-        <Text style={styles.title}>The payment could not start</Text>
+        <Text style={[styles.title, styles.errorTitle]}>The payment could not start</Text>
         <Text style={styles.caption}>
           {note ?? 'The invoice request failed. Try again.'}
         </Text>
@@ -270,6 +274,7 @@ function DemoSendPaymentCard({
   const [amountDraft, setAmountDraft] = useState('10.00');
   const [amountUsd, setAmountUsd] = useState(10);
   const paymentHashRef = useRef<string | null>(null);
+  useAttentionSignal(stage === 'failed' || stage === 'unknown');
 
   /** Done on the amount panel: validates, then shows the demo proposal. */
   const submitAmount = useCallback(() => {
@@ -416,7 +421,7 @@ function DemoSendPaymentCard({
     return (
       <View style={styles.centered}>
         <AttentionVoice width={64} height={64} />
-        <Text style={styles.title}>{FAILED_TITLE}</Text>
+        <Text style={[styles.title, styles.errorTitle]}>{FAILED_TITLE}</Text>
         <Text style={styles.caption}>
           The node reported a confirmed failure. Nothing was resent.
         </Text>
@@ -433,7 +438,7 @@ function DemoSendPaymentCard({
     return (
       <View style={styles.centered}>
         <AttentionVoice width={64} height={64} />
-        <Text style={styles.title}>{UNKNOWN_TITLE}</Text>
+        <Text style={[styles.title, styles.errorTitle]}>{UNKNOWN_TITLE}</Text>
         <Text style={styles.caption}>{UNKNOWN_NOTE}</Text>
         <ActionButton
           label={CHECK_ACTION}
@@ -496,6 +501,9 @@ const makeStyles = (theme: MetevoTheme) => ({
   title: {
     ...theme.typography.title,
     color: theme.voiceStates.idle.ink,
+  },
+  errorTitle: {
+    color: theme.voiceStates.attention.ink,
   },
   body: theme.typography.body,
   caption: theme.typography.caption,

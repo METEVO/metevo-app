@@ -12,8 +12,9 @@ import { useTransferWatcher } from '../../hooks/useTransferWatcher';
 import { useWalletSession } from '../../hooks/useWalletSession';
 import { getLocalLink, isLocalLinkNative } from '../../services/localelink';
 import { metevoDesignTokens } from '../../design/designTokens';
-import { layout, scale } from '../styles';
+import { scale, layout } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
+import { useAttentionSignal } from '../AttentionSignal';
 
 type ReceiveStage =
   | 'compose'
@@ -125,6 +126,7 @@ export function ReceiveRequestCard({
   const isLocalLinkActive =
     stage === 'local-preparing' || stage === 'local-serving';
   useKeepScreenOn(isLocalLinkActive);
+  useAttentionSignal(stage === 'request-error' || stage === 'local-error');
 
   useEffect(() => {
     localStageRef.current = stage;
@@ -305,7 +307,7 @@ export function ReceiveRequestCard({
     return (
       <View style={styles.centered}>
         <AttentionVoice width={64} height={64} />
-        <Text style={styles.title}>The local receive stopped</Text>
+        <Text style={[styles.title, styles.errorTitle]}>The local receive stopped</Text>
         <Text style={styles.caption}>{note ?? 'Nothing was received.'}</Text>
         <ActionButton label="Done" variant="primary" onPress={backToCompose} />
       </View>
@@ -359,7 +361,7 @@ export function ReceiveRequestCard({
     return (
       <View style={styles.centered}>
         <AttentionVoice width={64} height={64} />
-        <Text style={styles.title}>The request stopped</Text>
+        <Text style={[styles.title, styles.errorTitle]}>The request stopped</Text>
         <Text style={styles.caption}>{note ?? 'Nothing was received.'}</Text>
         <ActionButton label="Done" variant="primary" onPress={backToCompose} />
       </View>
@@ -444,6 +446,9 @@ const makeStyles = (theme: MetevoTheme) => ({
   title: {
     ...theme.typography.title,
     color: theme.voiceStates.idle.ink,
+  },
+  errorTitle: {
+    color: theme.voiceStates.attention.ink,
   },
   body: theme.typography.body,
   caption: theme.typography.caption,

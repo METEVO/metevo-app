@@ -6,6 +6,7 @@ import ProcessingVoice from '../../assets/voice_processing_dark.svg';
 import SuccessVoice from '../../assets/voice_success_dark.svg';
 import { useInPersonPayment } from '../../hooks/useInPersonPayment';
 import { useThemedStyles, MetevoTheme } from '../../design/ThemeContext';
+import { useAttentionSignal } from '../AttentionSignal';
 import { layout } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
 import { IntentCardProps } from './IntentCard';
@@ -19,6 +20,9 @@ import { IntentCardProps } from './IntentCard';
 export function InPersonPaymentCard({ onClearIntent }: IntentCardProps) {
   const styles = useThemedStyles(makeStyles);
   const { stage, proposal, note, payInPerson, confirm, cancel } = useInPersonPayment();
+  useAttentionSignal(
+    stage === 'error' || stage === 'failed' || stage === 'unknown',
+  );
 
   const finish = React.useCallback(() => {
     cancel();
@@ -72,7 +76,7 @@ export function InPersonPaymentCard({ onClearIntent }: IntentCardProps) {
     return (
       <View style={styles.centered}>
         <AttentionVoice width={64} height={64} />
-        <Text style={styles.title}>
+        <Text style={[styles.title, styles.errorTitle]}>
           {stage === 'failed' ? 'The payment failed' : 'Status unknown'}
         </Text>
         <Text style={styles.caption}>
@@ -89,7 +93,7 @@ export function InPersonPaymentCard({ onClearIntent }: IntentCardProps) {
     return (
       <View style={styles.centered}>
         <AttentionVoice width={64} height={64} />
-        <Text style={styles.title}>The in-person payment stopped</Text>
+        <Text style={[styles.title, styles.errorTitle]}>The in-person payment stopped</Text>
         <Text style={styles.caption}>{note ?? 'Nothing was submitted.'}</Text>
         <ActionButton label="Done" variant="primary" onPress={finish} />
       </View>
@@ -163,6 +167,9 @@ const makeStyles = (theme: MetevoTheme) => ({
     gap: layout.rowGap,
   },
   title: theme.typography.title,
+  errorTitle: {
+    color: theme.voiceStates.attention.ink,
+  },
   caption: theme.typography.caption,
   row: {
     flexDirection: 'row' as const,

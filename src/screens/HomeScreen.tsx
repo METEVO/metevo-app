@@ -2,6 +2,7 @@ import React, { useCallback, useEffect } from 'react';
 import { Text, View } from 'react-native';
 
 import { BalancesCard } from '../components/BalancesCard';
+import { AttentionSignalProvider, useAttentionActive } from '../components/AttentionSignal';
 import { DynamicFrame } from '../components/DynamicFrame';
 import { HistorySpendingLinks } from '../components/HistorySpendingLinks';
 import { RecordingControls } from '../components/RecordingControls';
@@ -28,7 +29,11 @@ import { archiveRecording } from '../utils/recordingArchive';
  */
 export function HomeScreen() {
   const session = useWalletSession();
-  return <HomeShell session={session} />;
+  return (
+    <AttentionSignalProvider>
+      <HomeShell session={session} />
+    </AttentionSignalProvider>
+  );
 }
 
 /**
@@ -81,6 +86,14 @@ function HomeShell({ session }: { session: WalletSession }) {
   );
   const walletOpen = session.wallet !== null;
   const nodeOffline = session.connection === 'offline';
+  const cardAttention = useAttentionActive();
+  /** ERR-03: the voice button mirrors every unavailable or failed state. */
+  const attention = nodeOffline || session.errorMessage !== null || cardAttention;
+  // While attention is shown, the shell's own label wins over a stale
+  // spoken answer; a running turn still reports its own progress.
+  const statusMessage =
+    attention && !voice.recording ? 'Needs attention' : voice.message;
+  const statusIsError = !attention && voice.messageIsError;
   const channelProvisioning =
     session.wallet !== null && !nodeOffline && !session.wallet.channelReady;
   const connecting = session.connecting || (walletOpen ? false : !nodeOffline && session.errorMessage === null);
@@ -107,7 +120,7 @@ function HomeShell({ session }: { session: WalletSession }) {
     <View style={styles.shell}>
       <StatusHeader connection={connection} />
       <BalancesCard
-        label={nodeOffline ? 'Last known balance' : 'Available balance'}
+        label={attention ? 'Last known balance' : 'Available balance'}
         usdm={formatUsdmBalance(session.wallet?.balanceUsdmBaseUnits ?? null)}
         sats={formatSats(session.wallet?.btcSpendableSat ?? null)}
       />
@@ -174,17 +187,17 @@ function HomeShell({ session }: { session: WalletSession }) {
       <View style={styles.voiceRegion}>
         <RecordingControls
           recording={voice.recording}
-          state={nodeOffline ? 'attention' : 'idle'}
+          state={attention ? 'attention' : 'idle'}
           onPressIn={voice.onPressIn}
           onPressOut={voice.onPressOut}
           lastClipUri={voice.lastClipUri}
         />
-        {(voice.message !== null || nodeOffline) && (
+        {statusMessage !== null && (
           <Text
             accessibilityLiveRegion="polite"
-            style={[styles.voiceMessage, voice.messageIsError && styles.voiceError]}
+            style={[styles.voiceMessage, statusIsError && styles.voiceError]}
           >
-            {voice.message ?? 'Needs attention'}
+            {statusMessage}
           </Text>
         )}
       </View>

@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { useAttentionActive } from './AttentionSignal';
 import { IntentCard } from './intent-cards';
 import { TaskPanel } from './TaskPanel';
 import { IntentId } from '../types/intents';
@@ -28,8 +29,12 @@ export function DynamicFrame({
   onSelectIntent,
   payload,
 }: DynamicFrameProps) {
+  // Error screens reuse the design's attention card (ERR-01..03): the card
+  // reports the failure, the frame paints the panel.
+  const attention = useAttentionActive();
+
   return (
-    <TaskPanel>
+    <TaskPanel variant={attention ? 'attention' : 'idle'}>
       <IntentCard
         id={intent}
         onClearIntent={onClearIntent}
