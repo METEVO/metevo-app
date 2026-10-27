@@ -98,7 +98,7 @@ export function InvoiceRequestCard({
       return;
     }
     try {
-      await inbox.accept(created.invoice, created.paymentHash);
+      await inbox.accept(request.requestId, created.invoice, created.paymentHash);
     } catch (cause) {
       setNote(relayErrorMessage(cause));
       setStage('error');

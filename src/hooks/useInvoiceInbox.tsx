@@ -36,7 +36,7 @@ interface InvoiceInboxState {
   pending: InvoiceInboxRequest | null;
   /** Set when the relay cannot be reached; the card shows it as attention. */
   error: string | null;
-  accept(invoice: string, paymentHash: string | null): Promise<void>;
+  accept(requestId: string, invoice: string, paymentHash: string | null): Promise<void>;
   decline(): Promise<void>;
   /** Stops showing the current request (the card's Done). */
   dismiss(): void;
@@ -124,9 +124,10 @@ export function InvoiceInboxProvider({
   }, [enabled, nodePubkey]);
 
   const accept = useCallback(
-    async (invoice: string, paymentHash: string | null) => {
-      if (pending === null || nodePubkey === null) {
-        throw new Error('no pending invoice request');
+    async (requestId: string, invoice: string, paymentHash: string | null) => {
+      // The card shows one request; only that request may be answered.
+      if (pending === null || nodePubkey === null || pending.requestId !== requestId) {
+        throw new Error('the pending invoice request changed');
       }
       await (
         await loadRelayClient()
