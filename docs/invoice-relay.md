@@ -16,6 +16,10 @@ Alice app ──POST /sendpayment (own node)────────────
 The LSP stores only the request and the answer; it never touches either node,
 so both wallets can sit behind NAT.
 
+The payer does not trust the relayed invoice: its node decodes it and refuses
+the payment when the payee, the USDm asset or the amount differ from what the
+user reviewed.
+
 ## Relay API (all behind the APay bearer token)
 
 | Route | Method | Body / query | Notes |
