@@ -256,6 +256,7 @@ cmd_status() {
   echo "Phone wiring (each phone talks to http://localhost:3001):"
   echo "  adb -s <ALICE_SERIAL> reverse tcp:3001 tcp:${ALICE_API_HOST_PORT}"
   echo "  adb -s <BOB_SERIAL>   reverse tcp:3001 tcp:${BOB_API_HOST_PORT}"
+  echo "  adb -s <SERIAL> reverse tcp:8080 tcp:8080   # invoice relay (./regtest.sh lsp)"
 }
 
 cmd_invoice() {
@@ -273,6 +274,128 @@ cmd_pay() {
   rln "$node" POST /sendpayment "$(jq -nc --arg i "$invoice" '{invoice: $i}')" | jq .
 }
 
+# --- invoice relay (LSP) -------------------------------------------------
+# The relay lets a payer ask a recipient's node for an invoice through the
+# LSP. Bob's side of the demo runs here, from the shell.
+LSP_CONTAINER=metevo-invoice-relay
+LSP_VOLUME=metevo-invoice-relay-data
+LSP_NETWORK=metevo-regtest_default
+
+lsp_url() { echo "${LSP_URL:-http://127.0.0.1:8080}"; }
+
+lsp_token() {
+  local token=${LSP_TOKEN:-${METEVO_LSP_APAY_TOKEN:-}}
+  if [ -z "$token" ] && [ -f ../../scripts/device-wallet-config.json ]; then
+    token=$(jq -r '.lspBearerToken // empty' ../../scripts/device-wallet-config.json)
+  fi
+  [ -n "$token" ] || die "set LSP_TOKEN or METEVO_LSP_APAY_TOKEN (must match the phone's lspBearerToken)"
+  echo "$token"
+}
+
+relay_call() {
+  local method=$1 path=$2 body=${3:-}
+  local args=(-sS -m 20 -X "$method" -w '\n%{http_code}' -H "Authorization: Bearer $(lsp_token)")
+  [ -n "$body" ] && args+=(-H 'Content-Type: application/json' -d "$body")
+  local response status
+  response=$(curl "${args[@]}" "$(lsp_url)$path") || return 1
+  status=${response##*$'\n'}
+  response=${response%$'\n'*}
+  if [ "$status" -ge 400 ]; then
+    echo "relay $method $path -> HTTP $status: $response" >&2
+    return 1
+  fi
+  echo "$response"
+}
+
+cmd_lsp_build() {
+  [ -d ../../../utexo-lsp ] || die "../../../utexo-lsp not found; build the LSP image where the source lives"
+  docker build -t "${LSP_IMAGE:-utexo-lsp:latest}" ../../../utexo-lsp
+}
+
+cmd_lsp() {
+  ensure_env_file
+  local image=${LSP_IMAGE:-utexo-lsp:latest} attempt
+  docker rm -f "$LSP_CONTAINER" >/dev/null 2>&1 || true
+  docker run -d --name "$LSP_CONTAINER" --network "$LSP_NETWORK" -p 8080:8080 \
+    -e SERVER_ADDR=:8080 \
+    -e DATABASE_DRIVER=sqlite \
+    -e DATABASE_URL=/data/relay.db \
+    -e APAY_BEARER_TOKEN="$(lsp_token)" \
+    -e LSP_BASE_URL=http://rln-alice:3001 \
+    -e RGB_NODE_BASE_URL=http://rln-alice:3001 \
+    -e LIGHTNING_ADDRESS_DOMAIN_URL=http://127.0.0.1:8080 \
+    -e METEVO_INVOICE_EXPIRY=10m \
+    -v "$LSP_VOLUME:/data" \
+    "$image" >/dev/null
+  for attempt in $(seq 1 40); do
+    curl -fsS -m 2 "$(lsp_url)/health" >/dev/null 2>&1 && {
+      log "invoice relay up on $(lsp_url); rebuild with ./regtest.sh lsp-build after LSP changes"
+      return
+    }
+    sleep 0.5
+  done
+  docker logs "$LSP_CONTAINER" 2>&1 | tail -20
+  die "invoice relay did not become healthy"
+}
+
+cmd_relay_inbox() {
+  ensure_env_file
+  local node=${1:?usage: relay-inbox <alice|bob>}
+  relay_call GET "/metevo/invoice-inbox?pubkey=$(pubkey_of "$node")" | jq .
+}
+
+cmd_relay_request() {
+  ensure_env_file
+  local recipient=${1:?usage: relay-request <alice|bob> <amount_usd> [sender]} usd=${2:?usage: relay-request <recipient> <amount_usd> [sender]}
+  local sender=${3:-}
+  [ -n "$sender" ] || { [ "$recipient" = alice ] && sender=bob || sender=alice; }
+  relay_call POST /metevo/invoice-request "$(jq -nc \
+    --arg recipient "$(pubkey_of "$recipient")" \
+    --arg sender "$(pubkey_of "$sender")" \
+    --argjson usd "$usd" \
+    '{recipient_pubkey: $recipient, sender_pubkey: $sender, amount_usd: $usd}')" | jq .
+}
+
+# Bob's side: create the real USDm invoice on that node, then answer.
+cmd_relay_answer() {
+  ensure_env_file
+  local node=${1:?usage: relay-answer <alice|bob> [request_id]} only=${2:-}
+  local pubkey answer_count=0 request_id usd amount invoice
+  pubkey=$(pubkey_of "$node")
+  while IFS=$'\t' read -r request_id usd; do
+    if [ -n "$only" ] && [ "$request_id" != "$only" ]; then
+      continue
+    fi
+    amount=$(jq -n --argjson usd "$usd" '$usd * 100000000')
+    invoice=$(cmd_invoice "$node" "$amount")
+    relay_call POST /metevo/invoice-answer "$(jq -nc \
+      --arg request "$request_id" --arg pubkey "$pubkey" --arg invoice "$invoice" \
+      '{request_id: $request, recipient_pubkey: $pubkey, invoice: $invoice}')" >/dev/null
+    echo "$request_id  $usd USDm  invoice=${invoice:0:28}…"
+    answer_count=$((answer_count + 1))
+  done < <(relay_call GET "/metevo/invoice-inbox?pubkey=$pubkey" | jq -r '.requests[] | [.request_id, .amount_usd] | @tsv')
+  if [ "$answer_count" -eq 0 ]; then
+    log "no pending request for $node"
+  fi
+}
+
+# The payer's side after the recipient app confirms: print the invoice.
+cmd_relay_await() {
+  ensure_env_file
+  local request_id=${1:?usage: relay-await <request_id> [timeout_s]} timeout=${2:-120}
+  local started=$SECONDS response status
+  while :; do
+    response=$(relay_call POST /metevo/invoice-response \
+      "$(jq -nc --arg request "$request_id" '{request_id: $request}')")
+    status=$(jq -r '.status' <<<"$response")
+    [ "$status" = pending ] || break
+    [ $((SECONDS - started)) -lt "$timeout" ] || die "no answer after ${timeout}s"
+    sleep 1
+  done
+  jq . <<<"$response"
+  [ "$status" = delivered ]
+}
+
 usage() {
   local USDM_TICKER=${USDM_TICKER:-USDM}
   cat <<EOF
@@ -284,6 +407,13 @@ usage: ./regtest.sh <command>
   mine [blocks]              mine blocks (default 1)
   invoice <node> <amount>    create a $USDM_TICKER lightning invoice (base units)
   pay <node> <invoice>       pay an invoice from a node
+  lsp-build                  build the relay LSP image from ../../../utexo-lsp
+  lsp                        start the invoice-relay LSP on :8080
+  relay-request <node> <usd> [sender]
+                             ask a node for a $USDM_TICKER invoice over the relay
+  relay-inbox <node>         list the relay requests waiting for that node
+  relay-answer <node> [id]   create the invoice and answer each pending request
+  relay-await <request_id>   print the invoice the recipient delivered
   down                       stop the stack, keep data
   reset                      stop the stack and delete all chain and node data
 EOF
@@ -300,8 +430,20 @@ main() {
     mine) ensure_env_file; mine "${1:-1}" ;;
     invoice) cmd_invoice "$@" ;;
     pay) cmd_pay "$@" ;;
-    down) ensure_env_file; compose down ;;
-    reset) ensure_env_file; compose down -v; rm -rf "$SECRETS_DIR" ;;
+    lsp-build) cmd_lsp_build ;;
+    lsp) cmd_lsp ;;
+    relay-request) cmd_relay_request "$@" ;;
+    relay-inbox) cmd_relay_inbox "$@" ;;
+    relay-answer) cmd_relay_answer "$@" ;;
+    relay-await) cmd_relay_await "$@" ;;
+    down) ensure_env_file; docker rm -f "$LSP_CONTAINER" >/dev/null 2>&1 || true; compose down ;;
+    reset)
+      ensure_env_file
+      docker rm -f "$LSP_CONTAINER" >/dev/null 2>&1 || true
+      docker volume rm "$LSP_VOLUME" >/dev/null 2>&1 || true
+      compose down -v
+      rm -rf "$SECRETS_DIR"
+      ;;
     *) usage; [ -z "$command" ] || exit 1 ;;
   esac
 }
