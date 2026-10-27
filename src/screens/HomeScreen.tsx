@@ -11,11 +11,8 @@ import { TaskPanel } from '../components/TaskPanel';
 import { ActionButton } from '../components/ui/ActionButton';
 import { layout, scale } from '../components/styles';
 import { ENV } from '../config/env';
-import {
-  useTheme,
-  useThemedStyles,
-  type MetevoTheme,
-} from '../design/ThemeContext';
+import { useTheme, useThemedStyles, type MetevoTheme } from '../design/ThemeContext';
+import { designFrameWidth } from '../design/theme';
 import { useIntents } from '../hooks/useIntents';
 import { useVoiceAssistant } from '../hooks/useVoiceAssistant';
 import { WalletSession, useWalletSession } from '../hooks/useWalletSession';
@@ -231,6 +228,10 @@ function formatSats(sats: number | null): string {
 const makeStyles = (theme: MetevoTheme) => ({
   shell: {
     flex: 1,
+    width: '100%' as const,
+    // Tablet: the reference frame stops at a phone-sized column, centred.
+    maxWidth: designFrameWidth(),
+    alignSelf: 'center' as const,
     paddingHorizontal: layout.screenPadding,
     paddingTop: scale(10),
     // Reference inset under the bottom controls (512 - 450.2 - 28.32).

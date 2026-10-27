@@ -50,12 +50,24 @@ export interface MetevoTheme {
 const REFERENCE_FRAME_WIDTH = metevoDesignTokens.referenceFrame.width;
 
 /**
+ * The design is a 236.8-unit phone frame. Past this logical width the
+ * frame stops growing and the shell centres instead: on a tablet the app
+ * stays a readable phone-sized column rather than a 3x magnified one.
+ */
+const MAX_FRAME_WIDTH = 460;
+
+/** Width the design actually scales against (window width, capped). */
+export function designFrameWidth(): number {
+  return Math.min(Dimensions.get('window').width, MAX_FRAME_WIDTH);
+}
+
+/**
  * tokens.runtimeGuidance.scaleFormula: reference SVG units to logical
  * pixels. Portrait is locked in app.json, so the window width is measured
  * once at module init; OS font scaling still applies to Text elements.
  */
 export const scale = (referenceUnits: number): number =>
-  (referenceUnits * Dimensions.get('window').width) / REFERENCE_FRAME_WIDTH;
+  (referenceUnits * designFrameWidth()) / REFERENCE_FRAME_WIDTH;
 
 /** Token weights are numeric; TextStyle.fontWeight is a literal union. */
 function textStyleWeight(tokenWeight: number): TextStyle['fontWeight'] {
