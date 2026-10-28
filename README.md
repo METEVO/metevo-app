@@ -39,9 +39,9 @@ Financial-inclusion tools often fail because they replicate desktop paradigms on
 
 ### Stack & what is installed and working
 
-- React Native + Expo
-- Working today: the complete single-screen wireframe app runs on Android through Expo Go, the TypeScript typecheck passes with zero errors and recordings are stored as .m4a.
-- Not yet wired (by design, seams are prepared): real RGB transfers, on-device QVAC voice-to-intent, TTS read-back
+- React Native + Expo (debug APK hosting the QVAC voice stack; Expo Go runs the `mock` mode only)
+- Working today: the on-device QVAC voice pipeline (Whisper STT → Qwen intent → spoken replies, nothing leaves the phone), real RGB-over-Lightning USDm payments between two phones, and the phone-to-phone **invoice relay**: say *"send 20 dollars to Bob"* and Bob's phone opens the request; only after he taps **Create invoice** does his node produce it. Payments confirm with biometrics and settle with haptic + spoken feedback in the design-v3 interface (light/dark, tablet-friendly).
+- TypeScript typecheck and 25 Jest suites pass; the two-node payment flow also runs as an automated integration test.
 
 ### RGB Lighting Stack used
 
@@ -57,7 +57,7 @@ Financial-inclusion tools often fail because they replicate desktop paradigms on
 
 Each phone is backed by its own [rgb-lightning-node](https://github.com/RGB-Tools/rgb-lightning-node) (RLN) daemon, reached over its REST API (`EXPO_PUBLIC_WALLET_MODE=remote`). Both nodes, the bitcoind/electrs chain backend and the RGB proxy run in Docker. The app talks to the wallet only through `WalletSessionGateway`. Moving to the on-device node later (`EXPO_PUBLIC_WALLET_MODE=wdk`) changes the env only, not the screens.
 
-The app boots straight into the home shell: there is no sign-in and no wallet creation. The wallet connects by itself on launch (biometrics are opt-in via `EXPO_PUBLIC_WALLET_AUTH`) and the English QVAC voice agent (Whisper + Qwen, `src/ai/{whisper,qwen,onDeviceVoice}.ts`) loads its models in the background — speak after the mic button becomes active.
+The app boots straight into the home shell: there is no sign-in and no wallet creation. The wallet connects by itself on launch (biometrics are opt-in via `EXPO_PUBLIC_WALLET_AUTH`) and the English QVAC voice agent (Whisper + Qwen, driven by `src/ai/qvacRuntime.ts`) loads its models in the background — speak after the mic button becomes active.
 
 | `EXPO_PUBLIC_WALLET_MODE` | Keys live on | Use |
 | --- | --- | --- |
@@ -100,6 +100,17 @@ python3 lan_proxy.py &   # re-expose the node APIs to the LAN (run in the backgr
 - After a restart (`./regtest.sh down` then `up`), nodes come back locked. Run `./regtest.sh unlock`.
 - `./regtest.sh reset` wipes all chain and node data.
 
+#### 1b. Start the invoice relay (the METEVO LSP)
+
+Phone-to-phone payments go through the METEVO LSP, the `utexo-lsp` repository kept as a sibling of this one (`metevo-hack/metevo-final-app` + `metevo-hack/utexo-lsp`):
+
+```bash
+./regtest.sh lsp-build    # builds ../utexo-lsp into the utexo-lsp:latest image
+./regtest.sh lsp          # serves the invoice relay on 127.0.0.1:8080 (SQLite in a named volume)
+```
+
+`lsp-build` must be rerun after any change to the `utexo-lsp` sources. The relay token is `METEVO_LSP_APAY_TOKEN` in `infra/regtest/.env`; the phone gets the same value in step 2.
+
 #### 2. Configure and install the app (one build for both phones)
 
 Create `.env.local` (gitignored):
@@ -120,6 +131,14 @@ adb -s <BOB_SERIAL>   install -r app/build/outputs/apk/debug/app-debug.apk
 
 (An x86_64 emulator needs `-PreactNativeArchitectures=x86_64`.)
 
+Provision the relay credentials into each phone. Copy `scripts/device-wallet-config.example.json` to `scripts/device-wallet-config.json` (gitignored), set `lspApiUrl` to `http://127.0.0.1:8080` (USB; use the host LAN IP for Wi-Fi) and `lspBearerToken` to the same value as `METEVO_LSP_APAY_TOKEN`, then:
+
+```bash
+node scripts/push-device-config.cjs    # for each connected serial; needs the debug APK
+```
+
+The token never rides `EXPO_PUBLIC_*`, which ships inside the APK. Finally add the contact you will pay: **Contacts → Add contact**, name `Bob`, node pubkey from `./regtest.sh status`. The spoken name resolves to that pubkey locally — the relay never sees names.
+
 #### Voice models when the QVAC hub is unreachable
 
 By default the QVAC voice agent resolves Whisper and the Qwen LLM from the QVAC model registry and downloads them on first use. On networks where that hub is unreachable (TLS interception, offline demo rigs), sideload instead:
@@ -139,8 +158,10 @@ The Qwen LLM is cached at `<documents>/.qvac/models/<sha256(registryPath)[:16]>_
 ```bash
 adb -s <ALICE_SERIAL> reverse tcp:3001 tcp:3101
 adb -s <ALICE_SERIAL> reverse tcp:8081 tcp:8081
+adb -s <ALICE_SERIAL> reverse tcp:8080 tcp:8080
 adb -s <BOB_SERIAL>   reverse tcp:3001 tcp:3102
 adb -s <BOB_SERIAL>   reverse tcp:8081 tcp:8081
+adb -s <BOB_SERIAL>   reverse tcp:8080 tcp:8080
 ```
 
 `adb devices` lists the serials. An emulator also works with `adb reverse`, so use the same lines with its serial.
@@ -151,23 +172,34 @@ adb -s <BOB_SERIAL>   reverse tcp:8081 tcp:8081
 npx expo start --port 8081 --clear   # --clear after any .env.local change: EXPO_PUBLIC_* is inlined
 ```
 
-On each phone, go through Language → Theme → **Sign in** → select "Remote node" → **Open wallet**, then pass the biometric prompt. The home shell shows that node's real balances. Alice starts at 400.00 USDm and bob at 100.00 USDm, with "Wallet connected" in the header.
+On each phone the app opens straight into the home shell — no sign-in, no wallet picker. The wallet connects by itself and the header reads "Wallet connected"; Alice starts at 400.00 USDm and bob at 100.00 USDm. Wait for the mic button to become active (the voice models load in the background).
 
-#### 5. Pay between the two wallets
+#### 5. Pay between the two wallets by voice
+
+Say **"send 20 dollars to Bob"** on Alice's phone (hold the mic). The app resolves Bob's contact pubkey locally and asks the LSP to relay the invoice request; Bob's phone opens an **Invoice request from Bob** card on its own. After Bob taps **Create invoice**, Alice's phone shows the review card — **Confirm payment** plus the fingerprint settles it, and both balances move within one poll (`EXPO_PUBLIC_WALLET_STATUS_POLL_MS`, default 10 s).
+
+Drive Bob's side from the shell instead of a second phone:
 
 ```bash
 cd infra/regtest
+./regtest.sh relay-answer bob          # create the invoice on bob's node for the pending request
+./regtest.sh relay-request alice 20    # bob asks alice; alice's phone opens the request card
+./regtest.sh relay-await <request_id>  # print the invoice alice delivered
+./regtest.sh pay bob <invoice>         # settle it; alice's balance moves
+```
+
+The direct path (no relay, no second phone) still works:
+
+```bash
 INVOICE=$(./regtest.sh invoice bob 100000000)   # 1 USDm (precision 8)
 ./regtest.sh pay alice "$INVOICE"
 ```
 
-Both phones show the new balances within one poll (`EXPO_PUBLIC_WALLET_STATUS_POLL_MS`, default 10 s). The same flow runs through the app's gateway code in an automated test:
+The relay contract, routes and demo walkthrough: [docs/invoice-relay.md](docs/invoice-relay.md). The same gateway flow runs as an automated test:
 
 ```bash
 METEVO_IT_ALICE_URL=http://127.0.0.1:3101 METEVO_IT_BOB_URL=http://127.0.0.1:3102 npx jest tests/integration
 ```
-
-Phone-to-phone sending from inside the app is not wired for this two-node setup yet. The voice Send flow needs the LSP invoice relay, and the NFC in-person card has no trigger. Use `regtest.sh invoice`/`pay` to move funds for now.
 
 #### 6. Offline behaviour
 
@@ -189,6 +221,7 @@ The node holds the keys, so anyone who can reach its API controls the wallet.
 > These constraints apply to the hackathon build.
 
 - **No Offline Support.** We could not run the RGB Lightning nodes directly inside the smartphone during the hackathon, because of technical and architectural constraints: the on-device node (WDK RGB Lightning in a Bare worklet) does not run reliably on Android yet. Each phone therefore talks to its own rgb-lightning-node server over REST (`EXPO_PUBLIC_WALLET_MODE=remote`) and needs a connection to it; when the node is unreachable the app shows the last known balances and disables payments until it is back.
+- **In-app relay notifications only.** An invoice request reaches the recipient while the wallet app is open (3 s poll); there is no push notification or foreground service yet. The relay also uses one shared demo bearer token for every wallet, so it is meant for the demo LAN — production needs per-wallet tokens and sender authentication (see `docs/invoice-relay.md`).
 - **No Swap Support.** Swap functionality is not implemented yet. Future work: connect the LSP (Lightning Service Provider, our `utexo-lsp` fork) to the swap mechanism, so USDm and BTC can be swapped over the same channels.
 
 ## 🧭 Previous Work
