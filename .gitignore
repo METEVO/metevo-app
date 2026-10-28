@@ -12,3 +12,6 @@ ios/Pods/
 
 # On-device AI weights (provisioned with scripts/push-whisper-models.cjs)
 models/
+
+# Personal build/setup guides (kept local only)
+docs/ios-build.md
