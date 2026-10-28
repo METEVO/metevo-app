@@ -18,4 +18,5 @@ export type IntentId =
   | 'read-balance'
   | 'contacts'
   | 'profile'
+  | 'import-contact'
   | 'invoice-request';

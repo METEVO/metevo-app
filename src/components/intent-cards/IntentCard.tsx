@@ -17,6 +17,7 @@ import { SendBtcCard } from './SendBtcCard';
 import { SendPaymentCard } from './SendPaymentCard';
 import { InvoiceRequestCard } from './InvoiceRequestCard';
 import { ProfileCard } from './ProfileCard';
+import { ImportContactCard } from './ImportContactCard';
 import { IntentCardShell } from './IntentCardShell';
 
 const IDLE_TITLE = 'Ready when you are';
@@ -48,6 +49,7 @@ const CARDS: Record<IntentId, React.ComponentType<IntentCardProps>> = {
   'read-balance': ReadBalanceCard,
   contacts: ContactsPanel,
   profile: ProfileCard,
+  'import-contact': ImportContactCard,
   'invoice-request': InvoiceRequestCard,
 };
 
