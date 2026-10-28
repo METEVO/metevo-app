@@ -154,11 +154,20 @@ EXPO_PUBLIC_QVAC_LLM_MODEL_FILE=Qwen3-0.6B-Q4_0.gguf
 node scripts/push-whisper-models.cjs
 ```
 
-The Qwen LLM sideloads from `<documents>/models/qwen/<EXPO_PUBLIC_QVAC_LLM_MODEL_FILE>` (mirroring the whisper layout):
+The Qwen LLM sideloads from `<documents>/models/qwen/<EXPO_PUBLIC_QVAC_LLM_MODEL_FILE>` (mirroring the whisper layout). Take the exact build the runtime pins (same file the registry download would fetch):
+
+```bash
+mkdir -p models/qwen
+curl -L -o models/qwen/Qwen3-0.6B-Q4_0.gguf \
+  'https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/50968a4468ef4233ed78cd7c3de230dd1d61a56b/Qwen3-0.6B-Q4_0.gguf'
+ls -l models/qwen/Qwen3-0.6B-Q4_0.gguf   # expect 382,156,480 bytes (~382 MB)
+```
+
+Then push it into the app sandbox:
 
 ```bash
 adb -s <SERIAL> shell run-as app.metevo.wallet mkdir -p files/models/qwen
-adb -s <SERIAL> push Qwen3-0.6B-Q4_0.gguf /data/local/tmp/
+adb -s <SERIAL> push models/qwen/Qwen3-0.6B-Q4_0.gguf /data/local/tmp/
 adb -s <SERIAL> shell run-as app.metevo.wallet cp /data/local/tmp/Qwen3-0.6B-Q4_0.gguf files/models/qwen/
 adb -s <SERIAL> shell run-as app.metevo.wallet rm /data/local/tmp/Qwen3-0.6B-Q4_0.gguf
 ```
