@@ -4,19 +4,19 @@
 const { spawn, execFileSync } = require('node:child_process');
 const { createECDH } = require('node:crypto');
 const fs = require('node:fs');
-const http = require('node:http');
 const path = require('node:path');
 const readline = require('node:readline/promises');
+const { chooseMetroPort, readMetroStatus, isProjectMetro } = require('./lib/phone-test-metro.cjs');
 
 const root = path.resolve(__dirname, '..');
 const appPackage = 'app.metevo.wallet';
-const port = 8081;
+let port;
 const logDirectory = path.join(root, '.expo', 'edi-phone-test');
 const children = new Set();
 let terminal;
 
 if (process.argv.includes('--help')) {
-  console.log('Uso: node scripts/test-contacts-phone.cjs [SERIAL]\nCompila e installa senza cancellare dati, avvia Metro e apre un contatto di prova.\nUsa la configurazione wallet esistente; nessuna transazione viene avviata.\nLog locali: .expo/edi-phone-test/');
+  console.log('Uso: node scripts/test-contacts-phone.cjs [SERIAL]\nCompila e installa senza cancellare dati, avvia Metro e apre un contatto di prova.\nSceglie una porta libera da 8081; METEVO_METRO_PORT cambia la porta iniziale.\nUsa la configurazione wallet esistente; nessuna transazione viene avviata.\nLog locali: .expo/edi-phone-test/');
   process.exit(0);
 }
 
@@ -43,18 +43,6 @@ function run(binary, args) {
       children.delete(child);
       code === 0 ? resolve() : reject(new Error(`${path.basename(binary)} terminato con codice ${code}.`));
     });
-  });
-}
-
-function metroStatus() {
-  return new Promise((resolve) => {
-    const request = http.get(`http://127.0.0.1:${port}/status`, (response) => {
-      let body = '';
-      response.on('data', (chunk) => { body += chunk; });
-      response.on('end', () => resolve({ body, root: response.headers['x-react-native-project-root'] }));
-    });
-    request.setTimeout(1500, () => request.destroy());
-    request.on('error', () => resolve(null));
   });
 }
 
@@ -87,11 +75,14 @@ async function main() {
     await run(process.execPath, ['scripts/bundle-qvac-sdk.mjs', '--no-install']);
   }
 
-  let status = await metroStatus();
-  if (status !== null) {
-    if (status.body.trim() !== 'packager-status:running' || !status.root || decodeURI(status.root) !== root) {
-      throw new Error(`La porta ${port} appartiene a un altro processo/progetto. Chiudilo dal suo terminale e riprova.`);
-    }
+  const choice = await chooseMetroPort({
+    root,
+    firstPort: Number(process.env.METEVO_METRO_PORT || 8081),
+    onBusy: (busyPort) => note(`Porta ${busyPort} occupata o Metro non identificabile: provo la successiva.`),
+  });
+  port = choice.port;
+  note(`Porta Metro selezionata: ${port}.`);
+  if (choice.reuse) {
     note('Riutilizzo Metro di questo progetto. Se hai cambiato .env, riavvialo prima della prova.');
   } else {
     const metroLog = fs.openSync(path.join(logDirectory, 'metro.log'), 'w');
@@ -102,13 +93,14 @@ async function main() {
     children.add(metro);
     let metroError;
     metro.once('error', (error) => { metroError = error; });
+    let status;
     for (let attempt = 0; attempt < 120; attempt++) {
       if (metroError || metro.exitCode !== null) throw metroError || new Error('Metro si e fermato. Vedi metro.log.');
-      status = await metroStatus();
-      if (status?.body.trim() === 'packager-status:running') break;
+      status = await readMetroStatus(port);
+      if (isProjectMetro(status, root)) break;
       await delay(1000);
     }
-    if (status?.body.trim() !== 'packager-status:running') throw new Error('Metro non e pronto. Vedi metro.log.');
+    if (!isProjectMetro(status, root)) throw new Error('Metro non e pronto per questo progetto. Vedi metro.log.');
     note('Metro pronto.');
   }
 
