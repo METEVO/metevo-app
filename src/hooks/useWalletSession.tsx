@@ -19,6 +19,7 @@ import {
   createWalletSessionGateway,
 } from '../services/metevo/wallet-gateway';
 import type { TransferInfo } from '../services/metevo/transferWatcher';
+import type { DecodedInvoiceView } from '../services/metevo/paymentGuard';
 import { describeWalletError } from '../utils/walletErrors';
 
 /**
@@ -53,6 +54,8 @@ export interface WalletSession {
   submitPayment(proposal: PaymentProposal): Promise<SubmittedPayment>;
   /** Query an existing payment; never creates a replacement (payment.check). */
   checkPayment(paymentHash: string): Promise<PaymentNetworkStatus>;
+  /** Decode an invoice without paying it; null when the runtime cannot. */
+  decodeInvoice(invoice: string): Promise<DecodedInvoiceView | null>;
   /** Advance the transfer state machine; polled by the settlement watcher. */
   refreshTransfers(): Promise<TransferInfo[]>;
   /** Creates the receiver's USDm invoice (blind when the amount is null). */
@@ -143,6 +146,16 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
     [withGateway],
   );
 
+  const decodeInvoice = useCallback(
+    (invoice: string): Promise<DecodedInvoiceView | null> =>
+      withGateway((gateway) =>
+        gateway.decodeInvoice === undefined
+          ? Promise.resolve(null)
+          : gateway.decodeInvoice(invoice),
+      ),
+    [withGateway],
+  );
+
   const refreshTransfers = useCallback(
     () => withGateway((gateway) => gateway.refreshTransfers()),
     [withGateway],
@@ -177,6 +190,7 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       refreshWallet,
       submitPayment,
       checkPayment,
+      decodeInvoice,
       refreshTransfers,
       createUsdmInvoice,
       hasUsableChannelWith,
@@ -192,6 +206,7 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       refreshWallet,
       submitPayment,
       checkPayment,
+      decodeInvoice,
       refreshTransfers,
       createUsdmInvoice,
       hasUsableChannelWith,

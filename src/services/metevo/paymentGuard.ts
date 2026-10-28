@@ -68,9 +68,22 @@ export function describeInvoiceMismatch(
   return null;
 }
 
+/**
+ * The in-person receiver serves its own invoice, so the invoice must pay the
+ * node that offered it. One addressed to another node is not the receiver's,
+ * and one that names no payee cannot be checked: both are refused rather than
+ * paid blind.
+ */
+export function invoicePaysAnotherNode(
+  decoded: DecodedInvoiceView,
+  nodePubkey: string,
+): boolean {
+  const payee = decoded.payeePubkey?.toLowerCase() ?? null;
+  return payee === null || payee !== nodePubkey.toLowerCase();
+}
+
 /** Network settlement status per the design rules: pending is not success,
- * failed requires a confirmed failure, and no match stays unknown. */
-export type MetevoPaymentStatus = 'pending' | 'settled' | 'failed' | 'unknown';
+ * failed requires a confirmed failure, and no match stays unknown. */export type MetevoPaymentStatus = 'pending' | 'settled' | 'failed' | 'unknown';
 
 /** Minimal structural view of an unlocked wallet account. */
 interface PaymentQueryingAccount {

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ENV } from '../config/env';
 import { isKnownContact } from '../services/metevo/contacts';
+import { invoicePaysAnotherNode } from '../services/metevo/paymentGuard';
+import type { DecodedInvoiceView } from '../services/metevo/paymentGuard';
 import {
   DirectRouteHint,
   DirectRoutePlan,
@@ -46,6 +48,8 @@ export interface InPersonProposal {
   directHint: DirectRouteHint | null;
   knownContact: boolean | null;
   plan: DirectRoutePlan | null;
+  /** What the invoice itself asks for, shown before the user authorises. */
+  decoded: DecodedInvoiceView;
 }
 
 const NFC_READ_TIMEOUT_MS = 30_000;
@@ -53,7 +57,8 @@ const GROUP_JOIN_TIMEOUT_MS = 15_000;
 const INVOICE_FETCH_TIMEOUT_MS = 10_000;
 
 export function useInPersonPayment() {
-  const { hasUsableChannelWith, connectPeer, submitPayment } = useWalletSession();
+  const { hasUsableChannelWith, connectPeer, submitPayment, decodeInvoice } =
+    useWalletSession();
   const watcher = useTransferWatcher();
   const [stage, setStage] = useState<InPersonStage>('idle');
   const [proposal, setProposal] = useState<InPersonProposal | null>(null);
@@ -124,9 +129,25 @@ export function useInPersonPayment() {
           : null;
       const invoice = 'direct' in parsed ? parsed.direct.invoice : parsed.invoice;
 
-      // 4. Contact verification: compare the receiver's node id against
-      // the saved contacts; unknown contacts stay payable but labelled.
+      // 4. Read the invoice before the user is asked to authorise it: the
+      // review must name the amount, and the invoice must pay the node that
+      // actually offered it.
+      const decoded = await decodeInvoice(invoice);
+      if (decoded === null) {
+        throw new Error('This wallet cannot read the invoice. Nothing was submitted.');
+      }
+      if (decoded.assetAmount === null) {
+        throw new Error('The invoice does not name an amount. Nothing was submitted.');
+      }
       const nodePubkey = directHint?.nodePubkey ?? null;
+      if (nodePubkey !== null && invoicePaysAnotherNode(decoded, nodePubkey)) {
+        throw new Error(
+          'The invoice pays a different node than the one that offered it. Nothing was submitted.',
+        );
+      }
+
+      // 5. Contact verification: compare the receiver's node id against
+      // the saved contacts; unknown contacts stay payable but labelled.
       const knownContact =
         nodePubkey !== null ? await isKnownContact(nodePubkey) : null;
       const hasChannel =
@@ -137,7 +158,7 @@ export function useInPersonPayment() {
         preferDirect: true,
       });
 
-      setProposal({ invoice, nodePubkey, directHint, knownContact, plan });
+      setProposal({ invoice, nodePubkey, directHint, knownContact, plan, decoded });
       enterStage('review');
       speakAnnouncement('Invoice ready. Review and confirm.');
     } catch (cause) {
@@ -153,7 +174,7 @@ export function useInPersonPayment() {
       await link.stopGroup().catch(() => undefined);
       linkRef.current = null;
     }
-  }, [enterStage, hasUsableChannelWith]);
+  }, [enterStage, hasUsableChannelWith, decodeInvoice]);
 
   const confirm = useCallback(async () => {
     if (proposal === null || stageRef.current !== 'review') {
@@ -161,6 +182,7 @@ export function useInPersonPayment() {
     }
     enterStage('paying');
     setNote(null);
+    let paymentHash: string | null = null;
     try {
       const { authenticateToAccessSecrets } = await import(
         '../services/metevo/secure-store'
@@ -175,7 +197,7 @@ export function useInPersonPayment() {
       if (proposal.plan?.route === 'direct' && proposal.directHint !== null) {
         // Signed HTLC updates flow inside the LDK peer session opened
         // across the group socket.
-        await payOverDirectChannel(
+        const submitted = await payOverDirectChannel(
           {
             connectPeer,
             payInvoice: (invoice) => submitPayment({ invoice }),
@@ -187,8 +209,10 @@ export function useInPersonPayment() {
             invoice: proposal.invoice,
           },
         );
+        paymentHash = submitted.paymentHash;
       } else {
-        await submitPayment({ invoice: proposal.invoice });
+        const submitted = await submitPayment({ invoice: proposal.invoice });
+        paymentHash = submitted.paymentHash;
       }
     } catch (cause) {
       console.log(
@@ -200,7 +224,13 @@ export function useInPersonPayment() {
       return;
     }
     enterStage('watching');
-    const result = await watcher.watch();
+    // A Lightning payment never shows up in the on-chain transfer list, so
+    // follow its payment hash. Without one, the honest outcome is unknown.
+    if (paymentHash === null) {
+      enterStage('unknown');
+      return;
+    }
+    const result = await watcher.watchPayment(paymentHash);
     if (result.status === 'settled') {
       enterStage('settled');
     } else if (result.status === 'failed') {

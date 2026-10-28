@@ -1,7 +1,7 @@
 import { ENV } from '../../config/env';
 import { createBareWalletSessionGateway } from './bareGateway';
 import { createRemoteRlnWalletSessionGateway } from './remoteRlnGateway';
-import type { ReviewedPayment } from './paymentGuard';
+import type { DecodedInvoiceView, ReviewedPayment } from './paymentGuard';
 import type { TransferInfo } from './transferWatcher';
 import type { StoredWalletMeta } from './secure-store';
 
@@ -78,6 +78,10 @@ export interface WalletSessionGateway {
   readStatus(): Promise<WalletSessionSnapshot>;
   /** Submit the proposal exactly once; the caller owns confirmation UX. */
   submitPayment(proposal: PaymentProposal): Promise<SubmittedPayment>;
+  /** Decode an invoice without paying it, so a review screen can show the
+   * amount the invoice really asks for. Optional: a runtime that cannot decode
+   * makes its callers refuse the payment instead of paying blind. */
+  decodeInvoice?(invoice: string): Promise<DecodedInvoiceView>;
   /** Query an existing payment; never creates a replacement payment. */
   checkPayment(paymentHash: string): Promise<PaymentNetworkStatus>;
   /** Advance the WDK transfer state machine (refreshTransfers) and return

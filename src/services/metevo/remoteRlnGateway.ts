@@ -174,6 +174,17 @@ export function createRemoteRlnWalletSessionGateway(
       );
     },
 
+    async decodeInvoice(invoice) {
+      // Read only: the review screen must show what the invoice asks for
+      // before the user authorises anything.
+      const decoded = await openClient().decodeLnInvoice(invoice);
+      return {
+        payeePubkey: decoded.payeePubkey,
+        assetId: decoded.assetId,
+        assetAmount: decoded.assetAmount,
+      };
+    },
+
     async refreshTransfers() {
       const node = openClient();
       if (usdmAssetId === null) {

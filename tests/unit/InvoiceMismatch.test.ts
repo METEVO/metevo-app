@@ -1,5 +1,6 @@
 import {
   describeInvoiceMismatch,
+  invoicePaysAnotherNode,
   type DecodedInvoiceView,
 } from '../../src/services/metevo/paymentGuard';
 
@@ -48,5 +49,23 @@ describe('payment boundary: a relayed invoice must match the reviewed payment', 
     expect(describeInvoiceMismatch(decoded({ assetAmount: null }), reviewed, ASSET)).toBe(
       'amount',
     );
+  });
+});
+
+describe('in-person boundary: the invoice must pay the node that offered it', () => {
+  const receiver = `03${'ef'.repeat(32)}`;
+
+  test('accepts an invoice paying the receiver', () => {
+    expect(invoicePaysAnotherNode(decoded({ payeePubkey: receiver.toUpperCase() }), receiver)).toBe(
+      false,
+    );
+  });
+
+  test('rejects an invoice paying a different node', () => {
+    expect(invoicePaysAnotherNode(decoded({ payeePubkey: PAYEE }), receiver)).toBe(true);
+  });
+
+  test('an invoice without a payee is not silently accepted', () => {
+    expect(invoicePaysAnotherNode(decoded({ payeePubkey: null }), receiver)).toBe(true);
   });
 });

@@ -4,7 +4,9 @@ import { Text, View } from 'react-native';
 import AttentionVoice from '../../assets/voice_attention_dark.svg';
 import ProcessingVoice from '../../assets/voice_processing_dark.svg';
 import SuccessVoice from '../../assets/voice_success_dark.svg';
+import { ENV } from '../../config/env';
 import { useInPersonPayment } from '../../hooks/useInPersonPayment';
+import type { InPersonProposal } from '../../hooks/useInPersonPayment';
 import { useThemedStyles, MetevoTheme } from '../../design/ThemeContext';
 import { useAttentionSignal } from '../AttentionSignal';
 import { layout } from '../styles';
@@ -115,6 +117,10 @@ export function InPersonPaymentCard({ onClearIntent }: IntentCardProps) {
           </Text>
         </View>
         <View style={styles.row}>
+          <Text style={styles.caption}>Amount</Text>
+          <Text style={styles.value}>{reviewedAmount(proposal)}</Text>
+        </View>
+        <View style={styles.row}>
           <Text style={styles.caption}>Destination</Text>
           <Text style={styles.invoiceText}>{shorten(proposal.invoice)}</Text>
         </View>
@@ -154,6 +160,16 @@ function shorten(invoice: string): string {
     return invoice;
   }
   return `${invoice.slice(0, 12)}…${invoice.slice(-8)}`;
+}
+
+/** The amount the decoded invoice asks for, never a guess: the payment hook
+ * refuses an invoice without one before this screen is reachable. */
+function reviewedAmount(proposal: InPersonProposal): string {
+  const baseUnits = proposal.decoded.assetAmount;
+  if (baseUnits === null) {
+    return 'not stated';
+  }
+  return `${(baseUnits / 100_000_000).toFixed(2)} ${ENV.EXPO_PUBLIC_RLN_USDM_TICKER}`;
 }
 
 const makeStyles = (theme: MetevoTheme) => ({
