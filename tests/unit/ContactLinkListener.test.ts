@@ -67,4 +67,14 @@ describe('cold and warm contact links', () => {
     expect(enqueue).toHaveBeenCalledTimes(1);
     expect(enqueue).toHaveBeenCalledWith('metevo://contact?broken');
   });
+
+  test('development-client launch URLs and other app routes never open contact errors', async () => {
+    const { enqueue, initial, live } = fixture();
+    initial('metevo://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8081');
+    live('metevo://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8081');
+    live('metevo://other?v=1');
+    live(`metevo://contact.evil?v=1&name=Maria&node=${NODE}`);
+    await flush();
+    expect(enqueue).not.toHaveBeenCalled();
+  });
 });

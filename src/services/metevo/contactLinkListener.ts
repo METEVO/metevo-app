@@ -16,7 +16,9 @@ export function listenForContactLinks(port: LinkingPort, enqueue: (link: string)
   let mounted = true;
   const liveKeys = new Set<string>();
   const receive = (link: string | null, initial: boolean) => {
-    if (!mounted || link === null || !/^metevo:/i.test(link.trim())) return;
+    // Development-client URLs and future app routes share the scheme,
+    // but are not contact import requests.
+    if (!mounted || link === null || !/^metevo:\/\/contact(?:[/?#]|$)/i.test(link.trim())) return;
     const key = linkKey(link);
     if (initial && liveKeys.has(key)) return;
     if (!initial) {
