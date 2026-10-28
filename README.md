@@ -117,9 +117,11 @@ Create `.env.local` (gitignored):
 
 ```bash
 EXPO_PUBLIC_WALLET_MODE=remote
-EXPO_PUBLIC_RLN_NODE_URL=http://localhost:3001
+EXPO_PUBLIC_RLN_NODE_URL=http://127.0.0.1:3101
 EXPO_PUBLIC_WALLET_NETWORK=regtest
 ```
+
+`3101` is the port the phone-side `adb reverse` listens on (step 3), so the URL and the reverse line must match.
 
 Both phones use the same URL. `adb reverse` decides which node each one reaches. Build and install the debug APK on both devices:
 
@@ -146,23 +148,35 @@ By default the QVAC voice agent resolves Whisper and the Qwen LLM from the QVAC 
 ```bash
 # .env.local — a value ending in .bin/.gguf selects a local file instead of a registry preset
 EXPO_PUBLIC_QVAC_WHISPER_MODEL_ENGLISH=en-small.bin
+EXPO_PUBLIC_QVAC_LLM_MODEL_FILE=Qwen3-0.6B-Q4_0.gguf
 
 # copy models/whisper/*.bin into the app sandbox (needs a debuggable build)
 node scripts/push-whisper-models.cjs
 ```
 
-The Qwen LLM is cached at `<documents>/.qvac/models/<sha256(registryPath)[:16]>_<file>.gguf`; a file with the registry's exact size and sha256 checksum skips the download and is checksum-verified on load. The SDK validates every sideloaded model before use, so a wrong file fails loudly instead of silently.
+The Qwen LLM sideloads from `<documents>/models/qwen/<EXPO_PUBLIC_QVAC_LLM_MODEL_FILE>` (mirroring the whisper layout):
+
+```bash
+adb -s <SERIAL> shell run-as app.metevo.wallet mkdir -p files/models/qwen
+adb -s <SERIAL> push Qwen3-0.6B-Q4_0.gguf /data/local/tmp/
+adb -s <SERIAL> shell run-as app.metevo.wallet cp /data/local/tmp/Qwen3-0.6B-Q4_0.gguf files/models/qwen/
+adb -s <SERIAL> shell run-as app.metevo.wallet rm /data/local/tmp/Qwen3-0.6B-Q4_0.gguf
+```
+
+The SDK validates every sideloaded model before use, so a wrong file fails loudly instead of silently. On networks where the QVAC hub is reachable nothing of this is needed — both models download and checksum-verify on first use.
 
 #### 3. Wire each phone to its own node
 
 ```bash
-adb -s <ALICE_SERIAL> reverse tcp:3001 tcp:3101
+adb -s <ALICE_SERIAL> reverse tcp:3101 tcp:3101
 adb -s <ALICE_SERIAL> reverse tcp:8081 tcp:8081
 adb -s <ALICE_SERIAL> reverse tcp:8080 tcp:8080
-adb -s <BOB_SERIAL>   reverse tcp:3001 tcp:3102
+adb -s <BOB_SERIAL>   reverse tcp:3101 tcp:3102
 adb -s <BOB_SERIAL>   reverse tcp:8081 tcp:8081
 adb -s <BOB_SERIAL>   reverse tcp:8080 tcp:8080
 ```
+
+Bob's reverse maps the phone's `3101` to the host's `3102` (bob's node), so the same `EXPO_PUBLIC_RLN_NODE_URL` works on both phones.
 
 `adb devices` lists the serials. An emulator also works with `adb reverse`, so use the same lines with its serial.
 
