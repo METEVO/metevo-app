@@ -4,6 +4,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemePreferenceProvider, useThemePreference } from './src/design/ThemeContext';
 import { WalletSessionProvider } from './src/hooks/useWalletSession';
+import { ContactImportProvider } from './src/hooks/useContactImport';
 import { HomeScreen } from './src/screens/HomeScreen';
 
 /**
@@ -20,7 +21,9 @@ export default function App() {
   return (
     <ThemePreferenceProvider>
       <WalletSessionProvider>
-        <AppRoot />
+        <ContactImportProvider>
+          <AppRoot />
+        </ContactImportProvider>
       </WalletSessionProvider>
     </ThemePreferenceProvider>
   );

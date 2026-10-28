@@ -15,9 +15,11 @@ import { useTheme, useThemedStyles, type MetevoTheme } from '../design/ThemeCont
 import { designFrameWidth } from '../design/theme';
 import { InvoiceInboxProvider, useInvoiceInbox } from '../hooks/useInvoiceInbox';
 import { useIntents } from '../hooks/useIntents';
+import { useContactImport } from '../hooks/useContactImport';
 import { useVoiceAssistant } from '../hooks/useVoiceAssistant';
 import { WalletSession, useWalletSession } from '../hooks/useWalletSession';
 import { archiveRecording } from '../utils/recordingArchive';
+import { pendingHomeEvent } from '../utils/pendingHomeEvent';
 
 /**
  * Main (only) screen. The app opens straight into the connected home shell:
@@ -60,21 +62,8 @@ function HomeShell({ session }: { session: WalletSession }) {
   const styles = useThemedStyles(makeStyles);
   const { intent, payload, simulateIntent } = useIntents(null);
   const inbox = useInvoiceInbox();
+  const { controller: contactImports, active: contactImport, pendingCount } = useContactImport();
   const openedRequestRef = useRef<string | null>(null);
-
-  // A relayed invoice request opens its card on its own, but never replaces
-  // a card the user is already working in.
-  useEffect(() => {
-    const pending = inbox.pending;
-    if (pending === null || openedRequestRef.current === pending.requestId) {
-      return;
-    }
-    if (intent !== null && intent !== 'invoice-request') {
-      return;
-    }
-    openedRequestRef.current = pending.requestId;
-    simulateIntent('invoice-request', pending);
-  }, [inbox.pending, intent, simulateIntent]);
 
   // Debug support: copy each finished recording into the user-chosen
   // archive folder (SAF) so it is retrievable outside the app sandbox.
@@ -122,6 +111,26 @@ function HomeShell({ session }: { session: WalletSession }) {
     session.wallet !== null && !nodeOffline && !session.wallet.channelReady;
   const connecting = session.connecting || (walletOpen ? false : !nodeOffline && session.errorMessage === null);
   const { refreshWallet } = session;
+
+  // One arbiter for incoming invoice requests and shared contacts. Neither
+  // an external link nor an inbox poll may replace an active task.
+  const walletReady = !connecting && !nodeOffline && !channelProvisioning && session.errorMessage === null;
+  useEffect(() => {
+    const pending = inbox.pending;
+    const next = pendingHomeEvent({
+      walletReady,
+      cardBusy: intent !== null,
+      voiceBusy: voice.phase !== 'idle',
+      hasInvoice: pending !== null && openedRequestRef.current !== pending.requestId,
+      hasContact: contactImport !== null || pendingCount > 0,
+    });
+    if (next === 'invoice-request' && pending !== null) {
+      openedRequestRef.current = pending.requestId;
+      simulateIntent(next, pending);
+    } else if (next === 'import-contact' && contactImports.openNext(true)) {
+      simulateIntent(next);
+    }
+  }, [walletReady, intent, voice.phase, inbox.pending, contactImport, pendingCount, contactImports, simulateIntent]);
 
   useEffect(() => {
     if (!walletOpen) {

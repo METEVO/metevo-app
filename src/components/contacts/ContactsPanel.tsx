@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Share, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { MetevoTheme, useTheme, useThemedStyles } from '../../design/ThemeContext';
 import {
@@ -11,13 +11,15 @@ import {
 } from '../../services/metevo/contacts';
 import { layout, scale } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
+import { encodeContactLink } from '../../services/metevo/contactLink';
+import { OwnContactPanel } from './OwnContactPanel';
 
 /**
  * The contact book. A contact is a local label plus the node pubkey the
  * relay needs: the spoken name never leaves the phone, and a payment can
  * only be addressed to a saved node.
  */
-type ContactsStage = 'list' | 'details' | 'add' | 'alias' | 'delete';
+type ContactsStage = 'list' | 'details' | 'add' | 'alias' | 'delete' | 'self';
 
 interface ContactsPanelProps {
   /** Clears the canvas back to the home idle hint (the Done action). */
@@ -33,6 +35,8 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
   const [nameDraft, setNameDraft] = useState('');
   const [pubkeyDraft, setPubkeyDraft] = useState('');
   const [fieldError, setFieldError] = useState<string | null>(null);
+  const [sharing, setSharing] = useState(false);
+  const sharingRef = useRef(false);
 
   const selected =
     contacts?.find((contact) => contact.nodePubkey === selectedPubkey) ?? null;
@@ -42,7 +46,7 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
   }, []);
 
   useEffect(() => {
-    void reload();
+    void reload().catch(() => setFieldError('Your contacts could not be loaded.'));
   }, [reload]);
 
   function resetDraft() {
@@ -92,6 +96,25 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
       setStage('list');
       return reload();
     });
+  }
+
+  async function shareSelected() {
+    if (selected === null || sharingRef.current) return;
+    sharingRef.current = true;
+    setSharing(true);
+    setFieldError(null);
+    try {
+      await Share.share({ message: encodeContactLink(selected) });
+    } catch {
+      setFieldError('The contact could not be shared. Check its name and try again.');
+    } finally {
+      sharingRef.current = false;
+      setSharing(false);
+    }
+  }
+
+  if (stage === 'self') {
+    return <OwnContactPanel onBack={() => setStage('list')} />;
   }
 
   if (stage === 'add') {
@@ -157,6 +180,13 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
         <Text style={theme.typography.title}>{selected.name}</Text>
         <Text style={styles.pubkey}>{selected.nodePubkey}</Text>
         <Text style={theme.typography.caption}>Payments are addressed to this node.</Text>
+        {fieldError !== null && <Text style={styles.error} accessibilityLiveRegion="polite">{fieldError}</Text>}
+        <ActionButton
+          label={sharing ? 'Sharing…' : 'Share contact'}
+          variant="outlined"
+          onPress={() => void shareSelected()}
+          disabled={sharing}
+        />
         <View style={styles.actions}>
           <ActionButton label="Back" variant="outlined" onPress={() => setStage('list')} />
           <ActionButton
@@ -176,6 +206,7 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
       <View style={styles.header}>
         <Text style={styles.title}>Contacts</Text>
         <Text style={theme.typography.body}>Saved only on this phone.</Text>
+        {fieldError !== null && <Text style={styles.error}>{fieldError}</Text>}
         {contacts !== null && contacts.length === 0 && (
           <Text style={theme.typography.body}>No contacts yet.</Text>
         )}
@@ -187,6 +218,7 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
             style={styles.rowCard}
             onPress={() => {
               setSelectedPubkey(contact.nodePubkey);
+              setFieldError(null);
               setStage('details');
             }}
             accessibilityRole="button"
@@ -199,6 +231,7 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
           </TouchableOpacity>
         ))}
       </View>
+      <ActionButton label="My contact" variant="outlined" onPress={() => setStage('self')} />
       <View style={styles.actions}>
         <ActionButton
           label="Close"

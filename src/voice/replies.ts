@@ -1,4 +1,5 @@
 import { IntentId } from '../types/intents';
+import type { ContactImportReview } from '../services/metevo/contactImport';
 
 /**
  * Spoken replies (design phase 5). Replies are templates keyed by the
@@ -17,6 +18,7 @@ const REPLY_TEMPLATES: Record<IntentId, string> = {
   contacts: 'Opening your contacts.',
   profile: 'Opening your profile.',
   'invoice-request': 'Opening the invoice request.',
+  'import-contact': 'Opening the shared contact. Review it before adding.',
 };
 
 const NOT_UNDERSTOOD = 'I did not understand. Please say it again, or type it.';
@@ -49,6 +51,22 @@ export function replyForUnclear(): string {
 /** The spoken reply when the voice pipeline itself failed. */
 export function replyForError(error: string): string {
   return sanitizeForSpeech(error);
+}
+
+/** Same short sentence on screen and through the Home system voice.
+ * Editing a draft does not read every keystroke or the public key. */
+export function replyForContactImport(review: ContactImportReview): string {
+  let message: string;
+  switch (review.stage) {
+    case 'loading': message = 'Checking your contacts…'; break;
+    case 'saving': message = 'Saving the contact…'; break;
+    case 'saved': message = `${review.name} was added to your contacts.`; break;
+    case 'duplicate': message = `This node is already saved as ${review.existingName}. No changes were made.`; break;
+    case 'invalid': message = review.error ?? 'This contact link is invalid.'; break;
+    case 'load-error': message = review.error ?? 'Your contacts could not be loaded. Try again.'; break;
+    case 'review': message = review.error ?? `Would you like to add ${review.contact?.name ?? 'this person'} to your contacts?`; break;
+  }
+  return sanitizeForSpeech(message);
 }
 
 /** Number formatting for speech: digits with grouping; the system TTS
