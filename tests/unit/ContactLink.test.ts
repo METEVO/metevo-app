@@ -50,7 +50,7 @@ describe('contact sharing v1', () => {
     expect(() => decodeContactLink(input)).toThrow(ContactLinkError);
   });
 
-  test.each(['0', '2', '01', ''])('rejects unsupported version %s', (version) => {
+  test.each(['0', '3', '01', ''])('rejects unsupported version %s', (version) => {
     expect(() => decodeContactLink(link(`v=${version}&name=Maria&node=${NODE}`))).toThrow(
       expect.objectContaining({ code: 'unsupported-version' }),
     );
@@ -95,5 +95,59 @@ describe('contact sharing v1', () => {
     decodeContactLink(encodeContactLink(contact));
     expect(store.getItemAsync).not.toHaveBeenCalled();
     expect(store.setItemAsync).not.toHaveBeenCalled();
+  });
+});
+
+describe('contact sharing v2 (phone and email)', () => {
+  const full = { ...contact, phone: '+393331234567', email: 'maria@example.com' };
+
+  test('round-trips phone and email in a v2 link', () => {
+    const encoded = encodeContactLink(full);
+    expect(encoded).toBe(link(`v=2&name=Maria&node=${NODE}&phone=%2B393331234567&email=maria%40example.com`));
+    expect(decodeContactLink(encoded)).toEqual(full);
+  });
+
+  test('keeps v1 when no phone or email is shared, so older builds can read it', () => {
+    expect(encodeContactLink({ ...contact, phone: '  ', email: '' })).toBe(link(`v=1&name=Maria&node=${NODE}`));
+  });
+
+  test('shares either field alone', () => {
+    expect(decodeContactLink(encodeContactLink({ ...contact, phone: '+39 333 123-4567' }))).toEqual({
+      ...contact, phone: '+393331234567',
+    });
+    expect(decodeContactLink(encodeContactLink({ ...contact, email: ' Maria@Example.COM ' }))).toEqual({
+      ...contact, email: 'maria@example.com',
+    });
+  });
+
+  test('accepts a form-encoded plus sign only when percent-encoded', () => {
+    expect(decodeContactLink(link(`v=2&name=Maria&node=${NODE}&phone=%2B39 333 1234567`)).phone).toBe('+393331234567');
+    expect(() => decodeContactLink(link(`v=2&name=Maria&node=${NODE}&phone=+393331234567`))).toThrow(
+      expect.objectContaining({ code: 'invalid-phone' }),
+    );
+  });
+
+  test.each(['3331234567', '+0123456789', '+39 333', '+39333123456789012', '+39abc1234567'])(
+    'rejects the phone %p', (phone) => {
+      expect(() => encodeContactLink({ ...contact, phone })).toThrow(expect.objectContaining({ code: 'invalid-phone' }));
+    },
+  );
+
+  test.each(['maria', 'maria@', '@example.com', 'maria@example', 'ma ria@example.com', 'a<b@example.com', `${'a'.repeat(250)}@x.it`])(
+    'rejects the email %p', (email) => {
+      expect(() => encodeContactLink({ ...contact, email })).toThrow(expect.objectContaining({ code: 'invalid-email' }));
+    },
+  );
+
+  test('v1 links cannot carry the v2 fields', () => {
+    expect(() => decodeContactLink(link(`v=1&name=Maria&node=${NODE}&phone=%2B393331234567`))).toThrow(
+      expect.objectContaining({ code: 'malformed' }),
+    );
+  });
+
+  test('v2 still requires a valid node and rejects unknown or repeated fields', () => {
+    expect(() => decodeContactLink(link('v=2&name=Maria&phone=%2B393331234567'))).toThrow(ContactLinkError);
+    expect(() => decodeContactLink(link(`v=2&name=Maria&node=${NODE}&email=a%40b.it&email=c%40d.it`))).toThrow(ContactLinkError);
+    expect(() => decodeContactLink(link(`v=2&name=Maria&node=${NODE}&address=x`))).toThrow(ContactLinkError);
   });
 });

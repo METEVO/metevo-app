@@ -1,29 +1,33 @@
+import {
+  ContactLinkError,
+  normalizeContactEmail,
+  normalizeContactPhone,
+} from './contactFields';
 import { isValidNodePubkey } from './contacts';
 
-/** Public metadata only. addedAt is assigned locally, never imported. */
+export {
+  ContactLinkError,
+  MAX_CONTACT_EMAIL_CHARACTERS,
+  normalizeContactEmail,
+  normalizeContactPhone,
+  type ContactLinkErrorCode,
+} from './contactFields';
+
+/** Public metadata only. addedAt is assigned locally, never imported.
+ * Phone and email are optional: they let a contact be recognised and asked
+ * for a contact through the relay, but never address a payment. */
 export interface SharedContact {
   name: string;
   nodePubkey: string;
+  phone?: string;
+  email?: string;
 }
 
 export const MAX_CONTACT_NAME_CHARACTERS = 64;
 export const MAX_CONTACT_NAME_BYTES = 128;
-/** Payload budget, not a promise about the capacity of any NFC tag. */
-export const MAX_CONTACT_LINK_BYTES = 512;
-
-export type ContactLinkErrorCode =
-  | 'malformed'
-  | 'unsupported-version'
-  | 'invalid-name'
-  | 'invalid-node'
-  | 'too-long';
-
-export class ContactLinkError extends Error {
-  constructor(public readonly code: ContactLinkErrorCode, message: string) {
-    super(message);
-    this.name = 'ContactLinkError';
-  }
-}
+/** Payload budget, not a promise about the capacity of any NFC tag. v2 links
+ * carry phone and email, and still fit a QR code readable from a screen. */
+export const MAX_CONTACT_LINK_BYTES = 1024;
 
 /** Small bounded strings only; no dependency on a TextEncoder polyfill in Hermes. */
 function utf8ByteLength(value: string): number {
@@ -57,13 +61,37 @@ export function normalizeContactName(name: string): string {
   return trimmed;
 }
 
-export function encodeContactLink(contact: SharedContact): string {
+/** Blank optional fields mean "not shared", so they are dropped, not rejected. */
+function optionalField(value: string | undefined, normalize: (raw: string) => string): string | undefined {
+  if (value === undefined || value.trim().length === 0) return undefined;
+  return normalize(value);
+}
+
+export function normalizeSharedContact(contact: SharedContact): SharedContact {
   const name = normalizeContactName(contact.name);
   if (typeof contact.nodePubkey !== 'string' || !isValidNodePubkey(contact.nodePubkey)) {
     throw new ContactLinkError('invalid-node', 'The contact node pubkey is invalid.');
   }
-  const node = contact.nodePubkey.trim().toLowerCase();
-  const link = `metevo://contact?v=1&name=${encodeURIComponent(name)}&node=${node}`;
+  const phone = optionalField(contact.phone, normalizeContactPhone);
+  const email = optionalField(contact.email, normalizeContactEmail);
+  return {
+    name,
+    nodePubkey: contact.nodePubkey.trim().toLowerCase(),
+    ...(phone === undefined ? {} : { phone }),
+    ...(email === undefined ? {} : { email }),
+  };
+}
+
+/** v1 stays the encoding of a name + node contact, so older builds keep
+ * reading it; v2 is used only when phone or email is shared. */
+export function encodeContactLink(contact: SharedContact): string {
+  const { name, nodePubkey, phone, email } = normalizeSharedContact(contact);
+  const extras = [
+    phone === undefined ? '' : `&phone=${encodeURIComponent(phone)}`,
+    email === undefined ? '' : `&email=${encodeURIComponent(email)}`,
+  ].join('');
+  const version = extras.length === 0 ? 1 : 2;
+  const link = `metevo://contact?v=${version}&name=${encodeURIComponent(name)}&node=${nodePubkey}${extras}`;
   if (utf8ByteLength(link) > MAX_CONTACT_LINK_BYTES) {
     throw new ContactLinkError('too-long', 'The contact link is too long.');
   }
@@ -85,7 +113,7 @@ export function isContactLinkCandidate(input: string): boolean {
   return typeof input === 'string' && /^metevo:\/\/contact(?:[/?#]|$)/i.test(input.trim());
 }
 
-/** Strict v1 parser shared by deep links and future QR/NFC transports.
+/** Strict v1/v2 parser shared by deep links, QR and future NFC transports.
  * Does not rely on platform-specific URL implementations or touch storage. */
 export function decodeContactLink(input: string): SharedContact {
   if (typeof input !== 'string') {
@@ -105,7 +133,7 @@ export function decodeContactLink(input: string): SharedContact {
       throw new ContactLinkError('malformed', 'The contact link has a missing field.');
     }
     const key = decodeField(part.slice(0, separator));
-    if (!['v', 'name', 'node'].includes(key) || fields.has(key)) {
+    if (!['v', 'name', 'node', 'phone', 'email'].includes(key) || fields.has(key)) {
       throw new ContactLinkError('malformed', 'The contact link has unsupported or repeated fields.');
     }
     fields.set(key, decodeField(part.slice(separator + 1)));
@@ -113,13 +141,20 @@ export function decodeContactLink(input: string): SharedContact {
   if (!fields.has('v') || !fields.has('name') || !fields.has('node')) {
     throw new ContactLinkError('malformed', 'The contact link is missing its version, name or node.');
   }
-  if (fields.get('v') !== '1') {
+  const version = fields.get('v');
+  if (version !== '1' && version !== '2') {
     throw new ContactLinkError('unsupported-version', 'This contact link needs a different METEVO version.');
   }
-  const name = normalizeContactName(fields.get('name')!);
-  const nodePubkey = fields.get('node')!.trim().toLowerCase();
-  if (!isValidNodePubkey(nodePubkey)) {
+  if (version === '1' && (fields.has('phone') || fields.has('email'))) {
+    throw new ContactLinkError('malformed', 'The contact link has unsupported or repeated fields.');
+  }
+  if (!isValidNodePubkey(fields.get('node')!.trim())) {
     throw new ContactLinkError('invalid-node', 'The contact node pubkey is invalid.');
   }
-  return { name, nodePubkey };
+  return normalizeSharedContact({
+    name: fields.get('name')!,
+    nodePubkey: fields.get('node')!,
+    phone: fields.get('phone'),
+    email: fields.get('email'),
+  });
 }
