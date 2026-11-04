@@ -78,6 +78,13 @@ function decodeField(value: string): string {
   }
 }
 
+/** Cheap transport filter: development-client URLs and future app routes share
+ * the scheme, but only this prefix is a contact import request. Content after
+ * the prefix is validated by decodeContactLink, inside the confirmation card. */
+export function isContactLinkCandidate(input: string): boolean {
+  return typeof input === 'string' && /^metevo:\/\/contact(?:[/?#]|$)/i.test(input.trim());
+}
+
 /** Strict v1 parser shared by deep links and future QR/NFC transports.
  * Does not rely on platform-specific URL implementations or touch storage. */
 export function decodeContactLink(input: string): SharedContact {
