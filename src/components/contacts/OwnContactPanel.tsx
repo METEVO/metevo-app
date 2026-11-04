@@ -4,7 +4,9 @@ import { BackHandler, Share, Text, View } from 'react-native';
 import { useTheme, useThemedStyles, type MetevoTheme } from '../../design/ThemeContext';
 import { useWalletSession } from '../../hooks/useWalletSession';
 import {
+  contactShareMessage,
   encodeContactLink,
+  type SharedContact,
   MAX_CONTACT_EMAIL_CHARACTERS,
   MAX_CONTACT_NAME_CHARACTERS,
 } from '../../services/metevo/contactLink';
@@ -12,6 +14,7 @@ import { readOwnContactDetails, readOwnContactName, saveOwnContact } from '../..
 import { layout } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
 import { CompactField, TextLink } from './CompactField';
+import { ContactCheckWords } from './ContactCheckWords';
 import { ContactQrView } from './ContactQrCode';
 import { logContactEvent } from '../../services/metevo/contactEvents';
 
@@ -76,7 +79,7 @@ function OwnContactForm({ nodePubkey, onBack }: { nodePubkey: string | null; onB
   }, [nodePubkey, attempt]);
 
   /** Both transports share the name that was saved, never an unsaved draft. */
-  async function publish(deliver: (link: string) => Promise<unknown> | void) {
+  async function publish(deliver: (contact: SharedContact) => Promise<unknown> | void) {
     if (nodePubkey === null || sharingRef.current || loading || loadFailed) return;
     sharingRef.current = true;
     setSharing(true);
@@ -88,7 +91,7 @@ function OwnContactForm({ nodePubkey, onBack }: { nodePubkey: string | null; onB
       setName(contact.name);
       setPhone(contact.phone ?? '');
       setEmail(contact.email ?? '');
-      await deliver(encodeContactLink(contact));
+      await deliver(contact);
     } catch (cause) {
       if (mounted.current) setError(cause instanceof Error ? cause.message : 'Your contact could not be shared. Try again.');
     } finally {
@@ -161,9 +164,9 @@ function OwnContactForm({ nodePubkey, onBack }: { nodePubkey: string | null; onB
             <ActionButton
               label="Show QR code"
               variant="outlined"
-              onPress={() => void publish((link) => {
+              onPress={() => void publish((contact) => {
                 logContactEvent('qr:shown-own');
-                setQrLink(link);
+                setQrLink(encodeContactLink(contact));
               })}
               disabled={cannotShare}
               grow
@@ -171,7 +174,7 @@ function OwnContactForm({ nodePubkey, onBack }: { nodePubkey: string | null; onB
             <ActionButton
               label={sharing ? 'Sharing…' : 'Share link'}
               variant="primary"
-              onPress={() => void publish((link) => Share.share({ message: link }))}
+              onPress={() => void publish((contact) => Share.share({ message: contactShareMessage(contact) }))}
               disabled={cannotShare}
               grow
             />
@@ -184,6 +187,7 @@ function OwnContactForm({ nodePubkey, onBack }: { nodePubkey: string | null; onB
           <Text style={theme.typography.caption}>
             You share your name and public node key; phone and email only if you fill them in.
           </Text>
+          <ContactCheckWords nodePubkey={nodePubkey} />
           <Text style={theme.typography.caption} selectable>{nodePubkey}</Text>
         </>
       )}

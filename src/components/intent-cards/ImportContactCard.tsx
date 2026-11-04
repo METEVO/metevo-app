@@ -9,6 +9,7 @@ import { replyForContactImport } from '../../voice/replies';
 import { useAttentionSignal } from '../AttentionSignal';
 import { layout } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
+import { ContactCheckWords } from '../contacts/ContactCheckWords';
 import { ContactDetailLines } from '../contacts/ContactDetailLines';
 import type { IntentCardProps } from './IntentCard';
 
@@ -38,10 +39,13 @@ export function ImportContactCard({ onClearIntent }: IntentCardProps) {
 
   if (active === null) return null;
   const busy = active.stage === 'saving';
-  const done = active.stage === 'saved' || active.stage === 'duplicate' || active.stage === 'invalid';
+  const done = active.stage === 'saved' || active.stage === 'duplicate' || active.stage === 'updated'
+    || active.stage === 'invalid';
+  const canUpdate = active.stage === 'duplicate' && active.detailUpdate !== null;
   const title = active.stage === 'saved' ? 'Contact added'
-    : active.stage === 'duplicate' ? 'Contact already saved'
-      : active.stage === 'invalid' ? 'Invalid contact link' : 'Add a contact?';
+    : active.stage === 'updated' ? 'Contact updated'
+      : active.stage === 'duplicate' ? 'Contact already saved'
+        : active.stage === 'invalid' ? 'Invalid contact link' : 'Add a contact?';
 
   // Actions sit right under the name: the task panel has a fixed height,
   // and details below may need scrolling.
@@ -49,6 +53,9 @@ export function ImportContactCard({ onClearIntent }: IntentCardProps) {
     <View style={styles.canvas}>
       <Text style={theme.typography.title} accessibilityRole="header">{title}</Text>
       <Text style={theme.typography.body} accessibilityLiveRegion="polite">{message}</Text>
+      {active.contact !== null && active.stage === 'review' && (
+        <ContactCheckWords nodePubkey={active.contact.nodePubkey} />
+      )}
       {active.stage === 'review' && (
         <TextInput
           style={styles.input}
@@ -62,7 +69,10 @@ export function ImportContactCard({ onClearIntent }: IntentCardProps) {
         />
       )}
       <View style={styles.actions}>
-        <ActionButton label={done ? 'Done' : 'Cancel'} variant="outlined" onPress={finish} disabled={busy} grow />
+        <ActionButton label={done && !canUpdate ? 'Done' : 'Cancel'} variant="outlined" onPress={finish} disabled={busy} grow />
+        {canUpdate && (
+          <ActionButton label="Update" variant="primary" onPress={() => void controller.updateDetails()} grow />
+        )}
         {active.stage === 'review' && (
           <ActionButton label="Add contact" variant="primary" onPress={() => void controller.confirm()} disabled={active.name.trim().length === 0} grow />
         )}
@@ -76,6 +86,9 @@ export function ImportContactCard({ onClearIntent }: IntentCardProps) {
       {active.contact !== null && active.stage !== 'duplicate' && (
         <ContactDetailLines phone={active.contact.phone} email={active.contact.email} />
       )}
+      {canUpdate && (
+        <ContactDetailLines phone={active.detailUpdate?.phone} email={active.detailUpdate?.email} />
+      )}
       {active.stage === 'review' && active.pendingName !== null && (
         <Text style={theme.typography.caption}>This completes {active.pendingName}, who you asked for a contact.</Text>
       )}
@@ -85,7 +98,9 @@ export function ImportContactCard({ onClearIntent }: IntentCardProps) {
         </Text>
       )}
       {active.stage === 'review' && (
-        <Text style={theme.typography.caption}>This link does not verify the person's identity.</Text>
+        <Text style={theme.typography.caption}>
+          The name does not prove who sent it. Ask them to read the check words on their phone: they must be the same.
+        </Text>
       )}
     </View>
   );
