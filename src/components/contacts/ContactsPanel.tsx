@@ -12,6 +12,7 @@ import {
 import { layout, scale } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
 import { encodeContactLink } from '../../services/metevo/contactLink';
+import { ContactQrCode } from './ContactQrCode';
 import { OwnContactPanel } from './OwnContactPanel';
 
 /**
@@ -19,7 +20,7 @@ import { OwnContactPanel } from './OwnContactPanel';
  * relay needs: the spoken name never leaves the phone, and a payment can
  * only be addressed to a saved node.
  */
-type ContactsStage = 'list' | 'details' | 'add' | 'alias' | 'delete' | 'self';
+type ContactsStage = 'list' | 'details' | 'qr' | 'add' | 'alias' | 'delete' | 'self';
 
 interface ContactsPanelProps {
   /** Clears the canvas back to the home idle hint (the Done action). */
@@ -113,8 +114,36 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
     }
   }
 
+  function showSelectedQr() {
+    if (selected === null) return;
+    try {
+      encodeContactLink(selected);
+      setFieldError(null);
+      setStage('qr');
+    } catch {
+      setFieldError('The QR code could not be created. Check the contact name and try again.');
+    }
+  }
+
   if (stage === 'self') {
     return <OwnContactPanel onBack={() => setStage('list')} />;
+  }
+
+  if (stage === 'qr' && selected !== null) {
+    return (
+      <View style={styles.canvas}>
+        <Text style={theme.typography.title}>{selected.name}</Text>
+        <View style={styles.qr}>
+          <ContactQrCode
+            link={encodeContactLink(selected)}
+            accessibilityLabel={`QR code to add ${selected.name}`}
+          />
+        </View>
+        <Text style={theme.typography.body}>Ask the other person to tap Scan QR code in Contacts.</Text>
+        <Text style={theme.typography.caption}>Only the name and the public node key are inside.</Text>
+        <ActionButton label="Back" variant="outlined" onPress={() => setStage('details')} />
+      </View>
+    );
   }
 
   if (stage === 'add') {
@@ -187,6 +216,7 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
           onPress={() => void shareSelected()}
           disabled={sharing}
         />
+        <ActionButton label="Show QR code" variant="outlined" onPress={showSelectedQr} />
         <View style={styles.actions}>
           <ActionButton label="Back" variant="outlined" onPress={() => setStage('list')} />
           <ActionButton
@@ -315,6 +345,9 @@ const makeStyles = (theme: MetevoTheme) => ({
   error: {
     ...theme.typography.caption,
     color: theme.voiceStates.attention.fill,
+  },
+  qr: {
+    alignItems: 'center' as const,
   },
   actions: {
     flexDirection: 'row' as const,
