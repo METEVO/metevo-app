@@ -17,6 +17,13 @@
         }
       ],
       [
+        "expo-camera",
+        {
+          "cameraPermission": "METEVO uses the camera only to read a contact QR code while you scan it.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
         "expo-build-properties",
         {
           "android": {
