@@ -325,3 +325,46 @@ describe('contact test-trail events', () => {
     expect(events.join(' ')).not.toMatch(/Maria|393331234567|02ab/);
   });
 });
+
+describe('already saved contacts with new phone or email', () => {
+  beforeEach(() => { mockStore.clear(); });
+  const realStore = { listContacts, listPendingContacts, rememberContact };
+
+  test('offers the new details and updates them under the local name', async () => {
+    await rememberContact('Mamma', NODE, { phone: '+393330000000' });
+    const controller = new ContactImportController(realStore);
+    controller.enqueue(encodeContactLink({ ...contact, phone: '+393331234567', email: 'maria@example.com' }));
+    controller.openNext(true);
+    await flush();
+    expect(controller.getSnapshot().active).toMatchObject({
+      stage: 'duplicate', existingName: 'Mamma',
+      detailUpdate: { phone: '+393331234567', email: 'maria@example.com' },
+    });
+    expect(replyForContactImport(controller.getSnapshot().active!)).toContain('Update it?');
+    await controller.updateDetails();
+    expect(controller.getSnapshot().active?.stage).toBe('updated');
+    expect(await findContactByName('Mamma')).toMatchObject({
+      nodePubkey: NODE, phone: '+393331234567', email: 'maria@example.com',
+    });
+  });
+
+  test('the same details are a plain duplicate with nothing to update', async () => {
+    await rememberContact('Maria', NODE, { phone: '+393331234567' });
+    const controller = new ContactImportController(realStore);
+    controller.enqueue(encodeContactLink({ ...contact, phone: '+393331234567' }));
+    controller.openNext(true);
+    await flush();
+    expect(controller.getSnapshot().active).toMatchObject({ stage: 'duplicate', detailUpdate: null });
+    await controller.updateDetails();
+    expect(controller.getSnapshot().active?.stage).toBe('duplicate');
+  });
+
+  test('a link without details never erases saved ones', async () => {
+    await rememberContact('Maria', NODE, { email: 'maria@example.com' });
+    const controller = new ContactImportController(realStore);
+    controller.enqueue(link);
+    controller.openNext(true);
+    await flush();
+    expect(controller.getSnapshot().active?.detailUpdate).toBeNull();
+  });
+});

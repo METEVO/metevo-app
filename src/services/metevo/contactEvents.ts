@@ -20,6 +20,8 @@ export type ContactEvent =
   | 'import:review-completes-pending'
   | 'import:name-conflict'
   | 'import:duplicate'
+  | 'import:duplicate-with-new-details'
+  | 'import:details-updated'
   | 'import:saved'
   | 'import:save-failed'
   | 'import:load-error'

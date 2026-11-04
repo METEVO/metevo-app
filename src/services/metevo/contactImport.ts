@@ -9,7 +9,7 @@ import type { ContactEvent } from './contactEvents';
 import type { ContactDetails, PendingContact, StoredContact } from './contacts';
 
 export type ContactImportStage =
-  | 'loading' | 'review' | 'saving' | 'saved' | 'duplicate' | 'invalid' | 'load-error';
+  | 'loading' | 'review' | 'saving' | 'saved' | 'duplicate' | 'updated' | 'invalid' | 'load-error';
 
 interface QueuedContact {
   id: number;
@@ -24,6 +24,9 @@ export interface ContactImportReview extends QueuedContact {
   existingName: string | null;
   /** Local name of the pending contact this link completes, if any. */
   pendingName: string | null;
+  /** On a duplicate: phone or email in the link that differ from the saved
+   * ones. Offered as an update; the local name never changes by itself. */
+  detailUpdate: ContactDetails | null;
 }
 
 export interface ContactImportSnapshot {
@@ -47,6 +50,14 @@ function matchingPending(pending: PendingContact[], contact: SharedContact): Pen
   return pending.find((entry) =>
     (contact.phone !== undefined && entry.phone === contact.phone) ||
     (contact.email !== undefined && entry.email === contact.email)) ?? null;
+}
+
+function changedDetails(saved: ContactDetails, contact: SharedContact): ContactDetails | null {
+  const update: ContactDetails = {
+    ...(contact.phone !== undefined && contact.phone !== saved.phone ? { phone: contact.phone } : {}),
+    ...(contact.email !== undefined && contact.email !== saved.email ? { email: contact.email } : {}),
+  };
+  return update.phone === undefined && update.email === undefined ? null : update;
 }
 
 function sharedDetails(contact: SharedContact): ContactDetails {
@@ -75,6 +86,7 @@ export class ContactImportController {
   ) {}
 
   getSnapshot = (): ContactImportSnapshot => this.snapshot;
+
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -130,6 +142,7 @@ export class ContactImportController {
       name: entry.contact?.name ?? '',
       existingName: null,
       pendingName: null,
+      detailUpdate: null,
       stage: entry.contact === null ? 'invalid' : 'loading',
     });
     if (entry.contact !== null) void this.prepare(entry.id);
@@ -154,7 +167,8 @@ export class ContactImportController {
       // The name chosen when asking for the contact is the user's own label.
       const name = pending?.name ?? active.name;
       const conflict = existing ? null : this.nameConflict(book, active.contact, name);
-      this.log(existing ? 'import:duplicate'
+      const detailUpdate = existing ? changedDetails(existing, active.contact) : null;
+      this.log(existing ? (detailUpdate ? 'import:duplicate-with-new-details' : 'import:duplicate')
         : conflict !== null ? 'import:name-conflict'
           : pending ? 'import:review-completes-pending' : 'import:review');
       this.publish({
@@ -163,6 +177,7 @@ export class ContactImportController {
         stage: existing ? 'duplicate' : 'review',
         existingName: existing?.name ?? null,
         pendingName: pending?.name ?? null,
+        detailUpdate,
         error: conflict,
       });
     } catch {
@@ -210,8 +225,9 @@ export class ContactImportController {
       const book = await this.readBook();
       const existing = book.contacts.find((entry) => entry.nodePubkey.toLowerCase() === active.contact!.nodePubkey);
       if (existing) {
-        this.log('import:duplicate');
-        this.publish({ ...active, name, stage: 'duplicate', existingName: existing.name, error: null });
+        const detailUpdate = changedDetails(existing, active.contact);
+        this.log(detailUpdate ? 'import:duplicate-with-new-details' : 'import:duplicate');
+        this.publish({ ...active, name, stage: 'duplicate', existingName: existing.name, detailUpdate, error: null });
         return;
       }
       const conflict = this.nameConflict(book, active.contact, name);
@@ -235,6 +251,31 @@ export class ContactImportController {
         error: cause instanceof Error && cause.message === 'another contact already uses that name'
           ? NAME_CONFLICT : 'The contact could not be saved. Try again.',
       });
+    }
+  };
+
+  /** Saves the new phone/email of an already saved node under its existing
+   * local name; re-reads the book so a concurrent edit is not overwritten. */
+  updateDetails = async (): Promise<void> => {
+    const active = this.snapshot.active;
+    if (active?.stage !== 'duplicate' || active.contact === null || active.detailUpdate === null) return;
+    this.publish({ ...active, stage: 'saving', error: null });
+    try {
+      const book = await this.readBook();
+      const existing = book.contacts.find((entry) => entry.nodePubkey.toLowerCase() === active.contact!.nodePubkey);
+      if (existing === undefined) {
+        this.publish({ ...active, stage: 'duplicate', error: 'This contact was deleted. Open the link again to add it.' });
+        return;
+      }
+      await this.store.rememberContact(existing.name, existing.nodePubkey, {
+        phone: active.detailUpdate.phone ?? existing.phone,
+        email: active.detailUpdate.email ?? existing.email,
+      });
+      this.log('import:details-updated');
+      this.publish({ ...active, name: existing.name, existingName: existing.name, stage: 'updated', error: null });
+    } catch {
+      this.log('import:save-failed');
+      this.publish({ ...active, stage: 'duplicate', error: 'The contact could not be updated. Try again.' });
     }
   };
 
