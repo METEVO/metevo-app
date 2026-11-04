@@ -5,6 +5,7 @@ import {
   normalizeContactName,
   type SharedContact,
 } from './contactLink';
+import type { ContactEvent } from './contactEvents';
 import type { ContactDetails, PendingContact, StoredContact } from './contacts';
 
 export type ContactImportStage =
@@ -70,6 +71,7 @@ export class ContactImportController {
   constructor(
     private readonly store: ContactImportStore,
     private readonly now = Date.now,
+    private readonly log: (event: ContactEvent) => void = () => undefined,
   ) {}
 
   getSnapshot = (): ContactImportSnapshot => this.snapshot;
@@ -103,13 +105,16 @@ export class ContactImportController {
       this.snapshot.active?.key === key || this.queue.some((entry) => entry.key === key) ||
       this.recentlyClosed.has(key)
     ) {
+      this.log('import:not-queued');
       return false;
     }
     if (this.queue.length >= MAX_PENDING_CONTACT_LINKS) {
+      this.log('import:not-queued');
       this.publish(this.snapshot.active, true);
       return false;
     }
     this.queue.push({ id: ++this.serial, key, contact, error });
+    this.log(contact === null ? 'import:invalid' : 'import:queued');
     this.publish();
     return true;
   };
@@ -149,6 +154,9 @@ export class ContactImportController {
       // The name chosen when asking for the contact is the user's own label.
       const name = pending?.name ?? active.name;
       const conflict = existing ? null : this.nameConflict(book, active.contact, name);
+      this.log(existing ? 'import:duplicate'
+        : conflict !== null ? 'import:name-conflict'
+          : pending ? 'import:review-completes-pending' : 'import:review');
       this.publish({
         ...active,
         name,
@@ -160,6 +168,7 @@ export class ContactImportController {
     } catch {
       const active = this.snapshot.active;
       if (active?.id === id) {
+        this.log('import:load-error');
         this.publish({ ...active, stage: 'load-error', error: 'Your contacts could not be loaded. Try again.' });
       }
     }
@@ -201,11 +210,13 @@ export class ContactImportController {
       const book = await this.readBook();
       const existing = book.contacts.find((entry) => entry.nodePubkey.toLowerCase() === active.contact!.nodePubkey);
       if (existing) {
+        this.log('import:duplicate');
         this.publish({ ...active, name, stage: 'duplicate', existingName: existing.name, error: null });
         return;
       }
       const conflict = this.nameConflict(book, active.contact, name);
       if (conflict !== null) {
+        this.log('import:name-conflict');
         this.publish({ ...active, name, stage: 'review', error: conflict });
         return;
       }
@@ -215,8 +226,10 @@ export class ContactImportController {
       } else {
         await this.store.rememberContact(name, active.contact.nodePubkey, details);
       }
+      this.log('import:saved');
       this.publish({ ...active, name, stage: 'saved', error: null });
     } catch (cause) {
+      this.log('import:save-failed');
       this.publish({
         ...active, name, stage: 'review',
         error: cause instanceof Error && cause.message === 'another contact already uses that name'
@@ -229,6 +242,7 @@ export class ContactImportController {
     const active = this.snapshot.active;
     if (active?.stage === 'saving') return false;
     if (active !== null) {
+      this.log('import:closed');
       this.recentlyClosed.set(active.key, this.now());
       // At most a small session-local deduplication window is retained.
       if (this.recentlyClosed.size > 32) this.recentlyClosed.delete(this.recentlyClosed.keys().next().value!);
