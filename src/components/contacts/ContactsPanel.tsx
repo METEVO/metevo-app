@@ -67,7 +67,7 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [sharing, setSharing] = useState(false);
   const sharingRef = useRef(false);
-  const { controller: contactImports } = useContactImport();
+  const { controller: contactImports, pendingCount: waitingLinks } = useContactImport();
 
   const selected =
     contacts?.find((contact) => contact.nodePubkey === selectedPubkey) ?? null;
@@ -399,6 +399,18 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
     <View style={styles.panel}>
       <View style={styles.header}>
         <Text style={styles.title}>Contacts</Text>
+        {waitingLinks > 0 && (
+          <TouchableOpacity
+            style={styles.waiting}
+            onPress={() => onClearIntent?.()}
+            accessibilityRole="button"
+            accessibilityLabel={`${waitingLinks} shared ${waitingLinks === 1 ? 'contact is' : 'contacts are'} waiting. Tap to review.`}
+          >
+            <Text style={styles.waitingText}>
+              {waitingLinks === 1 ? '1 contact waiting' : `${waitingLinks} contacts waiting`} → Tap to review
+            </Text>
+          </TouchableOpacity>
+        )}
         <Text style={theme.typography.body}>Saved only on this phone.</Text>
         {fieldError !== null && <Text style={styles.error}>{fieldError}</Text>}
         {contacts !== null && contacts.length === 0 && pendingContacts.length === 0 && (
@@ -500,6 +512,18 @@ const makeStyles = (theme: MetevoTheme) => ({
     padding: scale(4),
     minHeight: scale(14.16),
     gap: layout.rowGap / 4,
+  },
+  // Closing Contacts is what lets the Home open the waiting card.
+  waiting: {
+    ...theme.cardBase,
+    borderColor: theme.voiceStates.idle.ink,
+    paddingHorizontal: layout.rowGap,
+    paddingVertical: layout.rowGap / 2,
+  },
+  waitingText: {
+    ...theme.typography.body,
+    fontWeight: '700' as const,
+    color: theme.voiceStates.idle.ink,
   },
   rowTitle: {
     ...theme.typography.body,
