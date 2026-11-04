@@ -61,7 +61,10 @@ export function replyForContactImport(review: ContactImportReview): string {
     case 'loading': message = 'Checking your contacts…'; break;
     case 'saving': message = 'Saving the contact…'; break;
     case 'saved': message = `${review.name} was added to your contacts.`; break;
-    case 'duplicate': message = `This node is already saved as ${review.existingName}. No changes were made.`; break;
+    case 'duplicate': message = review.error ?? (review.detailUpdate !== null
+      ? `${review.existingName} is already saved. This link has a new phone or email. Update it?`
+      : `This node is already saved as ${review.existingName}. No changes were made.`); break;
+    case 'updated': message = `${review.existingName} was updated with the new phone or email.`; break;
     case 'invalid': message = review.error ?? 'This contact link is invalid.'; break;
     case 'load-error': message = review.error ?? 'Your contacts could not be loaded. Try again.'; break;
     case 'review': message = review.error ?? (review.pendingName !== null
