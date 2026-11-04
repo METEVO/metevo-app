@@ -16,6 +16,7 @@ import {
 import { layout, scale } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
 import {
+  contactShareMessage,
   encodeContactLink,
   normalizeContactEmail,
   normalizeContactPhone,
@@ -23,6 +24,7 @@ import {
 import { useContactImport } from '../../hooks/useContactImport';
 import { ContactQrView } from './ContactQrCode';
 import { CompactField, TextLink } from './CompactField';
+import { ContactCheckWords } from './ContactCheckWords';
 import { ContactDetailLines } from './ContactDetailLines';
 import { ContactQrScanner } from './ContactQrScanner';
 import { OwnContactPanel } from './OwnContactPanel';
@@ -176,7 +178,7 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
     setSharing(true);
     setFieldError(null);
     try {
-      await Share.share({ message: encodeContactLink(selected) });
+      await Share.share({ message: contactShareMessage(selected) });
     } catch {
       setFieldError('The contact could not be shared. Check its name and try again.');
     } finally {
@@ -329,6 +331,7 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
           Node {selected.nodePubkey.slice(0, 10)}…{selected.nodePubkey.slice(-6)}
         </Text>
         <ContactDetailLines phone={selected.phone} email={selected.email} />
+        <ContactCheckWords nodePubkey={selected.nodePubkey} />
         {fieldError !== null && <Text style={styles.error} accessibilityLiveRegion="polite">{fieldError}</Text>}
         <View style={styles.actions}>
           <ActionButton label="Show QR code" variant="outlined" onPress={showSelectedQr} grow />
