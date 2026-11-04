@@ -1,4 +1,9 @@
-import { decodeContactLink, encodeContactLink, MAX_CONTACT_LINK_BYTES } from './contactLink';
+import {
+  decodeContactLink,
+  encodeContactLink,
+  isContactLinkCandidate,
+  MAX_CONTACT_LINK_BYTES,
+} from './contactLink';
 
 interface LinkingPort {
   getInitialURL(): Promise<string | null>;
@@ -16,9 +21,7 @@ export function listenForContactLinks(port: LinkingPort, enqueue: (link: string)
   let mounted = true;
   const liveKeys = new Set<string>();
   const receive = (link: string | null, initial: boolean) => {
-    // Development-client URLs and future app routes share the scheme,
-    // but are not contact import requests.
-    if (!mounted || link === null || !/^metevo:\/\/contact(?:[/?#]|$)/i.test(link.trim())) return;
+    if (!mounted || link === null || !isContactLinkCandidate(link)) return;
     const key = linkKey(link);
     if (initial && liveKeys.has(key)) return;
     if (!initial) {
