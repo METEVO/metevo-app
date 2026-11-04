@@ -45,6 +45,16 @@
       </intent-filter>
       <meta-data android:name="android.nfc.cardemulation.host_apdu_service" android:resource="@xml/metevo_localelink_apdu"/>
     </service>
+    <!-- METEVO contact sharing: the sharing phone emulates the contact tag (HCE). -->
+    <service
+      android:name="app.metevo.wallet.contactnfc.MetevoContactNfcApduService"
+      android:exported="true"
+      android:permission="android.permission.BIND_NFC_SERVICE">
+      <intent-filter>
+        <action android:name="android.nfc.cardemulation.action.APDU_SERVICE"/>
+      </intent-filter>
+      <meta-data android:name="android.nfc.cardemulation.host_apdu_service" android:resource="@xml/metevo_contact_apdu"/>
+    </service>
     <activity android:name=".MainActivity" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode|smallestScreenSize|assetsPaths" android:launchMode="singleTask" android:windowSoftInputMode="adjustResize" android:theme="@style/Theme.App.SplashScreen" android:exported="true" android:screenOrientation="portrait">
       <intent-filter>
         <action android:name="android.intent.action.MAIN"/>
