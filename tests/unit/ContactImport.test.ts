@@ -368,3 +368,19 @@ describe('already saved contacts with new phone or email', () => {
     expect(controller.getSnapshot().active?.detailUpdate).toBeNull();
   });
 });
+
+describe('undecided links', () => {
+  test('lists the open card and valid queued links, never malformed or decided ones', async () => {
+    const { controller } = fixture();
+    const other = encodeContactLink({ name: 'Bob', nodePubkey: OTHER_NODE });
+    controller.enqueue(link);
+    controller.enqueue('metevo://contact?v=1&name=Bad');
+    controller.enqueue(other);
+    expect(controller.undecidedLinks()).toEqual([link, other]);
+    controller.openNext(true);
+    await flush();
+    expect(controller.undecidedLinks()).toEqual([link, other]);
+    await controller.confirm();
+    expect(controller.undecidedLinks()).toEqual([other]);
+  });
+});
