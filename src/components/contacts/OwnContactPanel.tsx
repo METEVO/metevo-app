@@ -7,6 +7,7 @@ import { encodeContactLink, MAX_CONTACT_NAME_CHARACTERS } from '../../services/m
 import { readOwnContactName, saveOwnContact } from '../../services/metevo/ownContact';
 import { layout } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
+import { ContactQrCode } from './ContactQrCode';
 
 export function OwnContactPanel({ onBack }: { onBack: () => void }) {
   const { wallet } = useWalletSession();
@@ -24,6 +25,7 @@ function OwnContactForm({ nodePubkey, onBack }: { nodePubkey: string | null; onB
   const [attempt, setAttempt] = useState(0);
   const [sharing, setSharing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [qrLink, setQrLink] = useState<string | null>(null);
   const sharingRef = useRef(false);
   const mounted = useRef(false);
 
@@ -52,7 +54,8 @@ function OwnContactForm({ nodePubkey, onBack }: { nodePubkey: string | null; onB
     return () => { cancelled = true; };
   }, [nodePubkey, attempt]);
 
-  async function share() {
+  /** Both transports share the name that was saved, never an unsaved draft. */
+  async function publish(deliver: (link: string) => Promise<unknown> | void) {
     if (nodePubkey === null || sharingRef.current || loading || loadFailed) return;
     sharingRef.current = true;
     setSharing(true);
@@ -61,7 +64,7 @@ function OwnContactForm({ nodePubkey, onBack }: { nodePubkey: string | null; onB
       const contact = await saveOwnContact(name, nodePubkey);
       if (!mounted.current) return;
       setName(contact.name);
-      await Share.share({ message: encodeContactLink(contact) });
+      await deliver(encodeContactLink(contact));
     } catch (cause) {
       if (mounted.current) setError(cause instanceof Error ? cause.message : 'Your contact could not be shared. Try again.');
     } finally {
@@ -69,6 +72,22 @@ function OwnContactForm({ nodePubkey, onBack }: { nodePubkey: string | null; onB
       if (mounted.current) setSharing(false);
     }
   }
+
+  if (qrLink !== null) {
+    return (
+      <View style={styles.canvas}>
+        <Text style={theme.typography.title}>{name.trim()}</Text>
+        <View style={styles.qr}>
+          <ContactQrCode link={qrLink} accessibilityLabel={`QR code to add ${name.trim()}`} />
+        </View>
+        <Text style={theme.typography.body}>Ask the other person to tap Scan QR code in Contacts.</Text>
+        <Text style={theme.typography.caption}>Only your name and your public node key are inside.</Text>
+        <ActionButton label="Back" variant="outlined" onPress={() => setQrLink(null)} />
+      </View>
+    );
+  }
+
+  const cannotShare = nodePubkey === null || loading || sharing || loadFailed || name.trim().length === 0;
 
   return (
     <View style={styles.canvas}>
@@ -93,6 +112,14 @@ function OwnContactForm({ nodePubkey, onBack }: { nodePubkey: string | null; onB
         </>
       )}
       {error !== null && <Text style={styles.error} accessibilityLiveRegion="polite">{error}</Text>}
+      {nodePubkey !== null && (
+        <ActionButton
+          label="Show QR code"
+          variant="outlined"
+          onPress={() => void publish((link) => setQrLink(link))}
+          disabled={cannotShare}
+        />
+      )}
       <View style={styles.actions}>
         <ActionButton label="Back" variant="outlined" onPress={onBack} disabled={sharing} grow />
         {loadFailed ? (
@@ -101,8 +128,8 @@ function OwnContactForm({ nodePubkey, onBack }: { nodePubkey: string | null; onB
           <ActionButton
             label={sharing ? 'Sharing…' : 'Share my contact'}
             variant="primary"
-            onPress={() => void share()}
-            disabled={nodePubkey === null || loading || sharing || name.trim().length === 0}
+            onPress={() => void publish((link) => Share.share({ message: link }))}
+            disabled={cannotShare}
             grow
           />
         )}
@@ -116,4 +143,5 @@ const makeStyles = (theme: MetevoTheme) => ({
   input: { ...theme.typography.body, ...theme.cardBase, padding: layout.rowGap },
   error: { ...theme.typography.caption, color: theme.voiceStates.attention.ink },
   actions: { flexDirection: 'row' as const, gap: layout.rowGap },
+  qr: { alignItems: 'center' as const },
 });
