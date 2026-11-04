@@ -12,7 +12,9 @@ import {
 import { layout, scale } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
 import { encodeContactLink } from '../../services/metevo/contactLink';
+import { useContactImport } from '../../hooks/useContactImport';
 import { ContactQrCode } from './ContactQrCode';
+import { ContactQrScanner } from './ContactQrScanner';
 import { OwnContactPanel } from './OwnContactPanel';
 
 /**
@@ -20,7 +22,7 @@ import { OwnContactPanel } from './OwnContactPanel';
  * relay needs: the spoken name never leaves the phone, and a payment can
  * only be addressed to a saved node.
  */
-type ContactsStage = 'list' | 'details' | 'qr' | 'add' | 'alias' | 'delete' | 'self';
+type ContactsStage = 'list' | 'details' | 'qr' | 'scan' | 'add' | 'alias' | 'delete' | 'self';
 
 interface ContactsPanelProps {
   /** Clears the canvas back to the home idle hint (the Done action). */
@@ -38,6 +40,7 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [sharing, setSharing] = useState(false);
   const sharingRef = useRef(false);
+  const { controller: contactImports } = useContactImport();
 
   const selected =
     contacts?.find((contact) => contact.nodePubkey === selectedPubkey) ?? null;
@@ -114,6 +117,16 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
     }
   }
 
+  // Closing Contacts frees the shell, which then opens the same confirmation
+  // card a deep link would.
+  const importScannedLink = useCallback((link: string) => {
+    if (!contactImports.enqueue(link)) return false;
+    onClearIntent?.();
+    return true;
+  }, [contactImports, onClearIntent]);
+
+  const leaveScanner = useCallback(() => setStage('list'), []);
+
   function showSelectedQr() {
     if (selected === null) return;
     try {
@@ -127,6 +140,10 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
 
   if (stage === 'self') {
     return <OwnContactPanel onBack={() => setStage('list')} />;
+  }
+
+  if (stage === 'scan') {
+    return <ContactQrScanner onContactLink={importScannedLink} onCancel={leaveScanner} />;
   }
 
   if (stage === 'qr' && selected !== null) {
@@ -261,7 +278,18 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
           </TouchableOpacity>
         ))}
       </View>
-      <ActionButton label="My contact" variant="outlined" onPress={() => setStage('self')} />
+      <View style={styles.actions}>
+        <ActionButton label="My contact" variant="outlined" onPress={() => setStage('self')} grow />
+        <ActionButton
+          label="Scan QR code"
+          variant="outlined"
+          onPress={() => {
+            setFieldError(null);
+            setStage('scan');
+          }}
+          grow
+        />
+      </View>
       <View style={styles.actions}>
         <ActionButton
           label="Close"
