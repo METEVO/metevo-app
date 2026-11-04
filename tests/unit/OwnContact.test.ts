@@ -1,5 +1,5 @@
 import * as SecureStore from 'expo-secure-store';
-import { readOwnContactName, saveOwnContact } from '../../src/services/metevo/ownContact';
+import { readOwnContactDetails, readOwnContactName, saveOwnContact } from '../../src/services/metevo/ownContact';
 
 const mockStore = new Map<string, string>();
 jest.mock('expo-secure-store', () => ({
@@ -35,4 +35,25 @@ test('storage failures propagate so the UI can retry instead of claiming a saved
   jest.mocked(SecureStore.setItemAsync).mockRejectedValueOnce(new Error('store failed'));
   await expect(saveOwnContact('Edi', NODE)).rejects.toThrow('store failed');
   expect(await readOwnContactName(NODE)).toBeNull();
+});
+
+test('optional phone and email are shared only when the user saved them', async () => {
+  expect(await readOwnContactDetails(NODE)).toEqual({});
+  expect(await saveOwnContact('Edi', NODE, { phone: '+39 333 123 4567', email: ' ' })).toEqual({
+    name: 'Edi', nodePubkey: NODE, phone: '+393331234567',
+  });
+  expect(await readOwnContactDetails(NODE)).toEqual({ phone: '+393331234567' });
+  expect(await readOwnContactDetails(OTHER_NODE)).toEqual({});
+  await saveOwnContact('Edi', NODE, {});
+  expect(await readOwnContactDetails(NODE)).toEqual({});
+});
+
+test('invalid phone or email is rejected before anything is stored', async () => {
+  await expect(saveOwnContact('Edi', NODE, { phone: '333' })).rejects.toThrow('country code');
+  expect(SecureStore.setItemAsync).not.toHaveBeenCalled();
+});
+
+test('corrupt saved details share nothing', async () => {
+  mockStore.set(`metevo.contacts.self.${NODE}.details`, '{"phone":"bad"}');
+  expect(await readOwnContactDetails(NODE)).toEqual({});
 });
