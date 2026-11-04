@@ -7,6 +7,9 @@ import { useTheme } from '../../design/ThemeContext';
 import { encodeContactQr, QR_QUIET_ZONE_MODULES } from '../../services/metevo/contactQr';
 import { layout, scale } from '../styles';
 import { decodeContactLink } from '../../services/metevo/contactLink';
+import { openNfcSettings } from '../../services/metevo/contactNfc';
+import { useContactNfcShare } from '../../hooks/useContactNfc';
+import { TextLink } from './CompactField';
 import { ActionButton } from '../ui/ActionButton';
 import { ContactCheckWords } from './ContactCheckWords';
 
@@ -51,6 +54,8 @@ interface ContactQrViewProps {
 
 export function ContactQrView({ link, name, contents, onBack }: ContactQrViewProps) {
   const theme = useTheme();
+  // The share screen serves the same link over NFC while it is open.
+  const nfc = useContactNfcShare(link);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -66,8 +71,14 @@ export function ContactQrView({ link, name, contents, onBack }: ContactQrViewPro
         <ContactQrCode link={link} accessibilityLabel={`QR code to add ${name}`} />
       </View>
       <ActionButton label="Back" variant="outlined" onPress={onBack} />
+      {nfc === 'ready' && (
+        <Text style={[theme.typography.body, { fontWeight: '700' }]}>Or hold the phones back to back (NFC).</Text>
+      )}
+      {nfc === 'disabled' && (
+        <TextLink label="NFC is off. Turn it on to share by tapping phones." onPress={() => void openNfcSettings()} />
+      )}
       <ContactCheckWords nodePubkey={decodeContactLink(link).nodePubkey} />
-      <Text style={theme.typography.body}>{name}: ask the other person to tap Scan QR code in Contacts.</Text>
+      <Text style={theme.typography.body}>{name}: ask the other person to open Contacts and tap Scan QR code.</Text>
       <Text style={theme.typography.caption}>{contents}</Text>
     </View>
   );
