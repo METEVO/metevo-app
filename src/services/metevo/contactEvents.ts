@@ -23,6 +23,7 @@ export type ContactEvent =
   | 'import:duplicate-with-new-details'
   | 'import:details-updated'
   | 'import:restored'
+  | 'import:pasted'
   | 'import:saved'
   | 'import:save-failed'
   | 'import:load-error'
