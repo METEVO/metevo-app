@@ -4,6 +4,7 @@ import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'ex
 
 import { metevoDesignTokens } from '../../design/designTokens';
 import { useTheme, useThemedStyles, type MetevoTheme } from '../../design/ThemeContext';
+import { logContactEvent } from '../../services/metevo/contactEvents';
 import { classifyScannedCode } from '../../services/metevo/contactQr';
 import { layout, scale } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
@@ -38,8 +39,15 @@ export function ContactQrScanner({ onContactLink, onCancel }: ContactQrScannerPr
   const handled = useRef(false);
   const side = useViewfinderSide();
   const askedOnOpen = useRef(false);
+  const loggedForeign = useRef(false);
 
+  useEffect(() => { logContactEvent('scan:opened'); }, []);
 
+  useEffect(() => {
+    if (permission !== null && !permission.granted && !permission.canAskAgain) {
+      logContactEvent('scan:permission-denied');
+    }
+  }, [permission]);
 
   useEffect(() => {
     if (permission === null || askedOnOpen.current) return;
@@ -67,12 +75,17 @@ export function ContactQrScanner({ onContactLink, onCancel }: ContactQrScannerPr
     if (handled.current) return;
     const scanned = classifyScannedCode(data);
     if (scanned.kind === 'foreign') {
+      // The scanner reports every frame; one log line per scanner session.
+      if (!loggedForeign.current) logContactEvent('scan:foreign-code');
+      loggedForeign.current = true;
       setNotice(FOREIGN_CODE);
       return;
     }
     handled.current = true;
+    logContactEvent('scan:contact-link');
     if (!onContactLink(scanned.link)) {
       handled.current = false;
+      logContactEvent('scan:not-queued');
       setNotice(NOT_QUEUED);
     }
   }, [onContactLink]);

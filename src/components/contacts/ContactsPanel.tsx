@@ -26,6 +26,7 @@ import { CompactField, TextLink } from './CompactField';
 import { ContactDetailLines } from './ContactDetailLines';
 import { ContactQrScanner } from './ContactQrScanner';
 import { OwnContactPanel } from './OwnContactPanel';
+import { logContactEvent } from '../../services/metevo/contactEvents';
 import { PendingContactDetails } from './PendingContactDetails';
 
 /**
@@ -124,10 +125,12 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
     const hasPubkey = pubkeyDraft.trim().length > 0;
     const save = hasPubkey
       ? rememberContact(nameDraft, pubkeyDraft, draftDetails()).then((saved) => {
+        logContactEvent('contact:saved');
         setSelectedPubkey(saved.nodePubkey);
         setStage('details');
       })
       : rememberPendingContact(nameDraft, draftDetails()).then((saved) => {
+        logContactEvent('contact:saved-pending');
         setSelectedPendingId(saved.id);
         setStage('pending');
       });
@@ -197,6 +200,7 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
     try {
       encodeContactLink(selected);
       setFieldError(null);
+      logContactEvent('qr:shown-contact');
       setStage('qr');
     } catch {
       setFieldError('The QR code could not be created. Check the contact name and try again.');

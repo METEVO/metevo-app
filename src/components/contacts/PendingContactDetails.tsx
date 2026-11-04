@@ -3,7 +3,8 @@ import { Text, View } from 'react-native';
 
 import { useTheme, useThemedStyles, type MetevoTheme } from '../../design/ThemeContext';
 import { useWalletSession } from '../../hooks/useWalletSession';
-import { getContactRequestRelay } from '../../services/metevo/contactRequestRelay';
+import { logContactEvent } from '../../services/metevo/contactEvents';
+import { ContactRequestUnavailableError, getContactRequestRelay } from '../../services/metevo/contactRequestRelay';
 import { markPendingContactRequested, type PendingContact } from '../../services/metevo/contacts';
 import { readOwnContactDetails, readOwnContactName } from '../../services/metevo/ownContact';
 import { relayAvailable } from '../../services/metevo/relayClient';
@@ -46,6 +47,7 @@ export function PendingContactDetails({ contact, onAnswer, onChanged, onBack, on
       const outcome = await work();
       if (mounted.current) setMessage(outcome);
     } catch (cause) {
+      logContactEvent(cause instanceof ContactRequestUnavailableError ? 'request:unavailable' : 'request:failed');
       if (mounted.current) setMessage(cause instanceof Error ? cause.message : 'Something went wrong. Try again.');
     } finally {
       busyRef.current = false;
@@ -66,6 +68,7 @@ export function PendingContactDetails({ contact, onAnswer, onChanged, onBack, on
       from: { name, nodePubkey, ...details },
     });
     await markPendingContactRequested(contact.id, requestId);
+    logContactEvent('request:sent');
     onChanged();
     return `Request sent to ${contact.name}.`;
   });
@@ -73,6 +76,7 @@ export function PendingContactDetails({ contact, onAnswer, onChanged, onBack, on
   const checkAnswer = () => run(async () => {
     if (contact.requestId === undefined) return null;
     const answer = await relay().pollContactRequest(contact.requestId);
+    logContactEvent(`request:${answer.status}`);
     if (answer.status !== 'answered') return ANSWER_MESSAGES[answer.status];
     return onAnswer(answer.link) ? null : 'Their contact is already waiting for review. Close Contacts to see it.';
   });

@@ -13,6 +13,7 @@ import { layout } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
 import { CompactField, TextLink } from './CompactField';
 import { ContactQrView } from './ContactQrCode';
+import { logContactEvent } from '../../services/metevo/contactEvents';
 
 export function OwnContactPanel({ onBack }: { onBack: () => void }) {
   const { wallet } = useWalletSession();
@@ -82,6 +83,7 @@ function OwnContactForm({ nodePubkey, onBack }: { nodePubkey: string | null; onB
     setError(null);
     try {
       const contact = await saveOwnContact(name, nodePubkey, { phone, email });
+      logContactEvent(contact.phone || contact.email ? 'own:saved-with-phone-or-email' : 'own:saved');
       if (!mounted.current) return;
       setName(contact.name);
       setPhone(contact.phone ?? '');
@@ -160,6 +162,7 @@ function OwnContactForm({ nodePubkey, onBack }: { nodePubkey: string | null; onB
               label="Show QR code"
               variant="outlined"
               onPress={() => void publish((link) => {
+                logContactEvent('qr:shown-own');
                 setQrLink(link);
               })}
               disabled={cannotShare}

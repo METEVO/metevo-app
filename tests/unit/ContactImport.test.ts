@@ -306,3 +306,22 @@ describe('importing phone and email (v2 links)', () => {
     expect(controller.getSnapshot().active?.error).toContain('already used');
   });
 });
+
+describe('contact test-trail events', () => {
+  beforeEach(() => { mockStore.clear(); });
+
+  test('the import controller reports each outcome with fixed labels only', async () => {
+    const events: string[] = [];
+    const controller = new ContactImportController(
+      { listContacts, listPendingContacts, rememberContact }, Date.now, (event) => { events.push(event); },
+    );
+    controller.enqueue(encodeContactLink({ ...contact, phone: '+393331234567' }));
+    controller.enqueue('metevo://contact?v=1&name=Bad');
+    controller.openNext(true);
+    await flush();
+    await controller.confirm();
+    controller.close();
+    expect(events).toEqual(['import:queued', 'import:invalid', 'import:review', 'import:saved', 'import:closed']);
+    expect(events.join(' ')).not.toMatch(/Maria|393331234567|02ab/);
+  });
+});
