@@ -60,6 +60,9 @@ function changedDetails(saved: ContactDetails, contact: SharedContact): ContactD
   return update.phone === undefined && update.email === undefined ? null : update;
 }
 
+/** Stages where the link still waits for the user's decision. */
+const UNDECIDED_STAGES: readonly ContactImportStage[] = ['loading', 'review', 'saving', 'load-error'];
+
 function sharedDetails(contact: SharedContact): ContactDetails {
   return {
     ...(contact.phone === undefined ? {} : { phone: contact.phone }),
@@ -87,6 +90,14 @@ export class ContactImportController {
 
   getSnapshot = (): ContactImportSnapshot => this.snapshot;
 
+  /** Valid links still waiting for a decision, oldest first: what must
+   * survive the app being closed. Malformed links are not kept. */
+  undecidedLinks = (): string[] => {
+    const active = this.snapshot.active;
+    const activeLink = active !== null && active.contact !== null && UNDECIDED_STAGES.includes(active.stage)
+      ? [active.key] : [];
+    return [...activeLink, ...this.queue.filter((entry) => entry.contact !== null).map((entry) => entry.key)];
+  };
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
