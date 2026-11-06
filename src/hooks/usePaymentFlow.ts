@@ -87,6 +87,9 @@ export function usePaymentFlow() {
   /** The submitted payment's hash: "Check status" asks about this payment
    * only, it never sends a new one. */
   const paymentHashRef = useRef<string | null>(null);
+  /** Bumped by cancel: a request loop from an abandoned attempt stops and
+   * never reopens an old proposal. */
+  const requestRunRef = useRef(0);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -101,7 +104,7 @@ export function usePaymentFlow() {
       setStage(next);
     }
     const spoken = paymentMessage(next, contextRef.current).spoken;
-    if (spoken !== null) {
+    if (spoken !== null && mountedRef.current) {
       speakEnglish(spoken);
       announceForAccessibility(spoken);
     }
@@ -144,10 +147,13 @@ export function usePaymentFlow() {
         canCheckStatus: false,
       };
       paymentHashRef.current = null;
+      const run = ++requestRunRef.current;
+      const abandoned = () => run !== requestRunRef.current || !mountedRef.current;
       enterStage('requesting');
       setNote(null);
       try {
         const recipientPubkey = await resolveRecipientPubkey(intent.recipient);
+        if (abandoned()) return;
         if (recipientPubkey === null) {
           failWith(
             `No contact named ${intent.recipient}. Add their node pubkey in Contacts first.`,
@@ -161,9 +167,11 @@ export function usePaymentFlow() {
           assetId: null,
           amountUsd: intent.amount,
         });
+        if (abandoned()) return;
         const deadline = Date.now() + RELAY_ANSWER_TIMEOUT_MS;
         while (Date.now() < deadline) {
           const answer = await relay.pollResponse(request.requestId);
+          if (abandoned()) return;
           if (answer.status === 'delivered') {
             setProposal({
               recipient: intent.recipient,
@@ -192,9 +200,11 @@ export function usePaymentFlow() {
             return;
           }
           await sleep(RELAY_POLL_INTERVAL_MS);
+          if (abandoned()) return;
         }
         failWith('The recipient did not answer in time. Try again.');
       } catch (cause) {
+        if (abandoned()) return;
         console.log(
           '[metevo] invoice relay failed:',
           cause instanceof Error ? cause.message : 'unknown',
@@ -295,6 +305,7 @@ export function usePaymentFlow() {
       // running and its outcome still reports through the watcher phase.
       return;
     }
+    requestRunRef.current += 1;
     enterStage('idle');
     setProposal(null);
     setNote(null);
