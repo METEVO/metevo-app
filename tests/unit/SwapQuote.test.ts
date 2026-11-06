@@ -3,6 +3,9 @@ import {
   formatSwapAmount,
   parseSwapAmount,
   quoteSwap,
+  convertAtExampleRate,
+  draftFromAmount,
+  formatSatsAsBtc,
   reverseDirection,
   usdmCentsFromBaseUnits,
 } from '../../src/services/swap/swapQuote';
@@ -72,6 +75,26 @@ describe('typed swap amounts', () => {
     expect(parseSwapAmount('10.5', 'BTC')).toBeNull();
     expect(parseSwapAmount('abc', 'USDM')).toBeNull();
     expect(parseSwapAmount('', 'BTC')).toBeNull();
+  });
+
+  test('BTC accepts up to 8 decimals and becomes whole sats', () => {
+    expect(parseSwapAmount('0.00005', 'BTC', 'BTC')).toBe(5_000);
+    expect(parseSwapAmount('1', 'BTC', 'BTC')).toBe(100_000_000);
+    expect(parseSwapAmount('0.000000001', 'BTC', 'BTC')).toBeNull();
+  });
+
+  test('amounts become editable text in the chosen unit', () => {
+    expect(draftFromAmount(1_250, 'USDM')).toBe('12.50');
+    expect(draftFromAmount(5_000, 'BTC', 'SATS')).toBe('5000');
+    expect(draftFromAmount(5_000, 'BTC', 'BTC')).toBe('0.00005');
+    expect(draftFromAmount(1_000_000_000, 'BTC', 'BTC')).toBe('10');
+    expect(draftFromAmount(0, 'BTC', 'BTC')).toBe('0');
+    expect(formatSatsAsBtc(9_900)).toBe('0.000099 BTC');
+  });
+
+  test('the example rate converts both ways, rounding down', () => {
+    expect(convertAtExampleRate(1_000, 'USDM')).toBe(10_000);
+    expect(convertAtExampleRate(10_999, 'BTC')).toBe(1_099);
   });
 
   test('formats cents and sats for display', () => {

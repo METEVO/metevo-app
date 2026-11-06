@@ -13,11 +13,15 @@ import { parseSwapStart } from '../../services/swap/swapPayload';
 import {
   SIMULATED_FEE_BASIS_POINTS,
   SIMULATED_SATS_PER_USDM,
+  BtcUnit,
   SwapAsset,
   SwapQuote,
+  convertAtExampleRate,
+  formatSatsAsBtc,
   formatSwapAmount,
   inputAsset,
   outputAsset,
+  parseSwapAmount,
   usdmCentsFromBaseUnits,
 } from '../../services/swap/swapQuote';
 import { useAttentionSignal } from '../AttentionSignal';
@@ -26,7 +30,7 @@ import { ActionButton } from '../ui/ActionButton';
 import { IntentCardProps } from './IntentCard';
 
 const ASSET_LABEL = { USDM: 'USDm', BTC: 'BTC' } as const;
-const AMOUNT_LABEL = { USDM: 'Amount in USDm', BTC: 'Amount in sats' } as const;
+const AMOUNT_LABEL = { USDM: 'Amount in USDm', SATS: 'Amount in sats', BTC: 'Amount in BTC' } as const;
 const RATE_NOTE = `Example rate: 1 USDm = ${SIMULATED_SATS_PER_USDM.toLocaleString('en-US')} sats, fee ${
   SIMULATED_FEE_BASIS_POINTS / 100
 }%. Not a market price.`;
@@ -38,7 +42,13 @@ const RATE_NOTE = `Example rate: 1 USDm = ${SIMULATED_SATS_PER_USDM.toLocaleStri
  */
 export function SwapCard(props: IntentCardProps) {
   const start = useMemo(() => parseSwapStart(props.payload), [props.payload]);
-  return <SwapPanel key={`${start.direction}:${start.draft}`} start={start} {...props} />;
+  return (
+    <SwapPanel
+      key={`${start.direction}:${start.draft}:${start.btcUnit}`}
+      start={start}
+      {...props}
+    />
+  );
 }
 
 function SwapPanel({ start, onClearIntent }: { start: SwapFlowStart } & IntentCardProps) {
@@ -52,6 +62,7 @@ function SwapPanel({ start, onClearIntent }: { start: SwapFlowStart } & IntentCa
   if (state.stage === 'entry') {
     const from = inputAsset(state.direction);
     const to = outputAsset(state.direction);
+    const typedUnit = from === 'USDM' ? 'USDM' : state.btcUnit;
     return (
       <View style={styles.panel}>
         <View style={styles.header}>
@@ -63,15 +74,34 @@ function SwapPanel({ start, onClearIntent }: { start: SwapFlowStart } & IntentCa
             </Text>
             <ActionButton label="Reverse" variant="outlined" onPress={() => flow.reverse()} />
           </View>
-          <Text style={styles.body}>{AMOUNT_LABEL[from]}</Text>
+          {from === 'BTC' && (
+            <View style={styles.actions}>
+              <ActionButton
+                label="sats"
+                variant="outlined"
+                selected={state.btcUnit === 'SATS'}
+                onPress={() => flow.setBtcUnit('SATS')}
+                grow
+              />
+              <ActionButton
+                label="BTC"
+                variant="outlined"
+                selected={state.btcUnit === 'BTC'}
+                onPress={() => flow.setBtcUnit('BTC')}
+                grow
+              />
+            </View>
+          )}
+          <Text style={styles.body}>{AMOUNT_LABEL[typedUnit]}</Text>
           <TextInput
             style={styles.amountInput}
             value={state.draft}
             onChangeText={(text) => flow.setDraft(text)}
-            keyboardType={from === 'USDM' ? 'decimal-pad' : 'number-pad'}
-            accessibilityLabel={AMOUNT_LABEL[from]}
+            keyboardType={typedUnit === 'SATS' ? 'number-pad' : 'decimal-pad'}
+            accessibilityLabel={AMOUNT_LABEL[typedUnit]}
             selectTextOnFocus
           />
+          <BtcEquivalent draft={state.draft} from={from} btcUnit={state.btcUnit} />
           <Text style={styles.caption}>{RATE_NOTE}</Text>
           {state.note !== null && <Text style={styles.rejection}>{state.note}</Text>}
         </View>
@@ -150,6 +180,25 @@ function SwapPanel({ start, onClearIntent }: { start: SwapFlowStart } & IntentCa
   );
 }
 
+/** The typed amount shown in the other bitcoin unit (or in BTC at the
+ * example rate when paying USDm), so sats and BTC are never confused. */
+function BtcEquivalent({ draft, from, btcUnit }: { draft: string; from: SwapAsset; btcUnit: BtcUnit }) {
+  const styles = useThemedStyles(makeStyles);
+  const amount = parseSwapAmount(draft, from, btcUnit);
+  if (amount === null || amount === 0) {
+    return null;
+  }
+  let text: string;
+  if (from === 'USDM') {
+    text = `≈ ${formatSatsAsBtc(convertAtExampleRate(amount, 'USDM'))} at the example rate`;
+  } else if (btcUnit === 'SATS') {
+    text = `= ${formatSatsAsBtc(amount)}`;
+  } else {
+    text = `= ${formatSwapAmount(amount, 'BTC')}`;
+  }
+  return <Text style={styles.value}>{text}</Text>;
+}
+
 /** Spendable balance of the asset being swapped away, in the quote's unit; null when unknown. */
 function availableBalance(
   wallet: ReturnType<typeof useWalletSession>['wallet'],
@@ -166,13 +215,18 @@ function availableBalance(
     : usdmCentsFromBaseUnits(wallet.balanceUsdmBaseUnits);
 }
 
+function formatWithBtc(amount: number, asset: SwapAsset): string {
+  const formatted = formatSwapAmount(amount, asset);
+  return asset === 'BTC' ? `${formatted}\n(${formatSatsAsBtc(amount)})` : formatted;
+}
+
 function QuoteRows({ quote }: { quote: SwapQuote }) {
   const styles = useThemedStyles(makeStyles);
   const from = inputAsset(quote.direction);
   const rows = [
-    { label: 'You pay', value: formatSwapAmount(quote.amountIn, from) },
-    { label: 'Fee (example)', value: formatSwapAmount(quote.feeIn, from) },
-    { label: 'You receive', value: formatSwapAmount(quote.amountOut, outputAsset(quote.direction)) },
+    { label: 'You pay', value: formatWithBtc(quote.amountIn, from) },
+    { label: 'Fee (example)', value: formatWithBtc(quote.feeIn, from) },
+    { label: 'You receive', value: formatWithBtc(quote.amountOut, outputAsset(quote.direction)) },
     {
       label: 'Rate (example)',
       value: `1 USDm = ${quote.satsPerUsdm.toLocaleString('en-US')} sats`,

@@ -1,7 +1,10 @@
 import {
+  BtcUnit,
   SwapDirection,
   SwapQuote,
   SwapQuoteRejection,
+  convertAtExampleRate,
+  draftFromAmount,
   formatSwapAmount,
   inputAsset,
   outputAsset,
@@ -13,7 +16,13 @@ import { SwapService } from './swapService';
 export const SIMULATION_NOTICE = 'Simulation: no funds will be exchanged.';
 
 export type SwapFlowState =
-  | { stage: 'entry'; direction: SwapDirection; draft: string; note: string | null }
+  | {
+      stage: 'entry';
+      direction: SwapDirection;
+      draft: string;
+      btcUnit: BtcUnit;
+      note: string | null;
+    }
   | { stage: 'review'; quote: SwapQuote; note: string | null; balanceWarning: string | null }
   | { stage: 'authorizing'; quote: SwapQuote }
   | { stage: 'simulating'; quote: SwapQuote }
@@ -33,6 +42,8 @@ export interface SwapFlowStart {
   direction: SwapDirection;
   /** Prefilled amount as typed text (from voice), or empty. */
   draft: string;
+  /** Unit the bitcoin amount is typed in; sats when omitted. */
+  btcUnit?: BtcUnit;
 }
 
 const REJECTION_NOTES: Record<SwapQuoteRejection | 'quote-expired', string> = {
@@ -52,12 +63,20 @@ export class SwapFlow {
   private state: SwapFlowState;
   private generation = 0;
   private listeners = new Set<(state: SwapFlowState) => void>();
+  private btcUnit: BtcUnit;
 
   constructor(
     private readonly ports: SwapFlowPorts,
     start: SwapFlowStart,
   ) {
-    this.state = { stage: 'entry', direction: start.direction, draft: start.draft, note: null };
+    this.btcUnit = start.btcUnit ?? 'SATS';
+    this.state = {
+      stage: 'entry',
+      direction: start.direction,
+      draft: start.draft,
+      btcUnit: this.btcUnit,
+      note: null,
+    };
   }
 
   getState(): SwapFlowState {
@@ -75,10 +94,38 @@ export class SwapFlow {
     }
   }
 
+  /** Flips the pair and converts the typed amount at the example rate, so
+   * "10" USDm becomes about "10000" sats instead of a literal 10 sats. */
   reverse(): void {
-    if (this.state.stage === 'entry') {
-      this.update({ ...this.state, direction: reverseDirection(this.state.direction), note: null });
+    if (this.state.stage !== 'entry') {
+      return;
     }
+    const { direction, draft } = this.state;
+    const from = inputAsset(direction);
+    const amount = parseSwapAmount(draft, from, this.btcUnit);
+    const nextDirection = reverseDirection(direction);
+    const nextDraft =
+      amount === null
+        ? ''
+        : draftFromAmount(convertAtExampleRate(amount, from), inputAsset(nextDirection), this.btcUnit);
+    this.update({ ...this.state, direction: nextDirection, draft: nextDraft, note: null });
+  }
+
+  /** Switches between typing sats and BTC; the typed value is kept. */
+  setBtcUnit(unit: BtcUnit): void {
+    if (this.state.stage !== 'entry' || unit === this.btcUnit) {
+      return;
+    }
+    const { direction, draft } = this.state;
+    const from = inputAsset(direction);
+    const amount = from === 'BTC' ? parseSwapAmount(draft, from, this.btcUnit) : null;
+    this.btcUnit = unit;
+    this.update({
+      ...this.state,
+      btcUnit: unit,
+      draft: amount === null ? (from === 'BTC' ? '' : draft) : draftFromAmount(amount, from, unit),
+      note: null,
+    });
   }
 
   /**
@@ -91,7 +138,7 @@ export class SwapFlow {
       return;
     }
     const { direction, draft } = this.state;
-    const amountIn = parseSwapAmount(draft, inputAsset(direction));
+    const amountIn = parseSwapAmount(draft, inputAsset(direction), this.btcUnit);
     if (amountIn === null) {
       this.reject('invalid-amount');
       return;
@@ -124,7 +171,8 @@ export class SwapFlow {
     this.update({
       stage: 'entry',
       direction: quote.direction,
-      draft: draftFor(quote),
+      draft: this.draftFor(quote),
+      btcUnit: this.btcUnit,
       note: null,
     });
   }
@@ -138,7 +186,8 @@ export class SwapFlow {
       this.update({
         stage: 'entry',
         direction: quote.direction,
-        draft: draftFor(quote),
+        draft: this.draftFor(quote),
+        btcUnit: this.btcUnit,
         note: REJECTION_NOTES['quote-expired'],
       });
       this.ports.announce(REJECTION_NOTES['quote-expired']);
@@ -186,6 +235,10 @@ export class SwapFlow {
     this.listeners.clear();
   }
 
+  private draftFor(quote: SwapQuote): string {
+    return draftFromAmount(quote.amountIn, inputAsset(quote.direction), this.btcUnit);
+  }
+
   private reject(reason: SwapQuoteRejection): void {
     if (this.state.stage !== 'entry') return;
     const note = REJECTION_NOTES[reason];
@@ -205,10 +258,4 @@ export function describeQuote(quote: SwapQuote): string {
   const paid = formatSwapAmount(quote.amountIn, inputAsset(quote.direction));
   const received = formatSwapAmount(quote.amountOut, outputAsset(quote.direction));
   return `Swap ${paid} for ${received}.`;
-}
-
-function draftFor(quote: SwapQuote): string {
-  return inputAsset(quote.direction) === 'USDM'
-    ? (quote.amountIn / 100).toFixed(2)
-    : String(quote.amountIn);
 }

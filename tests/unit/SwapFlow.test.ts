@@ -81,13 +81,58 @@ describe('swap flow', () => {
     }
   });
 
-  test('reversing the pair switches the input asset', () => {
-    const { flow } = setup({}, '5000');
+  const entry = (flow: SwapFlow) => {
+    const state = flow.getState();
+    if (state.stage !== 'entry') throw new Error(`expected entry, got ${state.stage}`);
+    return state;
+  };
+
+  test('reverse converts the typed amount at the example rate instead of keeping the number', () => {
+    const { flow } = setup({}, '10');
     flow.reverse();
+    expect(entry(flow)).toMatchObject({ direction: 'BTC_TO_USDM', draft: '10000', btcUnit: 'SATS' });
+    flow.reverse();
+    expect(entry(flow)).toMatchObject({ direction: 'USDM_TO_BTC', draft: '10.00' });
+  });
+
+  test('reverse in the BTC unit converts into BTC decimals', () => {
+    const { flow } = setup({}, '10');
+    flow.setBtcUnit('BTC');
+    flow.reverse();
+    expect(entry(flow)).toMatchObject({ draft: '0.0001', btcUnit: 'BTC' });
+  });
+
+  test('reverse clears an amount that is not a valid number', () => {
+    const { flow } = setup({}, 'abc');
+    flow.reverse();
+    expect(entry(flow).draft).toBe('');
+  });
+
+  test('switching sats <-> BTC keeps the same value', () => {
+    const flow = new SwapFlow(setup().ports, { direction: 'BTC_TO_USDM', draft: '5000' });
+    flow.setBtcUnit('BTC');
+    expect(entry(flow)).toMatchObject({ draft: '0.00005', btcUnit: 'BTC' });
+    flow.setBtcUnit('SATS');
+    expect(entry(flow)).toMatchObject({ draft: '5000', btcUnit: 'SATS' });
+  });
+
+  test('a BTC amount is reviewed in whole sats and edited back in BTC', () => {
+    const flow = new SwapFlow(setup().ports, {
+      direction: 'BTC_TO_USDM',
+      draft: '0.00005',
+      btcUnit: 'BTC',
+    });
     flow.review(null);
     const state = flow.getState();
-    expect(state.stage).toBe('review');
-    expect(state.stage === 'review' && state.quote.direction).toBe('BTC_TO_USDM');
+    expect(state.stage === 'review' && state.quote.amountIn).toBe(5_000);
+    flow.edit();
+    expect(entry(flow)).toMatchObject({ draft: '0.00005', btcUnit: 'BTC' });
+  });
+
+  test('a sats amount typed with decimals is refused, not rounded', () => {
+    const flow = new SwapFlow(setup().ports, { direction: 'BTC_TO_USDM', draft: '5000.5' });
+    flow.review(null);
+    expect(entry(flow).note).toBe('Enter a valid amount.');
   });
 
   test('a cancelled fingerprint returns to the review without simulating', async () => {
