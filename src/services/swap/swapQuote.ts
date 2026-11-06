@@ -105,24 +105,74 @@ export function quoteSwap(request: SwapQuoteRequest): SwapQuoteResult {
   };
 }
 
-/**
- * Reads a typed amount into the asset's integer unit: "12.5" USDm -> 1250
- * cents, "5000" BTC -> 5000 sats. Returns null instead of rounding when the
- * text has more precision than the unit allows.
- */
-export function parseSwapAmount(text: string, asset: SwapAsset): number | null {
+/** How a bitcoin amount is typed: whole sats or BTC with up to 8 decimals. */
+export type BtcUnit = 'SATS' | 'BTC';
+
+const DECIMALS = { USDM: 2, SATS: 0, BTC: 8 } as const;
+
+type TypedUnit = keyof typeof DECIMALS;
+
+function typedUnit(asset: SwapAsset, btcUnit: BtcUnit): TypedUnit {
+  return asset === 'USDM' ? 'USDM' : btcUnit;
+}
+
+/** "12.5" with 2 decimals -> 1250; null when the text is not a plain number
+ * or has more decimals than allowed (never rounded). */
+function parseFixed(text: string, decimals: number): number | null {
   const normalized = text.trim().replace(',', '.');
-  const pattern = asset === 'USDM' ? /^\d+(\.\d{1,2})?$/ : /^\d+$/;
+  const pattern = decimals === 0 ? /^\d+$/ : new RegExp(`^\\d+(\\.\\d{1,${decimals}})?$`);
   if (!pattern.test(normalized)) {
     return null;
   }
-  if (asset === 'BTC') {
-    const sats = Number(normalized);
-    return Number.isSafeInteger(sats) ? sats : null;
-  }
   const [whole, fraction = ''] = normalized.split('.');
-  const cents = Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
-  return Number.isSafeInteger(cents) ? cents : null;
+  const value = Number(whole) * 10 ** decimals + Number(fraction.padEnd(decimals, '0') || '0');
+  return Number.isSafeInteger(value) ? value : null;
+}
+
+function formatFixed(value: number, decimals: number): string {
+  if (decimals === 0) {
+    return String(value);
+  }
+  const whole = Math.floor(value / 10 ** decimals);
+  const fraction = String(value % 10 ** decimals).padStart(decimals, '0');
+  return `${whole}.${fraction}`;
+}
+
+/**
+ * Reads a typed amount into the asset's integer unit: "12.5" USDm -> 1250
+ * cents, "5000" sats -> 5000 sats, "0.00005" BTC -> 5000 sats. Returns null
+ * instead of rounding when the text has more precision than the unit allows.
+ */
+export function parseSwapAmount(
+  text: string,
+  asset: SwapAsset,
+  btcUnit: BtcUnit = 'SATS',
+): number | null {
+  return parseFixed(text, DECIMALS[typedUnit(asset, btcUnit)]);
+}
+
+/** The editable text for an amount (cents or sats) in the typed unit. */
+export function draftFromAmount(amount: number, asset: SwapAsset, btcUnit: BtcUnit = 'SATS'): string {
+  const unit = typedUnit(asset, btcUnit);
+  const text = formatFixed(amount, DECIMALS[unit]);
+  // BTC drops trailing zeros ("0.00005000" -> "0.00005"); USDm keeps cents.
+  return unit === 'BTC' ? text.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '') : text;
+}
+
+/** "0.00005 BTC" for display next to a sats amount. */
+export function formatSatsAsBtc(sats: number): string {
+  return `${draftFromAmount(sats, 'BTC', 'BTC')} BTC`;
+}
+
+/**
+ * Value of the typed amount on the other side at the example rate, before
+ * the fee: used when the pair is reversed so the field keeps a similar
+ * value instead of a number that silently changes meaning.
+ */
+export function convertAtExampleRate(amount: number, from: SwapAsset): number {
+  return from === 'USDM'
+    ? Math.floor((amount * SIMULATED_SATS_PER_USDM) / 100)
+    : Math.floor((amount * 100) / SIMULATED_SATS_PER_USDM);
 }
 
 /** The wallet reports USDm in base units with 8 decimals (as on Home). */
