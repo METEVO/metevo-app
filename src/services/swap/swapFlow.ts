@@ -14,7 +14,7 @@ export const SIMULATION_NOTICE = 'Simulation: no funds will be exchanged.';
 
 export type SwapFlowState =
   | { stage: 'entry'; direction: SwapDirection; draft: string; note: string | null }
-  | { stage: 'review'; quote: SwapQuote; note: string | null }
+  | { stage: 'review'; quote: SwapQuote; note: string | null; balanceWarning: string | null }
   | { stage: 'authorizing'; quote: SwapQuote }
   | { stage: 'simulating'; quote: SwapQuote }
   | { stage: 'completed'; quote: SwapQuote }
@@ -39,7 +39,6 @@ const REJECTION_NOTES: Record<SwapQuoteRejection | 'quote-expired', string> = {
   'invalid-amount': 'Enter a valid amount.',
   'below-minimum': 'The amount is below the minimum.',
   'above-maximum': 'The amount is above the maximum.',
-  'insufficient-balance': 'Your balance is too low for this amount.',
   'quote-expired': 'The quote expired. Check the amount and review again.',
 };
 
@@ -82,7 +81,11 @@ export class SwapFlow {
     }
   }
 
-  /** Validates the typed amount and moves to the review on a valid quote. */
+  /**
+   * Validates the typed amount and moves to the review on a valid quote.
+   * A known balance below the amount only adds a warning: the simulation
+   * still runs, so the screens can be shown with an empty wallet.
+   */
   review(availableIn: number | null): void {
     if (this.state.stage !== 'entry') {
       return;
@@ -96,15 +99,20 @@ export class SwapFlow {
     const result = this.ports.service.quote({
       direction,
       amountIn,
-      availableIn,
       now: this.ports.now(),
     });
     if (!result.ok) {
       this.reject(result.reason);
       return;
     }
-    this.update({ stage: 'review', quote: result.quote, note: null });
-    this.ports.announce(`${describeQuote(result.quote)} ${SIMULATION_NOTICE}`);
+    const balanceWarning =
+      availableIn !== null && amountIn > availableIn
+        ? `Your balance is ${formatSwapAmount(availableIn, inputAsset(direction))}: a real swap would fail.`
+        : null;
+    this.update({ stage: 'review', quote: result.quote, note: null, balanceWarning });
+    this.ports.announce(
+      [describeQuote(result.quote), balanceWarning, SIMULATION_NOTICE].filter(Boolean).join(' '),
+    );
   }
 
   /** Back from the review to the amount, keeping the reviewed values. */
@@ -125,7 +133,7 @@ export class SwapFlow {
     if (this.state.stage !== 'review') {
       return; // double taps land here: only one confirmation per review
     }
-    const { quote } = this.state;
+    const { quote, balanceWarning } = this.state;
     if (this.ports.now() >= quote.expiresAt) {
       this.update({
         stage: 'entry',
@@ -142,7 +150,12 @@ export class SwapFlow {
       await this.ports.authorize(`Confirm the swap simulation: ${describeQuote(quote)}`);
     } catch {
       if (turn !== this.generation) return;
-      this.update({ stage: 'review', quote, note: 'Confirmation cancelled. Nothing happened.' });
+      this.update({
+        stage: 'review',
+        quote,
+        note: 'Confirmation cancelled. Nothing happened.',
+        balanceWarning,
+      });
       return;
     }
     if (turn !== this.generation) return;

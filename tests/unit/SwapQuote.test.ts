@@ -4,6 +4,7 @@ import {
   parseSwapAmount,
   quoteSwap,
   reverseDirection,
+  usdmCentsFromBaseUnits,
 } from '../../src/services/swap/swapQuote';
 import { createSimulatedSwapService } from '../../src/services/swap/swapService';
 
@@ -11,7 +12,7 @@ const NOW = 1_700_000_000_000;
 
 describe('simulated swap quote', () => {
   test('USDm to BTC: 1% fee on the input, output rounded down to whole sats', () => {
-    const result = quoteSwap({ direction: 'USDM_TO_BTC', amountIn: 1_000, availableIn: null, now: NOW });
+    const result = quoteSwap({ direction: 'USDM_TO_BTC', amountIn: 1_000, now: NOW });
     expect(result).toEqual({
       ok: true,
       quote: {
@@ -27,7 +28,7 @@ describe('simulated swap quote', () => {
   });
 
   test('BTC to USDm: output in whole cents, never rounded up', () => {
-    const result = quoteSwap({ direction: 'BTC_TO_USDM', amountIn: 12_345, availableIn: null, now: NOW });
+    const result = quoteSwap({ direction: 'BTC_TO_USDM', amountIn: 12_345, now: NOW });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.quote.feeIn).toBe(124);
@@ -43,19 +44,15 @@ describe('simulated swap quote', () => {
     [99, 'below-minimum'],
     [100_001, 'above-maximum'],
   ])('rejects %p cents as %s', (amountIn, reason) => {
-    expect(quoteSwap({ direction: 'USDM_TO_BTC', amountIn, availableIn: null, now: NOW })).toEqual({
+    expect(quoteSwap({ direction: 'USDM_TO_BTC', amountIn, now: NOW })).toEqual({
       ok: false,
       reason,
     });
   });
 
-  test('a known balance blocks larger amounts; an unknown balance is not checked', () => {
-    expect(
-      quoteSwap({ direction: 'BTC_TO_USDM', amountIn: 5_000, availableIn: 4_999, now: NOW }),
-    ).toEqual({ ok: false, reason: 'insufficient-balance' });
-    expect(
-      quoteSwap({ direction: 'BTC_TO_USDM', amountIn: 5_000, availableIn: null, now: NOW }).ok,
-    ).toBe(true);
+  test('converts wallet USDm base units (8 decimals) to whole cents, rounding down', () => {
+    expect(usdmCentsFromBaseUnits(2_000_000_000)).toBe(2_000);
+    expect(usdmCentsFromBaseUnits(1_999_999)).toBe(1);
   });
 
   test('reversing twice returns the original direction', () => {
@@ -85,7 +82,7 @@ describe('typed swap amounts', () => {
 
 describe('simulated swap service', () => {
   const quote = () => {
-    const result = quoteSwap({ direction: 'USDM_TO_BTC', amountIn: 500, availableIn: null, now: NOW });
+    const result = quoteSwap({ direction: 'USDM_TO_BTC', amountIn: 500, now: NOW });
     if (!result.ok) throw new Error('expected a quote');
     return result.quote;
   };

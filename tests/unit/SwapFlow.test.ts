@@ -58,11 +58,27 @@ describe('swap flow', () => {
     expect(announcements).toEqual(['Enter a valid amount.']);
   });
 
-  test('a known balance below the amount blocks the review', () => {
-    const { flow } = setup({}, '10');
+  test('a known balance below the amount warns but still allows the simulation', async () => {
+    const { flow, announcements } = setup({}, '10');
     flow.review(999);
     const state = flow.getState();
-    expect(state.stage === 'entry' && state.note).toBe('Your balance is too low for this amount.');
+    expect(state.stage).toBe('review');
+    const warning = 'Your balance is 9.99 USDm: a real swap would fail.';
+    expect(state.stage === 'review' && state.balanceWarning).toBe(warning);
+    expect(announcements[0]).toContain(warning);
+    await flow.confirm();
+    expect(flow.getState().stage).toBe('completed');
+  });
+
+  test('no warning when the balance covers the amount or is unknown', () => {
+    const covered = setup({}, '10');
+    covered.flow.review(1_000);
+    const unknown = setup({}, '10');
+    unknown.flow.review(null);
+    for (const { flow } of [covered, unknown]) {
+      const state = flow.getState();
+      expect(state.stage === 'review' && state.balanceWarning).toBeNull();
+    }
   });
 
   test('reversing the pair switches the input asset', () => {
