@@ -8,6 +8,8 @@ import IdleDark from '../assets/voice_idle_dark.svg';
 import IdleLight from '../assets/voice_idle_light.svg';
 import ListeningDark from '../assets/voice_listening_dark.svg';
 import ListeningLight from '../assets/voice_listening_light.svg';
+import ProcessingDark from '../assets/voice_processing_dark.svg';
+import ProcessingLight from '../assets/voice_processing_light.svg';
 import {
   MetevoTheme,
   useTheme,
@@ -16,12 +18,13 @@ import {
 import { chooseArchiveDirectory } from '../utils/recordingArchive';
 import { layout } from './styles';
 
-export type VoiceControlState = 'idle' | 'listening' | 'attention';
+export type VoiceControlState = 'idle' | 'listening' | 'processing' | 'attention';
 
 interface RecordingControlsProps {
   /** True while the mic is live (the hold button is held down). */
   recording: boolean;
-  /** Draws the attention cue when the wallet is unavailable. */
+  /** Draws the attention cue when the wallet is unavailable, or the
+   * processing cue while a voice turn is being worked on. */
   state?: VoiceControlState;
   /** Hold started: begins capture (barge-in when a turn is running). */
   onPressIn: () => void;
@@ -77,9 +80,13 @@ export function RecordingControls({
         ? dark
           ? AttentionDark
           : AttentionLight
-        : dark
-          ? IdleDark
-          : IdleLight;
+        : effective === 'processing'
+          ? dark
+            ? ProcessingDark
+            : ProcessingLight
+          : dark
+            ? IdleDark
+            : IdleLight;
 
   return (
     <View style={styles.row}>
