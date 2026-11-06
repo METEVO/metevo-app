@@ -29,6 +29,19 @@ function payableAmount(amount: number | null): amount is number {
   );
 }
 
+/** Spoken swap amount as the card's editable text: sats must be whole,
+ * dollars keep at most two decimals; anything else is left for the user. */
+function swapDraft(amount: number | null, fromBitcoin: boolean): string {
+  if (amount === null || !Number.isFinite(amount) || amount <= 0) {
+    return '';
+  }
+  if (fromBitcoin) {
+    return Number.isInteger(amount) ? String(amount) : '';
+  }
+  const text = String(amount);
+  return /^\d+(\.\d{1,2})?$/.test(text) ? text : '';
+}
+
 export function intentActionFromInstruction(
   instruction: WalletInstruction,
   transcript: string,
@@ -71,6 +84,19 @@ export function intentActionFromInstruction(
             : 'Opening your payment request.',
         transcript,
       };
+    case 'SWAP': {
+      const fromBitcoin =
+        instruction.currency !== null && BTC_CURRENCY_PATTERN.test(instruction.currency);
+      return {
+        cardId: 'swap',
+        payload: {
+          direction: fromBitcoin ? 'BTC_TO_USDM' : 'USDM_TO_BTC',
+          draft: swapDraft(instruction.amount, fromBitcoin),
+        },
+        announcement: 'Opening the swap simulation. No funds will be exchanged.',
+        transcript,
+      };
+    }
     case 'CHECK_BALANCE':
       return {
         cardId: 'read-balance',
