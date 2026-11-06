@@ -278,10 +278,9 @@ class QvacRuntime {
     const partPath = `${finalPath}${DOWNLOAD_SUFFIX}`;
 
     try {
-      const freeKb = await FileSystem.getFreeDiskStorageAsync();
-      // The legacy API reports kilobytes; require the model plus headroom.
-      const requiredKb = Math.ceil((bytes * 1.2) / 1024);
-      if (typeof freeKb === 'number' && freeKb < requiredKb) {
+      const freeBytes = await FileSystem.getFreeDiskStorageAsync();
+      const requiredBytes = Math.ceil(bytes * 1.2);
+      if (typeof freeBytes === 'number' && freeBytes < requiredBytes) {
         this.setError(kind, 'Not enough free storage for the voice model download.');
         return false;
       }
