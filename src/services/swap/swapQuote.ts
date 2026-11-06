@@ -31,8 +31,6 @@ export interface SwapQuoteRequest {
   direction: SwapDirection;
   /** Cents for USDm, satoshis for BTC. */
   amountIn: number;
-  /** Spendable balance of the input asset in the same unit; null = unknown, not checked. */
-  availableIn: number | null;
   now: number;
 }
 
@@ -49,8 +47,7 @@ export interface SwapQuote {
 export type SwapQuoteRejection =
   | 'invalid-amount'
   | 'below-minimum'
-  | 'above-maximum'
-  | 'insufficient-balance';
+  | 'above-maximum';
 
 export type SwapQuoteResult =
   | { ok: true; quote: SwapQuote }
@@ -69,7 +66,7 @@ export function reverseDirection(direction: SwapDirection): SwapDirection {
 }
 
 export function quoteSwap(request: SwapQuoteRequest): SwapQuoteResult {
-  const { direction, amountIn, availableIn, now } = request;
+  const { direction, amountIn, now } = request;
   if (!Number.isSafeInteger(amountIn) || amountIn <= 0) {
     return { ok: false, reason: 'invalid-amount' };
   }
@@ -79,9 +76,6 @@ export function quoteSwap(request: SwapQuoteRequest): SwapQuoteResult {
   }
   if (amountIn > limits.max) {
     return { ok: false, reason: 'above-maximum' };
-  }
-  if (availableIn !== null && amountIn > availableIn) {
-    return { ok: false, reason: 'insufficient-balance' };
   }
 
   const feeIn = Math.ceil((amountIn * SIMULATED_FEE_BASIS_POINTS) / 10_000);
@@ -129,6 +123,13 @@ export function parseSwapAmount(text: string, asset: SwapAsset): number | null {
   const [whole, fraction = ''] = normalized.split('.');
   const cents = Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
   return Number.isSafeInteger(cents) ? cents : null;
+}
+
+/** The wallet reports USDm in base units with 8 decimals (as on Home). */
+const USDM_BASE_UNITS_PER_CENT = 10 ** 6;
+
+export function usdmCentsFromBaseUnits(baseUnits: number): number {
+  return Math.floor(baseUnits / USDM_BASE_UNITS_PER_CENT);
 }
 
 export function formatSwapAmount(amount: number, asset: SwapAsset): string {

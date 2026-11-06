@@ -7,15 +7,18 @@ import SuccessVoice from '../../assets/voice_success_dark.svg';
 import { metevoDesignTokens } from '../../design/designTokens';
 import { MetevoTheme, useThemedStyles } from '../../design/ThemeContext';
 import { useSwapFlow } from '../../hooks/useSwapFlow';
+import { useWalletSession } from '../../hooks/useWalletSession';
 import { SIMULATION_NOTICE, SwapFlowStart, describeQuote } from '../../services/swap/swapFlow';
 import { parseSwapStart } from '../../services/swap/swapPayload';
 import {
   SIMULATED_FEE_BASIS_POINTS,
   SIMULATED_SATS_PER_USDM,
+  SwapAsset,
   SwapQuote,
   formatSwapAmount,
   inputAsset,
   outputAsset,
+  usdmCentsFromBaseUnits,
 } from '../../services/swap/swapQuote';
 import { useAttentionSignal } from '../AttentionSignal';
 import { layout, scale } from '../styles';
@@ -41,6 +44,7 @@ export function SwapCard(props: IntentCardProps) {
 function SwapPanel({ start, onClearIntent }: { start: SwapFlowStart } & IntentCardProps) {
   const styles = useThemedStyles(makeStyles);
   const { flow, state, restart } = useSwapFlow(start);
+  const { wallet } = useWalletSession();
   useAttentionSignal(state.stage === 'failed');
 
   const notice = <Text style={styles.notice}>{SIMULATION_NOTICE}</Text>;
@@ -73,7 +77,12 @@ function SwapPanel({ start, onClearIntent }: { start: SwapFlowStart } & IntentCa
         </View>
         <View style={styles.actions}>
           <ActionButton label="Cancel" variant="outlined" onPress={() => onClearIntent?.()} grow />
-          <ActionButton label="Review" variant="primary" onPress={() => flow.review(null)} grow />
+          <ActionButton
+            label="Review"
+            variant="primary"
+            onPress={() => flow.review(availableBalance(wallet, from))}
+            grow
+          />
         </View>
       </View>
     );
@@ -85,6 +94,9 @@ function SwapPanel({ start, onClearIntent }: { start: SwapFlowStart } & IntentCa
         <Text style={styles.title}>Review the swap</Text>
         {notice}
         <QuoteRows quote={state.quote} />
+        {state.balanceWarning !== null && (
+          <Text style={styles.rejection}>{state.balanceWarning}</Text>
+        )}
         {state.note !== null && <Text style={styles.rejection}>{state.note}</Text>}
         <View style={styles.actions}>
           <ActionButton label="Back" variant="outlined" onPress={() => flow.edit()} grow />
@@ -136,6 +148,22 @@ function SwapPanel({ start, onClearIntent }: { start: SwapFlowStart } & IntentCa
       </View>
     </View>
   );
+}
+
+/** Spendable balance of the asset being swapped away, in the quote's unit; null when unknown. */
+function availableBalance(
+  wallet: ReturnType<typeof useWalletSession>['wallet'],
+  asset: SwapAsset,
+): number | null {
+  if (wallet === null) {
+    return null;
+  }
+  if (asset === 'BTC') {
+    return wallet.btcSpendableSat;
+  }
+  return wallet.balanceUsdmBaseUnits === null
+    ? null
+    : usdmCentsFromBaseUnits(wallet.balanceUsdmBaseUnits);
 }
 
 function QuoteRows({ quote }: { quote: SwapQuote }) {
