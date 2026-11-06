@@ -1,6 +1,13 @@
 import { intentActionFromInstruction, VoiceIntentAction } from '../utils/voiceIntentMapping';
 import { Parsed } from './intents';
-import { replyForBalances, replyForError, replyForIntent, replyForUnclear, sanitizeForSpeech } from './replies';
+import {
+  replyForBalances,
+  replyForError,
+  replyForIntent,
+  replyForShortPress,
+  replyForUnclear,
+  sanitizeForSpeech,
+} from './replies';
 
 /**
  * The one owner of a voice turn (design phase 7): a press-to-talk state
@@ -49,7 +56,14 @@ export interface OrchestratorPorts {
   speak: (text: string) => void;
   stopSpeaking: () => void;
   isRecording: () => boolean;
+  /** Clock for the hold length; Date.now when omitted. */
+  now?: () => number;
 }
+
+/** Presses shorter than this are taps: the clip is too short to decode
+ * (the audio decoder rejects it with "Invalid argument"), so the turn is
+ * dropped with a hint instead of reaching transcription. */
+export const MIN_HOLD_MS = 500;
 
 /** Phases a barge-in press may interrupt. Confirmations live on screen and
  * are never voice-cancelled. */
@@ -64,6 +78,8 @@ export class VoiceOrchestrator {
   private turnId = 0;
   private starting = false;
   private releaseQueued = false;
+  private pressedAt = 0;
+  private releasedAt = 0;
   private snapshot: VoiceSnapshot = {
     phase: 'idle',
     transcript: null,
@@ -101,6 +117,7 @@ export class VoiceOrchestrator {
     // A new turn replaces the last answer, so its progress is not hidden
     // behind a stale reply or error.
     this.setSnapshot({ reply: null, error: null, transcript: null });
+    this.pressedAt = this.now();
     this.toPhase('recording');
     try {
       await this.ports.startRecording();
@@ -122,6 +139,7 @@ export class VoiceOrchestrator {
 
   /** Hold released: run the turn with the captured clip. */
   release(): void {
+    this.releasedAt = this.now();
     if (this.starting) {
       this.releaseQueued = true;
       return;
@@ -143,6 +161,11 @@ export class VoiceOrchestrator {
   }
 
   private async finishTurn(): Promise<void> {
+    if (this.releasedAt - this.pressedAt < MIN_HOLD_MS) {
+      this.ports.cancelRecording();
+      this.settle(replyForShortPress());
+      return;
+    }
     const turn = this.turnId;
     const alive = () => this.turnId === turn;
 
@@ -228,6 +251,10 @@ export class VoiceOrchestrator {
         this.toPhase('idle');
       }
     }, estimatedMs);
+  }
+
+  private now(): number {
+    return (this.ports.now ?? Date.now)();
   }
 
   private toPhase(phase: VoicePhase): void {
