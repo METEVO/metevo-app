@@ -30,6 +30,13 @@ describe('payment stage messages', () => {
     expect(paymentMessage('unknown', context).spoken).toContain('Do not pay again');
   });
 
+  test('Check status is only mentioned when the payment can be checked', () => {
+    expect(paymentMessage('unknown', { ...context, canCheckStatus: true }).spoken).toContain(
+      'Tap Check status',
+    );
+    expect(paymentMessage('unknown', context).spoken).not.toContain('Check status');
+  });
+
   test('success repeats who received how much', () => {
     expect(paymentMessage('settled', context).spoken).toBe('Done. Bob received 20 dollars.');
   });

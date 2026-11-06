@@ -12,8 +12,9 @@ import { ReviewedPayment } from '../services/metevo/wallet-gateway';
 import { loadRelayClient } from '../services/metevo/relayClient';
 import { PaymentVoiceIntent } from '../services/metevo/paymentIntent';
 import { SubmittedPayment } from '../services/metevo/wallet-gateway';
+import { paymentMessage } from '../services/metevo/paymentMessages';
 import { playTacton } from '../services/metevo/tacton';
-import { speakAnnouncement } from '../services/spokenInteraction';
+import { announceForAccessibility, speakEnglish } from '../utils/speaker';
 import { useTransferWatcher } from './useTransferWatcher';
 import { useWalletSession } from './useWalletSession';
 
@@ -74,7 +75,7 @@ async function resolveRecipientPubkey(recipient: string): Promise<string | null>
 }
 
 export function usePaymentFlow() {
-  const { submitPayment, wallet } = useWalletSession();
+  const { submitPayment, checkPayment, wallet } = useWalletSession();
   const watcher = useTransferWatcher();
   const [stage, setStage] = useState<PaymentFlowStage>('idle');
   const [proposal, setProposal] = useState<PaymentFlowProposal | null>(null);
@@ -82,6 +83,10 @@ export function usePaymentFlow() {
   const relayRef = useRef<InvoiceRelay | null>(null);
   const mountedRef = useRef(true);
   const stageRef = useRef<PaymentFlowStage>('idle');
+  const contextRef = useRef({ recipient: '', amount: 0, canCheckStatus: false });
+  /** The submitted payment's hash: "Check status" asks about this payment
+   * only, it never sends a new one. */
+  const paymentHashRef = useRef<string | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -95,7 +100,24 @@ export function usePaymentFlow() {
     if (mountedRef.current) {
       setStage(next);
     }
+    const spoken = paymentMessage(next, contextRef.current).spoken;
+    if (spoken !== null) {
+      speakEnglish(spoken);
+      announceForAccessibility(spoken);
+    }
   }, []);
+
+  /** The flow cannot go on: shown and read out loud, nothing was paid. */
+  const failWith = useCallback(
+    (note: string) => {
+      enterStage('error');
+      setNote(note);
+      playTacton('error');
+      speakEnglish(note);
+      announceForAccessibility(note);
+    },
+    [enterStage],
+  );
 
   const ensureRelay = useCallback(async (): Promise<InvoiceRelay> => {
     if (relayRef.current !== null) {
@@ -116,16 +138,20 @@ export function usePaymentFlow() {
 
   const start = useCallback(
     async (intent: PaymentVoiceIntent) => {
+      contextRef.current = {
+        recipient: intent.recipient,
+        amount: intent.amount,
+        canCheckStatus: false,
+      };
+      paymentHashRef.current = null;
       enterStage('requesting');
       setNote(null);
       try {
         const recipientPubkey = await resolveRecipientPubkey(intent.recipient);
         if (recipientPubkey === null) {
-          enterStage('error');
-          setNote(
+          failWith(
             `No contact named ${intent.recipient}. Add their node pubkey in Contacts first.`,
           );
-          playTacton('error');
           return;
         }
         const relay = await ensureRelay();
@@ -155,37 +181,28 @@ export function usePaymentFlow() {
               },
             });
             enterStage('review');
-            speakAnnouncement('Invoice ready. Review and confirm.');
             return;
           }
           if (answer.status === 'declined') {
-            enterStage('error');
-            setNote(`${intent.recipient} declined the request.`);
-            playTacton('error');
+            failWith(`${intent.recipient} declined the request.`);
             return;
           }
           if (answer.status === 'expired') {
-            enterStage('error');
-            setNote('The request expired before the invoice arrived.');
-            playTacton('error');
+            failWith('The request expired before the invoice arrived.');
             return;
           }
           await sleep(RELAY_POLL_INTERVAL_MS);
         }
-        enterStage('error');
-        setNote('The recipient did not answer in time. Try again.');
-        playTacton('error');
+        failWith('The recipient did not answer in time. Try again.');
       } catch (cause) {
         console.log(
           '[metevo] invoice relay failed:',
           cause instanceof Error ? cause.message : 'unknown',
         );
-        enterStage('error');
-        setNote('The invoice request failed. Try again.');
-        playTacton('error');
+        failWith('The invoice request failed. Try again.');
       }
     },
-    [ensureRelay, enterStage, wallet?.nodePubkey],
+    [ensureRelay, enterStage, failWith, wallet?.nodePubkey],
   );
 
   const confirm = useCallback(async () => {
@@ -224,9 +241,7 @@ export function usePaymentFlow() {
       );
       if (cause instanceof PaymentValidationError) {
         // The node refused the invoice before sending anything.
-        enterStage('error');
-        setNote('The invoice does not match what you reviewed. Nothing was paid.');
-        playTacton('error');
+        failWith('The invoice does not match what you reviewed. Nothing was paid.');
         return;
       }
       // Submission may or may not have reached the node; the honest stage
@@ -242,6 +257,8 @@ export function usePaymentFlow() {
       enterStage('unknown');
       return;
     }
+    paymentHashRef.current = submitted.paymentHash;
+    contextRef.current = { ...contextRef.current, canCheckStatus: true };
     enterStage('watching');
     const result = await watcher.watchPayment(submitted.paymentHash);
     if (result.status === 'settled') {
@@ -251,7 +268,26 @@ export function usePaymentFlow() {
     } else {
       enterStage('unknown');
     }
-  }, [enterStage, proposal, submitPayment, watcher]);
+  }, [enterStage, failWith, proposal, submitPayment, watcher]);
+
+  /** Asks the node about the already-submitted payment; never resends. */
+  const checkStatus = useCallback(async () => {
+    const hash = paymentHashRef.current;
+    if (stageRef.current !== 'unknown' || hash === null) {
+      return;
+    }
+    setNote(null);
+    try {
+      const status = await checkPayment(hash);
+      if (status === 'settled' || status === 'failed') {
+        enterStage(status);
+        return;
+      }
+    } catch {
+      // The node is unreachable: the outcome is still unknown.
+    }
+    setNote('Still not confirmed. Do not pay again. Check again in a minute.');
+  }, [checkPayment, enterStage]);
 
   const cancel = useCallback(() => {
     if (stageRef.current === 'watching' || stageRef.current === 'submitting') {
@@ -265,7 +301,17 @@ export function usePaymentFlow() {
   }, [enterStage]);
 
   return useMemo(
-    () => ({ stage, proposal, note, watcher, start, confirm, cancel }),
-    [stage, proposal, note, watcher, start, confirm, cancel],
+    () => ({
+      stage,
+      proposal,
+      note,
+      watcher,
+      start,
+      confirm,
+      cancel,
+      checkStatus,
+      canCheckStatus: stage === 'unknown' && paymentHashRef.current !== null,
+    }),
+    [stage, proposal, note, watcher, start, confirm, cancel, checkStatus],
   );
 }

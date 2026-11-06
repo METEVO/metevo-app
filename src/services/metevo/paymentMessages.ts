@@ -4,6 +4,8 @@ export interface PaymentMessageContext {
   recipient: string;
   /** Whole USDm. */
   amount: number;
+  /** A payment hash is known, so "Check status" can ask about it. */
+  canCheckStatus?: boolean;
 }
 
 export interface PaymentMessage {
@@ -20,7 +22,7 @@ export interface PaymentMessage {
  */
 export function paymentMessage(
   stage: PaymentFlowStage,
-  { recipient, amount }: PaymentMessageContext,
+  { recipient, amount, canCheckStatus = false }: PaymentMessageContext,
 ): PaymentMessage {
   const money = `${amount} dollars`;
   switch (stage) {
@@ -59,7 +61,9 @@ export function paymentMessage(
     case 'unknown':
       return {
         title: 'We are not sure it was sent',
-        spoken: 'We are not sure the payment was sent. Do not pay again. Tap Check status.',
+        spoken: canCheckStatus
+          ? 'We are not sure the payment was sent. Do not pay again. Tap Check status.'
+          : 'We are not sure the payment was sent. Do not pay again before checking your history.',
       };
     case 'error':
       return { title: 'The payment could not start', spoken: null };
