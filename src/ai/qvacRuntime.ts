@@ -347,7 +347,7 @@ class QvacRuntime {
     this.publish();
     // The cause chain carries the host's own failure (e.g. why an addon
     // refused to load); walk it so the diagnostics are not lost.
-    const chain: string[] = [];
+    const chain: string[] = cause instanceof Error ? [] : [message];
     let current: unknown = cause;
     for (let depth = 0; current instanceof Error && depth < 6; depth += 1) {
       chain.push(current.message);
