@@ -27,6 +27,7 @@ const IDLE_ACTIONS: { id: IntentId; label: string }[] = [
   { id: 'send-usdm', label: 'Send money' },
   { id: 'create-usdm-invoice', label: 'Receive money' },
   { id: 'contacts', label: 'Contacts' },
+  { id: 'swap', label: 'Swap' },
 ];
 
 export interface IntentCardProps {
@@ -53,7 +54,7 @@ const CARDS: Record<IntentId, React.ComponentType<IntentCardProps>> = {
   swap: SwapCard,
 };
 
-/** The design's HOME-01 panel: title plus the three quick actions. */
+/** The design's HOME-01 panel: title plus the quick actions. */
 function IdleMenu({ onSelectIntent }: IntentCardProps) {
   const styles = useThemedStyles(makeStyles);
 
