@@ -293,6 +293,9 @@ class QvacRuntime {
     this.statusMessage = `Downloading the ${kind} model 0%…`;
     this.publish();
     try {
+      // The downloader writes into an existing folder only; on a fresh
+      // install models/<folder> has never been created.
+      await FileSystem.makeDirectoryAsync(baseDir, { intermediates: true });
       let lastReportedPercent = -1;
       const downloader = FileSystem.createDownloadResumable(
         httpUrl,
