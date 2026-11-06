@@ -99,7 +99,14 @@ export function parseWithRules(transcript: string): WalletInstruction | null {
     return {
       ...emptyInstruction('SWAP'),
       amount: satAmount ?? usdAmount,
-      currency: satAmount !== null ? 'sats' : usdAmount !== null ? 'USDm' : null,
+      currency:
+        satAmount === null
+          ? usdAmount !== null
+            ? 'USDm'
+            : null
+          : /\d\s*(btc|bitcoin)\b/.test(text)
+            ? 'BTC'
+            : 'sats',
     };
   }
   if (

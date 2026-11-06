@@ -162,6 +162,11 @@ describe('tier 0 rules (intents)', () => {
       amount: 5000,
       currency: 'sats',
     });
+    expect(parseWithRules('swap 0.001 btc to dollars')).toMatchObject({
+      intent: 'SWAP',
+      amount: 0.001,
+      currency: 'BTC',
+    });
     expect(parseWithRules('exchange my bitcoin')).toMatchObject({
       intent: 'SWAP',
       amount: null,

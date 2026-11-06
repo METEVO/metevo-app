@@ -92,7 +92,7 @@ describe('wallet instruction -> intent card mapping', () => {
       'Swap 12.5 dollars to bitcoin',
     );
     expect(action!.cardId).toBe('swap');
-    expect(action!.payload).toEqual({ direction: 'USDM_TO_BTC', draft: '12.5' });
+    expect(action!.payload).toEqual({ direction: 'USDM_TO_BTC', draft: '12.5', btcUnit: 'SATS' });
     expect(action!.announcement).toContain('No funds will be exchanged');
   });
 
@@ -101,21 +101,30 @@ describe('wallet instruction -> intent card mapping', () => {
       instruction({ intent: 'SWAP', amount: 5000, currency: 'sats' }),
       'Swap 5000 sats to dollars',
     );
-    expect(action!.payload).toEqual({ direction: 'BTC_TO_USDM', draft: '5000' });
+    expect(action!.payload).toEqual({ direction: 'BTC_TO_USDM', draft: '5000', btcUnit: 'SATS' });
+  });
+
+  test('a BTC swap keeps the decimals and opens in the BTC unit', () => {
+    const action = intentActionFromInstruction(
+      instruction({ intent: 'SWAP', amount: 0.001, currency: 'BTC' }),
+      'Swap 0.001 bitcoin to dollars',
+    );
+    expect(action!.payload).toEqual({ direction: 'BTC_TO_USDM', draft: '0.001', btcUnit: 'BTC' });
   });
 
   test('a swap amount the card cannot hold exactly is left empty', () => {
     expect(
-      intentActionFromInstruction(instruction({ intent: 'SWAP', amount: 0.001, currency: 'BTC' }), '')!
+      intentActionFromInstruction(instruction({ intent: 'SWAP', amount: 10.5, currency: 'sats' }), '')!
         .payload,
-    ).toEqual({ direction: 'BTC_TO_USDM', draft: '' });
+    ).toEqual({ direction: 'BTC_TO_USDM', draft: '', btcUnit: 'SATS' });
     expect(
       intentActionFromInstruction(instruction({ intent: 'SWAP', amount: 1.005, currency: 'USD' }), '')!
         .payload,
-    ).toEqual({ direction: 'USDM_TO_BTC', draft: '' });
+    ).toEqual({ direction: 'USDM_TO_BTC', draft: '', btcUnit: 'SATS' });
     expect(intentActionFromInstruction(instruction({ intent: 'SWAP' }), '')!.payload).toEqual({
       direction: 'USDM_TO_BTC',
       draft: '',
+      btcUnit: 'SATS',
     });
   });
 });
