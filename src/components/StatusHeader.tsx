@@ -1,6 +1,8 @@
 import React from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
 
+import AudioOffDark from '../assets/audio_off_dark.svg';
+import AudioOffLight from '../assets/audio_off_light.svg';
 import AudioOnDark from '../assets/audio_on_dark.svg';
 import AudioOnLight from '../assets/audio_on_light.svg';
 import LogoMarkDark from '../assets/logo_mark_dark.svg';
@@ -11,6 +13,7 @@ import {
   useThemedStyles,
 } from '../design/ThemeContext';
 import { metevoDesignTokens } from '../design/designTokens';
+import { useAudioPreference } from '../hooks/useAudioPreference';
 import { scale } from './styles';
 import { ProfileLink } from './ProfileLink';
 
@@ -34,15 +37,18 @@ interface StatusHeaderProps {
  * Fixed top shell region of the design: the profile chip and the audio
  * state chip, then the wallet connection state with the DEMO marker.
  *
- * The audio toggle keeps its foundation-phase placeholder press behavior;
- * the design handoff assigns audio state ownership to the existing audio
- * pipeline and forbids silently overriding the user's audio setting.
+ * The audio chip is the user's own spoken-output switch: it is only ever
+ * changed by a tap here, never by the app.
  */
 export function StatusHeader({ connection }: StatusHeaderProps) {
   const theme = useTheme();
   const styles = useThemedStyles(makeStyles);
 
-  const AudioOnIcon = theme.mode === 'dark' ? AudioOnDark : AudioOnLight;
+  const audio = useAudioPreference();
+  const audioLabel = audio.enabled ? 'Audio on' : 'Audio off';
+  const AudioIcon = audio.enabled
+    ? theme.mode === 'dark' ? AudioOnDark : AudioOnLight
+    : theme.mode === 'dark' ? AudioOffDark : AudioOffLight;
   const LogoMark = theme.mode === 'dark' ? LogoMarkDark : LogoMarkLight;
 
   return (
@@ -56,16 +62,16 @@ export function StatusHeader({ connection }: StatusHeaderProps) {
         />
         <TouchableOpacity
           style={styles.audioChip}
-          onPress={() => undefined}
-          accessibilityRole="button"
-          accessibilityLabel="Audio on"
-          accessibilityState={{ checked: true }}
+          onPress={audio.toggle}
+          accessibilityRole="switch"
+          accessibilityLabel="Audio"
+          accessibilityState={{ checked: audio.enabled }}
         >
-          <AudioOnIcon
+          <AudioIcon
             width={scale(AUDIO_ICON_REFERENCE.width)}
             height={scale(AUDIO_ICON_REFERENCE.height)}
           />
-          <Text style={styles.audioLabel}>Audio on</Text>
+          <Text style={styles.audioLabel}>{audioLabel}</Text>
         </TouchableOpacity>
       </View>
       <View style={styles.row}>

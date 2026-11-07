@@ -1,5 +1,7 @@
 import { AccessibilityInfo } from 'react-native';
 
+import { isAudioEnabled } from '../services/audioPreference';
+
 /**
  * Spoken replies for the home voice agent (port of the reference
  * `nativeSpeaker`): the device's English system voice through expo-speech.
@@ -13,7 +15,7 @@ let speech: typeof import('expo-speech') | undefined;
 /** Reads one short English sentence out loud. Safe to call fire-and-forget. */
 export function speakEnglish(text: string): void {
   const trimmed = text.trim();
-  if (trimmed.length === 0) {
+  if (trimmed.length === 0 || !isAudioEnabled()) {
     return;
   }
   const current = ++generation;
