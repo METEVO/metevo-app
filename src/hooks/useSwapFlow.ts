@@ -4,9 +4,15 @@ import { SwapFlow, SwapFlowStart, SwapFlowState } from '../services/swap/swapFlo
 import { createSimulatedSwapService } from '../services/swap/swapService';
 import { announceForAccessibility, speakEnglish } from '../utils/speaker';
 
-async function authorizeWithBiometrics(reason: string): Promise<void> {
-  const { authenticateToAccessSecrets } = await import('../services/metevo/secure-store');
-  await authenticateToAccessSecrets(reason);
+/** A device without any screen lock has no prompt to show: the tap on
+ * "Confirm" is the confirmation there. */
+async function authorizeWithDeviceLock(reason: string): Promise<void> {
+  const { authenticateToAccessSecrets, hasDeviceLock } = await import(
+    '../services/metevo/secure-store'
+  );
+  if (await hasDeviceLock().catch(() => true)) {
+    await authenticateToAccessSecrets(reason);
+  }
 }
 
 function announce(text: string): void {
@@ -18,7 +24,7 @@ function createFlow(start: SwapFlowStart): SwapFlow {
   return new SwapFlow(
     {
       service: createSimulatedSwapService(),
-      authorize: authorizeWithBiometrics,
+      authorize: authorizeWithDeviceLock,
       announce,
       now: Date.now,
     },
