@@ -226,7 +226,7 @@ function HomeShell({ session }: { session: WalletSession }) {
         )}
       </View>
 
-      <HistorySpendingLinks />
+      <HistorySpendingLinks onOpen={(next) => simulateIntent(next)} />
     </View>
   );
 }
