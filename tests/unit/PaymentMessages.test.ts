@@ -1,4 +1,9 @@
-import { MAX_TAP_AMOUNT, paymentMessage, parseWholeUsdm } from '../../src/services/metevo/paymentMessages';
+import {
+  MAX_TAP_AMOUNT,
+  NOT_AUTHORIZED_NOTE,
+  paymentMessage,
+  parseWholeUsdm,
+} from '../../src/services/metevo/paymentMessages';
 import type { PaymentFlowStage } from '../../src/hooks/usePaymentFlow';
 
 const context = { recipient: 'Bob', amount: 20 };
@@ -54,4 +59,10 @@ describe('typed whole USDm amounts', () => {
       expect(parseWholeUsdm(text)).toBeNull();
     },
   );
+});
+
+describe('confirmation notes', () => {
+  test('a refused confirmation says nothing was sent', () => {
+    expect(NOT_AUTHORIZED_NOTE).toContain('Nothing was sent');
+  });
 });

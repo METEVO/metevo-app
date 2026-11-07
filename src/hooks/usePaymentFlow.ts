@@ -12,7 +12,7 @@ import { ReviewedPayment } from '../services/metevo/wallet-gateway';
 import { loadRelayClient } from '../services/metevo/relayClient';
 import { PaymentVoiceIntent } from '../services/metevo/paymentIntent';
 import { SubmittedPayment } from '../services/metevo/wallet-gateway';
-import { paymentMessage } from '../services/metevo/paymentMessages';
+import { NOT_AUTHORIZED_NOTE, paymentMessage } from '../services/metevo/paymentMessages';
 import { playTacton } from '../services/metevo/tacton';
 import { announceForAccessibility, speakEnglish } from '../utils/speaker';
 import { useTransferWatcher } from './useTransferWatcher';
@@ -122,6 +122,18 @@ export function usePaymentFlow() {
     [enterStage],
   );
 
+  /** Back to review without repeating its spoken line: only the reason is read. */
+  const backToReview = useCallback((note: string) => {
+    stageRef.current = 'review';
+    if (mountedRef.current) {
+      setStage('review');
+      setNote(note);
+    }
+    playTacton('error');
+    speakEnglish(note);
+    announceForAccessibility(note);
+  }, []);
+
   const ensureRelay = useCallback(async (): Promise<InvoiceRelay> => {
     if (relayRef.current !== null) {
       return relayRef.current;
@@ -219,23 +231,27 @@ export function usePaymentFlow() {
     if (proposal === null || stageRef.current !== 'review') {
       return;
     }
-    enterStage('authorizing');
+    const { authenticateToAccessSecrets, hasDeviceLock } = await import(
+      '../services/metevo/secure-store'
+    );
     setNote(null);
-    try {
-      // Design payment.confirm: the biometric prompt names this exact
-      // payment; DEVICE_CREDENTIAL is the enrolled fallback.
-      const { authenticateToAccessSecrets } = await import(
-        '../services/metevo/secure-store'
-      );
-      await authenticateToAccessSecrets(
-        `Confirm sending ${proposal.amount} ${proposal.asset} to ${proposal.recipient}`,
-      );
-    } catch {
-      // Cancelled or failed authorization: nothing was submitted, review
-      // stays reachable.
-      enterStage('review');
-      setNote('Not authorized. Nothing was submitted.');
-      return;
+    // A device without any screen lock cannot show the prompt: the tap on
+    // "Confirm payment" is the user's confirmation there.
+    const deviceLocked = await hasDeviceLock().catch(() => true);
+    if (deviceLocked) {
+      enterStage('authorizing');
+      try {
+        // Design payment.confirm: the biometric prompt names this exact
+        // payment; DEVICE_CREDENTIAL is the enrolled fallback.
+        await authenticateToAccessSecrets(
+          `Confirm sending ${proposal.amount} ${proposal.asset} to ${proposal.recipient}`,
+        );
+      } catch {
+        // Cancelled or failed authorization: nothing was submitted, review
+        // stays reachable.
+        backToReview(NOT_AUTHORIZED_NOTE);
+        return;
+      }
     }
     enterStage('submitting');
     let submitted: SubmittedPayment;
@@ -278,7 +294,7 @@ export function usePaymentFlow() {
     } else {
       enterStage('unknown');
     }
-  }, [enterStage, failWith, proposal, submitPayment, watcher]);
+  }, [backToReview, enterStage, failWith, proposal, submitPayment, watcher]);
 
   /** Asks the node about the already-submitted payment; never resends. */
   const checkStatus = useCallback(async () => {

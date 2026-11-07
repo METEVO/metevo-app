@@ -72,6 +72,8 @@ export function paymentMessage(
   }
 }
 
+export const NOT_AUTHORIZED_NOTE = 'Not confirmed. Nothing was sent.';
+
 /** Upper bound for a typed amount, same as the spoken flow. */
 export const MAX_TAP_AMOUNT = 1_000_000;
 

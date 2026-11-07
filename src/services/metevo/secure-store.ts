@@ -55,6 +55,12 @@ export async function deviceSupportsBiometrics(): Promise<boolean> {
   return hasHardware && enrolled;
 }
 
+/** False when the device has no PIN, pattern, password or biometric set. */
+export async function hasDeviceLock(): Promise<boolean> {
+  const level = await LocalAuthentication.getEnrolledLevelAsync();
+  return level !== LocalAuthentication.SecurityLevel.NONE;
+}
+
 export async function authenticateToAccessSecrets(reason: string): Promise<void> {
   const result = await LocalAuthentication.authenticateAsync({
     promptMessage: reason,
