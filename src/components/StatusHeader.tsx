@@ -31,6 +31,7 @@ const CONNECTION_LABELS: Record<WalletConnectionState, string> = {
 
 interface StatusHeaderProps {
   connection: WalletConnectionState;
+  onOpenProfile: () => void;
 }
 
 /**
@@ -40,7 +41,7 @@ interface StatusHeaderProps {
  * The audio chip is the user's own spoken-output switch: it is only ever
  * changed by a tap here, never by the app.
  */
-export function StatusHeader({ connection }: StatusHeaderProps) {
+export function StatusHeader({ connection, onOpenProfile }: StatusHeaderProps) {
   const theme = useTheme();
   const styles = useThemedStyles(makeStyles);
 
@@ -54,7 +55,7 @@ export function StatusHeader({ connection }: StatusHeaderProps) {
   return (
     <View style={styles.stack}>
       <View style={styles.row}>
-        <ProfileLink />
+        <ProfileLink onPress={onOpenProfile} />
         <LogoMark
           width={scale(LOGO_REFERENCE.width)}
           height={scale(LOGO_REFERENCE.height)}
