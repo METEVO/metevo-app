@@ -180,8 +180,17 @@ function RelaySendPaymentCard({
   onPayInPerson,
 }: { intent: PaymentVoiceIntent } & IntentCardProps & { onPayInPerson?: () => void }) {
   const styles = useThemedStyles(makeStyles);
-  const { stage, proposal, note, start, confirm, cancel, checkStatus, canCheckStatus } =
-    usePaymentFlow();
+  const {
+    stage,
+    proposal,
+    note,
+    balanceWarning,
+    start,
+    confirm,
+    cancel,
+    checkStatus,
+    canCheckStatus,
+  } = usePaymentFlow();
   useAttentionSignal(stage === 'failed' || stage === 'unknown' || stage === 'error');
   const message = paymentMessage(stage, {
     recipient: intent.recipient,
@@ -308,6 +317,7 @@ function RelaySendPaymentCard({
           <Text style={styles.caption}>Invoice</Text>
           <Text style={styles.invoiceText}>{shortenInvoice(proposal.invoice)}</Text>
         </View>
+        {balanceWarning !== null && <Text style={styles.rejection}>{balanceWarning}</Text>}
         {note !== null && <Text style={styles.rejection}>{note}</Text>}
         <View style={styles.actions}>
           <ActionButton label="Cancel" variant="outlined" onPress={finish} grow />

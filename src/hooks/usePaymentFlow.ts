@@ -12,7 +12,12 @@ import { ReviewedPayment } from '../services/metevo/wallet-gateway';
 import { loadRelayClient } from '../services/metevo/relayClient';
 import { PaymentVoiceIntent } from '../services/metevo/paymentIntent';
 import { SubmittedPayment } from '../services/metevo/wallet-gateway';
-import { NOT_AUTHORIZED_NOTE, paymentMessage } from '../services/metevo/paymentMessages';
+import {
+  NOT_AUTHORIZED_NOTE,
+  lowBalanceWarning,
+  paymentMessage,
+  type PaymentMessageContext,
+} from '../services/metevo/paymentMessages';
 import { playTacton } from '../services/metevo/tacton';
 import { announceForAccessibility, speakEnglish } from '../utils/speaker';
 import { useTransferWatcher } from './useTransferWatcher';
@@ -83,7 +88,12 @@ export function usePaymentFlow() {
   const relayRef = useRef<InvoiceRelay | null>(null);
   const mountedRef = useRef(true);
   const stageRef = useRef<PaymentFlowStage>('idle');
-  const contextRef = useRef({ recipient: '', amount: 0, canCheckStatus: false });
+  const [balanceWarning, setBalanceWarning] = useState<string | null>(null);
+  const contextRef = useRef<PaymentMessageContext>({
+    recipient: '',
+    amount: 0,
+    canCheckStatus: false,
+  });
   /** The submitted payment's hash: "Check status" asks about this payment
    * only, it never sends a new one. */
   const paymentHashRef = useRef<string | null>(null);
@@ -158,6 +168,7 @@ export function usePaymentFlow() {
         amount: intent.amount,
         canCheckStatus: false,
       };
+      setBalanceWarning(null);
       paymentHashRef.current = null;
       const run = ++requestRunRef.current;
       const abandoned = () => run !== requestRunRef.current || !mountedRef.current;
@@ -200,6 +211,12 @@ export function usePaymentFlow() {
                 assetAmountBaseUnits: intent.amount * USDM_BASE_UNITS_PER_USD,
               },
             });
+            const warning = lowBalanceWarning(
+              intent.amount,
+              wallet?.balanceUsdmBaseUnits ?? null,
+            );
+            contextRef.current = { ...contextRef.current, balanceWarning: warning };
+            setBalanceWarning(warning);
             enterStage('review');
             return;
           }
@@ -224,7 +241,7 @@ export function usePaymentFlow() {
         failWith('The invoice request failed. Try again.');
       }
     },
-    [ensureRelay, enterStage, failWith, wallet?.nodePubkey],
+    [ensureRelay, enterStage, failWith, wallet?.nodePubkey, wallet?.balanceUsdmBaseUnits],
   );
 
   const confirm = useCallback(async () => {
@@ -332,6 +349,7 @@ export function usePaymentFlow() {
       stage,
       proposal,
       note,
+      balanceWarning,
       watcher,
       start,
       confirm,
@@ -339,6 +357,6 @@ export function usePaymentFlow() {
       checkStatus,
       canCheckStatus: stage === 'unknown' && paymentHashRef.current !== null,
     }),
-    [stage, proposal, note, watcher, start, confirm, cancel, checkStatus],
+    [stage, proposal, note, balanceWarning, watcher, start, confirm, cancel, checkStatus],
   );
 }

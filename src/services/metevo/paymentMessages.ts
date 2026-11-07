@@ -6,6 +6,8 @@ export interface PaymentMessageContext {
   amount: number;
   /** A payment hash is known, so "Check status" can ask about it. */
   canCheckStatus?: boolean;
+  /** Read after the review line when the balance looks too low. */
+  balanceWarning?: string | null;
 }
 
 export interface PaymentMessage {
@@ -22,7 +24,7 @@ export interface PaymentMessage {
  */
 export function paymentMessage(
   stage: PaymentFlowStage,
-  { recipient, amount, canCheckStatus = false }: PaymentMessageContext,
+  { recipient, amount, canCheckStatus = false, balanceWarning = null }: PaymentMessageContext,
 ): PaymentMessage {
   const money = `${amount} dollars`;
   switch (stage) {
@@ -34,7 +36,13 @@ export function paymentMessage(
     case 'review':
       return {
         title: `Send ${amount} USDm to ${recipient}?`,
-        spoken: `${recipient} accepted. Check the amount: ${money}. Then confirm.`,
+        spoken: [
+          `${recipient} accepted. Check the amount: ${money}.`,
+          balanceWarning,
+          'Then confirm.',
+        ]
+          .filter(Boolean)
+          .join(' '),
       };
     case 'authorizing':
       return {
@@ -70,6 +78,26 @@ export function paymentMessage(
     case 'idle':
       return { title: '', spoken: null };
   }
+}
+
+const USDM_BASE_UNITS_PER_CENT = 10 ** 6;
+
+/**
+ * Warns without blocking: the shown balance can lag behind the node, so a
+ * payment above it is still allowed and the node has the final word.
+ */
+export function lowBalanceWarning(
+  amount: number,
+  balanceUsdmBaseUnits: number | null,
+): string | null {
+  if (balanceUsdmBaseUnits === null) {
+    return null;
+  }
+  const balanceCents = Math.floor(balanceUsdmBaseUnits / USDM_BASE_UNITS_PER_CENT);
+  if (amount * 100 <= balanceCents) {
+    return null;
+  }
+  return `Your balance is ${(balanceCents / 100).toFixed(2)} USDm, less than this payment. It may fail.`;
 }
 
 export const NOT_AUTHORIZED_NOTE = 'Not confirmed. Nothing was sent.';

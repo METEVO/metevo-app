@@ -1,6 +1,7 @@
 import {
   MAX_TAP_AMOUNT,
   NOT_AUTHORIZED_NOTE,
+  lowBalanceWarning,
   paymentMessage,
   parseWholeUsdm,
 } from '../../src/services/metevo/paymentMessages';
@@ -64,5 +65,31 @@ describe('typed whole USDm amounts', () => {
 describe('confirmation notes', () => {
   test('a refused confirmation says nothing was sent', () => {
     expect(NOT_AUTHORIZED_NOTE).toContain('Nothing was sent');
+  });
+});
+
+describe('low balance warning', () => {
+  const USDM = 10 ** 8;
+
+  test('warns when the payment is above the balance', () => {
+    expect(lowBalanceWarning(300, 0)).toBe(
+      'Your balance is 0.00 USDm, less than this payment. It may fail.',
+    );
+    expect(lowBalanceWarning(20, 12.5 * USDM)).toContain('12.50 USDm');
+  });
+
+  test('stays quiet when the balance covers it or is unknown', () => {
+    expect(lowBalanceWarning(20, 20 * USDM)).toBeNull();
+    expect(lowBalanceWarning(20, null)).toBeNull();
+  });
+
+  test('the review line reads the warning before asking to confirm', () => {
+    const balanceWarning = lowBalanceWarning(20, 0);
+    expect(paymentMessage('review', { ...context, balanceWarning }).spoken).toBe(
+      `Bob accepted. Check the amount: 20 dollars. ${balanceWarning} Then confirm.`,
+    );
+    expect(paymentMessage('review', context).spoken).toBe(
+      'Bob accepted. Check the amount: 20 dollars. Then confirm.',
+    );
   });
 });
