@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef } from 'react';
-import { Text, View } from 'react-native';
+import { ActivityIndicator, Text, View } from 'react-native';
 
 import { BalancesCard } from '../components/BalancesCard';
 import { AttentionSignalProvider, useAttentionActive } from '../components/AttentionSignal';
@@ -211,18 +211,26 @@ function HomeShell({ session }: { session: WalletSession }) {
       <View style={styles.voiceRegion}>
         <RecordingControls
           recording={voice.recording}
-          state={attention ? 'attention' : 'idle'}
+          state={attention ? 'attention' : voice.busy ? 'processing' : 'idle'}
           onPressIn={voice.onPressIn}
           onPressOut={voice.onPressOut}
           lastClipUri={voice.lastClipUri}
         />
         {statusMessage !== null && (
-          <Text
-            accessibilityLiveRegion="polite"
-            style={[styles.voiceMessage, statusIsError && styles.voiceError]}
-          >
-            {statusMessage}
-          </Text>
+          <View style={styles.voiceStatusRow}>
+            {voice.busy && (
+              <ActivityIndicator
+                color={theme.voiceStates.idle.ink}
+                accessibilityLabel="Working"
+              />
+            )}
+            <Text
+              accessibilityLiveRegion="polite"
+              style={[styles.voiceMessage, statusIsError && styles.voiceError]}
+            >
+              {statusMessage}
+            </Text>
+          </View>
         )}
       </View>
 
@@ -289,6 +297,11 @@ const makeStyles = (theme: MetevoTheme) => ({
   voiceRegion: {
     gap: layout.rowGap,
     alignItems: 'center' as const,
+  },
+  voiceStatusRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: layout.rowGap,
   },
   voiceMessage: {
     ...theme.typography.body,
