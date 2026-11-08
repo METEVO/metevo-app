@@ -1,6 +1,6 @@
 const { chooseMetroPort, isProjectMetro } = require('../../scripts/lib/phone-test-metro.cjs');
 
-const ROOT = '/home/edi/Metevo app';
+const ROOT = '/projects/metevo-app';
 const running = (root?: string) => ({ available: false, status: { body: 'packager-status:running', root } });
 const free = { available: true, status: null };
 
