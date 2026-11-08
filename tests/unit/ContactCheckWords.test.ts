@@ -12,21 +12,17 @@ describe('contact check words', () => {
     words.forEach((word) => expect(word).toMatch(/^[a-z]+$/));
   });
 
-  test('differ when either end of the key differs', () => {
-    const base = `02${'00'.repeat(32)}`;
-    const startChanged = `02ff${'00'.repeat(31)}`;
-    const endChanged = `02${'00'.repeat(31)}ff`;
-    expect(contactCheckWords(startChanged)).not.toEqual(contactCheckWords(base));
-    expect(contactCheckWords(endChanged)).not.toEqual(contactCheckWords(base));
+  test('change when any byte of the key changes, not only the ends', () => {
+    const base = contactCheckWords(`02${'00'.repeat(32)}`);
+    const changedAt = (position: number) =>
+      contactCheckWords(`02${'00'.repeat(position)}ff${'00'.repeat(31 - position)}`);
+    [0, 1, 15, 30, 31].forEach((position) => {
+      expect(changedAt(position)).not.toEqual(base);
+    });
   });
 
-  test('cover all 256 byte values with distinct words', () => {
-    const seen = new Set<string>();
-    for (let byte = 0; byte < 256; byte += 1) {
-      const hex = byte.toString(16).padStart(2, '0');
-      seen.add(contactCheckWords(`02${hex}${'00'.repeat(31)}`)[0]);
-    }
-    expect(seen.size).toBe(256);
+  test('match the fixed vector computed outside the app', () => {
+    expect(contactCheckWords(NODE)).toEqual(['swan', 'goat', 'lamp', 'ghost', 'fork', 'beach']);
   });
 
   test('refuse an invalid node', () => {

@@ -5,7 +5,7 @@ import { useTheme } from '../../design/ThemeContext';
 import { contactCheckWords } from '../../services/metevo/contactCheckWords';
 import { isValidNodePubkey } from '../../services/metevo/contacts';
 
-/** The four words both people compare aloud before trusting a contact. */
+/** The six words both people compare face-to-face before trusting a contact. */
 export function ContactCheckWords({ nodePubkey }: { nodePubkey: string }) {
   const theme = useTheme();
   if (!isValidNodePubkey(nodePubkey)) return null;
