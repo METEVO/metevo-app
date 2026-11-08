@@ -10,7 +10,9 @@ import {
 import { useKeepScreenOn } from '../../hooks/useKeepScreenOn';
 import { useTransferWatcher } from '../../hooks/useTransferWatcher';
 import { useWalletSession } from '../../hooks/useWalletSession';
+import { ENV } from '../../config/env';
 import { getLocalLink, isLocalLinkNative } from '../../services/localelink';
+import { recordSettledPayment, type PaymentChannel } from '../../services/metevo/paymentJournal';
 import { metevoDesignTokens } from '../../design/designTokens';
 import { scale, layout } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
@@ -54,6 +56,16 @@ function parseAmountBaseUnits(raw: string): number | null {
   const fraction = Number((match[2] ?? '').padEnd(8, '0'));
   const baseUnits = whole * USDM_BASE_UNITS_PER_USD + fraction;
   return Number.isSafeInteger(baseUnits) && baseUnits > 0 ? baseUnits : null;
+}
+
+function recordReceived(baseUnits: number, channel: PaymentChannel): void {
+  void recordSettledPayment({
+    direction: 'received',
+    amountUsdm: baseUnits / USDM_BASE_UNITS_PER_USD,
+    counterparty: null,
+    channel,
+    demo: ENV.EXPO_PUBLIC_WALLET_MODE === 'mock',
+  });
 }
 
 /** Validates the voice payload's amount (absent/invalid -> the default). */
@@ -180,6 +192,7 @@ export function ReceiveRequestCard({
         return; // the user left: a cancelled watch must not show an outcome
       }
       if (result.status === 'settled') {
+        recordReceived(baseUnits, 'remote');
         setStage('received');
       } else {
         setNote(
@@ -242,6 +255,7 @@ export function ReceiveRequestCard({
         return; // user cancelled: the finally below already tore down
       }
       if (result.status === 'settled') {
+        recordReceived(amountBaseUnits, 'in-person');
         setStage('local-received');
       } else {
         setNote(

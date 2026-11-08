@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ENV } from '../config/env';
 import { isKnownContact } from '../services/metevo/contacts';
 import { invoicePaysAnotherNode } from '../services/metevo/paymentGuard';
+import { recordSettledPayment } from '../services/metevo/paymentJournal';
 import type { DecodedInvoiceView } from '../services/metevo/paymentGuard';
 import {
   DirectRouteHint,
@@ -53,6 +54,7 @@ export interface InPersonProposal {
 }
 
 const NFC_READ_TIMEOUT_MS = 30_000;
+const USDM_BASE_UNITS_PER_USD = 10 ** 8;
 const GROUP_JOIN_TIMEOUT_MS = 15_000;
 const INVOICE_FETCH_TIMEOUT_MS = 10_000;
 
@@ -232,6 +234,15 @@ export function useInPersonPayment() {
     }
     const result = await watcher.watchPayment(paymentHash);
     if (result.status === 'settled') {
+      if (proposal.decoded.assetAmount !== null) {
+        void recordSettledPayment({
+          direction: 'sent',
+          amountUsdm: proposal.decoded.assetAmount / USDM_BASE_UNITS_PER_USD,
+          counterparty: null,
+          channel: 'in-person',
+          demo: ENV.EXPO_PUBLIC_WALLET_MODE === 'mock',
+        });
+      }
       enterStage('settled');
     } else if (result.status === 'failed') {
       enterStage('failed');

@@ -142,7 +142,7 @@ function HomeShell({ session }: { session: WalletSession }) {
 
   return (
     <View style={styles.shell}>
-      <StatusHeader connection={connection} />
+      <StatusHeader connection={connection} onOpenProfile={() => simulateIntent('profile')} />
       <BalancesCard
         label={attention ? 'Last known balance' : 'Available balance'}
         usdm={formatUsdmBalance(session.wallet?.balanceUsdmBaseUnits ?? null)}
@@ -234,7 +234,7 @@ function HomeShell({ session }: { session: WalletSession }) {
         )}
       </View>
 
-      <HistorySpendingLinks />
+      <HistorySpendingLinks onOpen={(next) => simulateIntent(next)} />
     </View>
   );
 }

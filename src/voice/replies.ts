@@ -15,6 +15,7 @@ const REPLY_TEMPLATES: Record<IntentId, string> = {
   'read-spending-overview': 'Reading your spending summary.',
   'read-balance': 'Reading your balances.',
   contacts: 'Opening your contacts.',
+  profile: 'Opening your profile.',
   'invoice-request': 'Opening the invoice request.',
 };
 

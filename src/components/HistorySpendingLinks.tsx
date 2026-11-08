@@ -17,30 +17,31 @@ import { layout, scale } from './styles';
 const ACTION_ICON_REFERENCE = { width: 16, height: 17 } as const;
 
 const LINKS = [
-  { label: 'History', Dark: HistoryDark, Light: HistoryLight },
-  { label: 'Spending', Dark: SpendingDark, Light: SpendingLight },
+  { label: 'History', intent: 'read-transactions', Dark: HistoryDark, Light: HistoryLight },
+  { label: 'Spending', intent: 'read-spending-overview', Dark: SpendingDark, Light: SpendingLight },
 ] as const;
+
+type LinkIntent = (typeof LINKS)[number]['intent'];
 
 /**
  * Bottom "History" and "Spending" shell controls of the design (paired
  * half-width outlined buttons).
- * Non-functional placeholders by design (no navigation in this phase).
- * TODO(phase 2): trigger the read-transactions / read-spending-overview
- * intents directly (voice-first product; these stay as visible shortcuts).
+ * Visible shortcuts to the same cards the voice opens
+ * (read-transactions / read-spending-overview).
  */
-export function HistorySpendingLinks() {
+export function HistorySpendingLinks({ onOpen }: { onOpen: (intent: LinkIntent) => void }) {
   const theme = useTheme();
   const styles = useThemedStyles(makeStyles);
 
   return (
     <View style={styles.row}>
-      {LINKS.map(({ label, Dark, Light }) => {
+      {LINKS.map(({ label, intent, Dark, Light }) => {
         const Icon = theme.mode === 'dark' ? Dark : Light;
         return (
           <TouchableOpacity
             key={label}
             style={styles.link}
-            onPress={() => undefined}
+            onPress={() => onOpen(intent)}
             accessibilityRole="button"
             accessibilityLabel={label}
           >
