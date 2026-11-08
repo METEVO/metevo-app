@@ -1,4 +1,5 @@
 import type { JournalEntry, SpendingSummary } from './paymentJournal';
+import { spokenDollars } from './paymentMessages';
 
 /** Written and spoken copy for the History and Spending cards. */
 
@@ -11,13 +12,8 @@ export function formatUsdm(amount: number): string {
   return `${amount.toFixed(2)} USDm`;
 }
 
-/** Spoken amounts say dollars, like the payment flow does. */
-function spokenMoney(amount: number): string {
-  return `${Number(amount.toFixed(2))} dollars`;
-}
-
 function spokenEntry(entry: JournalEntry): string {
-  return describeEntry(entry).replace(formatUsdm(entry.amountUsdm), spokenMoney(entry.amountUsdm));
+  return describeEntry(entry).replace(formatUsdm(entry.amountUsdm), spokenDollars(entry.amountUsdm));
 }
 
 function startOfDay(date: Date): number {
@@ -57,9 +53,9 @@ export function spokenHistory(entries: JournalEntry[], now: Date = new Date()): 
 
 export function spokenSpending(summary: SpendingSummary): string {
   return (
-    `This week you sent ${spokenMoney(summary.week.sentUsdm)} ` +
-    `and received ${spokenMoney(summary.week.receivedUsdm)}. ` +
-    `This month you sent ${spokenMoney(summary.month.sentUsdm)} ` +
-    `and received ${spokenMoney(summary.month.receivedUsdm)}.`
+    `This week you sent ${spokenDollars(summary.week.sentUsdm)} ` +
+    `and received ${spokenDollars(summary.week.receivedUsdm)}. ` +
+    `This month you sent ${spokenDollars(summary.month.sentUsdm)} ` +
+    `and received ${spokenDollars(summary.month.receivedUsdm)}.`
   );
 }
