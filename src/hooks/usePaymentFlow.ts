@@ -80,6 +80,18 @@ async function resolveRecipientPubkey(recipient: string): Promise<string | null>
   return contact.nodePubkey;
 }
 
+/** Every path that learns a send settled journals it the same way; a
+ * journal write failure never changes what the screen shows. */
+function journalSettledSend(proposal: PaymentFlowProposal): void {
+  void recordSettledPayment({
+    direction: 'sent',
+    amountUsdm: proposal.amount,
+    counterparty: proposal.recipient,
+    channel: 'remote',
+    demo: ENV.EXPO_PUBLIC_WALLET_MODE === 'mock',
+  }).catch(() => {});
+}
+
 export function usePaymentFlow() {
   const { submitPayment, checkPayment, wallet } = useWalletSession();
   const watcher = useTransferWatcher();
@@ -306,13 +318,7 @@ export function usePaymentFlow() {
     enterStage('watching');
     const result = await watcher.watchPayment(submitted.paymentHash);
     if (result.status === 'settled') {
-      void recordSettledPayment({
-        direction: 'sent',
-        amountUsdm: proposal.amount,
-        counterparty: proposal.recipient,
-        channel: 'remote',
-        demo: ENV.EXPO_PUBLIC_WALLET_MODE === 'mock',
-      });
+      journalSettledSend(proposal);
       enterStage('settled');
     } else if (result.status === 'failed') {
       enterStage('failed');
@@ -330,15 +336,22 @@ export function usePaymentFlow() {
     setNote(null);
     try {
       const status = await checkPayment(hash);
-      if (status === 'settled' || status === 'failed') {
-        enterStage(status);
+      if (status === 'settled') {
+        if (proposal !== null) {
+          journalSettledSend(proposal);
+        }
+        enterStage('settled');
+        return;
+      }
+      if (status === 'failed') {
+        enterStage('failed');
         return;
       }
     } catch {
       // The node is unreachable: the outcome is still unknown.
     }
     setNote('Still not confirmed. Do not pay again. Check again in a minute.');
-  }, [checkPayment, enterStage]);
+  }, [checkPayment, enterStage, proposal]);
 
   const cancel = useCallback(() => {
     if (stageRef.current === 'watching' || stageRef.current === 'submitting') {
