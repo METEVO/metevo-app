@@ -8,6 +8,7 @@ import {
 } from '../services/metevo/invoiceRelay';
 import { findContactByName, isValidNodePubkey } from '../services/metevo/contacts';
 import { PaymentValidationError } from '../services/metevo/paymentGuard';
+import { recordSettledPayment } from '../services/metevo/paymentJournal';
 import { ReviewedPayment } from '../services/metevo/wallet-gateway';
 import { loadRelayClient } from '../services/metevo/relayClient';
 import { PaymentVoiceIntent } from '../services/metevo/paymentIntent';
@@ -305,6 +306,13 @@ export function usePaymentFlow() {
     enterStage('watching');
     const result = await watcher.watchPayment(submitted.paymentHash);
     if (result.status === 'settled') {
+      void recordSettledPayment({
+        direction: 'sent',
+        amountUsdm: proposal.amount,
+        counterparty: proposal.recipient,
+        channel: 'remote',
+        demo: ENV.EXPO_PUBLIC_WALLET_MODE === 'mock',
+      });
       enterStage('settled');
     } else if (result.status === 'failed') {
       enterStage('failed');

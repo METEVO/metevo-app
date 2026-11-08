@@ -2,6 +2,7 @@ import { ENV } from '../config/env';
 import { UiLanguage } from '../hooks/useWalletSession';
 import { releaseSpeech, synthesizeSpeech } from '../ai/engine/speechEngine';
 import { playWavBytes } from '../ai/engine/speechPlayback';
+import { isAudioEnabled } from './audioPreference';
 import { TTS_SUPERTONIC_LANGUAGES } from '@qvac/sdk';
 
 /**
@@ -21,6 +22,9 @@ export type SpokenHighlightListener = (optionIndex: number) => void;
 
 /** Read one announcement out loud in the current language. */
 export function speakAnnouncement(text: string, language: UiLanguage = 'english'): void {
+  if (!isAudioEnabled()) {
+    return;
+  }
   void speak(text, language).catch((error) => {
     console.warn('[metevo] spoken announcement failed:', error);
   });

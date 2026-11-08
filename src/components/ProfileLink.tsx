@@ -16,9 +16,9 @@ const PROFILE_ICON_REFERENCE = { width: 15, height: 17 } as const;
 
 /**
  * Top-left profile control of the design's status header: a labelled chip,
- * not a floating avatar. TODO(phase 2): profile / settings flow.
+ * not a floating avatar. Opens the profile card.
  */
-export function ProfileLink() {
+export function ProfileLink({ onPress }: { onPress: () => void }) {
   const theme = useTheme();
   const styles = useThemedStyles(makeStyles);
   const ProfileIcon = theme.mode === 'dark' ? ProfileDark : ProfileLight;
@@ -26,7 +26,7 @@ export function ProfileLink() {
   return (
     <TouchableOpacity
       style={styles.chip}
-      onPress={() => undefined}
+      onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel="Profile"
     >
