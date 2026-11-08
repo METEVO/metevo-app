@@ -1,13 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Share, Text, TextInput, View } from 'react-native';
+import { BackHandler, Share, Text, View } from 'react-native';
 
 import { useTheme, useThemedStyles, type MetevoTheme } from '../../design/ThemeContext';
 import { useWalletSession } from '../../hooks/useWalletSession';
-import { encodeContactLink, MAX_CONTACT_NAME_CHARACTERS } from '../../services/metevo/contactLink';
-import { readOwnContactName, saveOwnContact } from '../../services/metevo/ownContact';
+import {
+  encodeContactLink,
+  MAX_CONTACT_EMAIL_CHARACTERS,
+  MAX_CONTACT_NAME_CHARACTERS,
+} from '../../services/metevo/contactLink';
+import { readOwnContactDetails, readOwnContactName, saveOwnContact } from '../../services/metevo/ownContact';
 import { layout } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
-import { ContactQrCode } from './ContactQrCode';
+import { CompactField, TextLink } from './CompactField';
+import { ContactQrView } from './ContactQrCode';
+import { logContactEvent } from '../../services/metevo/contactEvents';
 
 export function OwnContactPanel({ onBack }: { onBack: () => void }) {
   const { wallet } = useWalletSession();
@@ -20,6 +26,9 @@ function OwnContactForm({ nodePubkey, onBack }: { nodePubkey: string | null; onB
   const theme = useTheme();
   const styles = useThemedStyles(makeStyles);
   const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [showDetails, setShowDetails] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -35,6 +44,14 @@ function OwnContactForm({ nodePubkey, onBack }: { nodePubkey: string | null; onB
   }, []);
 
   useEffect(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (!sharingRef.current) onBack();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [onBack]);
+
+  useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setLoadFailed(false);
@@ -43,8 +60,12 @@ function OwnContactForm({ nodePubkey, onBack }: { nodePubkey: string | null; onB
       setLoading(false);
       return undefined;
     }
-    void readOwnContactName(nodePubkey).then((savedName) => {
-      if (!cancelled) setName(savedName ?? '');
+    void Promise.all([readOwnContactName(nodePubkey), readOwnContactDetails(nodePubkey)]).then(([savedName, details]) => {
+      if (cancelled) return;
+      setName(savedName ?? '');
+      setPhone(details.phone ?? '');
+      setEmail(details.email ?? '');
+      setShowDetails(details.phone !== undefined || details.email !== undefined);
     }).catch(() => {
       if (!cancelled) {
         setLoadFailed(true);
@@ -61,9 +82,12 @@ function OwnContactForm({ nodePubkey, onBack }: { nodePubkey: string | null; onB
     setSharing(true);
     setError(null);
     try {
-      const contact = await saveOwnContact(name, nodePubkey);
+      const contact = await saveOwnContact(name, nodePubkey, { phone, email });
+      logContactEvent(contact.phone || contact.email ? 'own:saved-with-phone-or-email' : 'own:saved');
       if (!mounted.current) return;
       setName(contact.name);
+      setPhone(contact.phone ?? '');
+      setEmail(contact.email ?? '');
       await deliver(encodeContactLink(contact));
     } catch (cause) {
       if (mounted.current) setError(cause instanceof Error ? cause.message : 'Your contact could not be shared. Try again.');
@@ -73,21 +97,19 @@ function OwnContactForm({ nodePubkey, onBack }: { nodePubkey: string | null; onB
     }
   }
 
+  const insideQr = phone.trim() || email.trim()
+    ? 'Your name, public node key and the phone or email you chose are inside.'
+    : 'Only your name and your public node key are inside.';
+
   if (qrLink !== null) {
     return (
-      <View style={styles.canvas}>
-        <Text style={theme.typography.title}>{name.trim()}</Text>
-        <View style={styles.qr}>
-          <ContactQrCode link={qrLink} accessibilityLabel={`QR code to add ${name.trim()}`} />
-        </View>
-        <Text style={theme.typography.body}>Ask the other person to tap Scan QR code in Contacts.</Text>
-        <Text style={theme.typography.caption}>Only your name and your public node key are inside.</Text>
-        <ActionButton label="Back" variant="outlined" onPress={() => setQrLink(null)} />
-      </View>
+      <ContactQrView link={qrLink} name={name.trim()} contents={insideQr} onBack={() => setQrLink(null)} />
     );
   }
 
   const cannotShare = nodePubkey === null || loading || sharing || loadFailed || name.trim().length === 0;
+
+  const fieldsEditable = !loading && !sharing && !loadFailed;
 
   return (
     <View style={styles.canvas}>
@@ -96,52 +118,81 @@ function OwnContactForm({ nodePubkey, onBack }: { nodePubkey: string | null; onB
         <Text style={theme.typography.body}>Your wallet node must be ready before you can share your contact.</Text>
       ) : (
         <>
-          <Text style={theme.typography.caption}>Name to share</Text>
-          <TextInput
-            style={styles.input}
-            accessibilityLabel="Your contact name"
+          <CompactField
+            label="Your name"
             value={name}
             onChangeText={setName}
-            editable={!loading && !sharing && !loadFailed}
+            editable={fieldsEditable}
             maxLength={MAX_CONTACT_NAME_CHARACTERS}
-            autoCorrect={false}
           />
-          <Text style={theme.typography.caption} selectable>{nodePubkey}</Text>
-          <Text style={theme.typography.body}>Only your name and this public node key are shared.</Text>
+          {showDetails ? (
+            <>
+              <CompactField
+                label="Phone with country code (optional)"
+                value={phone}
+                onChangeText={setPhone}
+                editable={fieldsEditable}
+                keyboardType="phone-pad"
+              />
+              <CompactField
+                label="Email (optional)"
+                value={email}
+                onChangeText={setEmail}
+                editable={fieldsEditable}
+                maxLength={MAX_CONTACT_EMAIL_CHARACTERS}
+                keyboardType="email-address"
+              />
+            </>
+          ) : (
+            <TextLink label="Add phone or email (optional)" onPress={() => setShowDetails(true)} disabled={!fieldsEditable} />
+          )}
           {loading && <Text style={theme.typography.caption}>Loading your name…</Text>}
         </>
       )}
       {error !== null && <Text style={styles.error} accessibilityLiveRegion="polite">{error}</Text>}
-      {nodePubkey !== null && (
-        <ActionButton
-          label="Show QR code"
-          variant="outlined"
-          onPress={() => void publish((link) => setQrLink(link))}
-          disabled={cannotShare}
-        />
-      )}
-      <View style={styles.actions}>
-        <ActionButton label="Back" variant="outlined" onPress={onBack} disabled={sharing} grow />
-        {loadFailed ? (
+      {loadFailed ? (
+        <View style={styles.actions}>
+          <ActionButton label="Back" variant="outlined" onPress={onBack} grow />
           <ActionButton label="Try again" variant="primary" onPress={() => setAttempt((value) => value + 1)} grow />
-        ) : (
-          <ActionButton
-            label={sharing ? 'Sharing…' : 'Share my contact'}
-            variant="primary"
-            onPress={() => void publish((link) => Share.share({ message: link }))}
-            disabled={cannotShare}
-            grow
-          />
-        )}
-      </View>
+        </View>
+      ) : (
+        <>
+          <View style={styles.actions}>
+            <ActionButton
+              label="Show QR code"
+              variant="outlined"
+              onPress={() => void publish((link) => {
+                logContactEvent('qr:shown-own');
+                setQrLink(link);
+              })}
+              disabled={cannotShare}
+              grow
+            />
+            <ActionButton
+              label={sharing ? 'Sharing…' : 'Share link'}
+              variant="primary"
+              onPress={() => void publish((link) => Share.share({ message: link }))}
+              disabled={cannotShare}
+              grow
+            />
+          </View>
+          <ActionButton label="Back" variant="outlined" onPress={onBack} disabled={sharing} />
+        </>
+      )}
+      {nodePubkey !== null && (
+        <>
+          <Text style={theme.typography.caption}>
+            You share your name and public node key; phone and email only if you fill them in.
+          </Text>
+          <Text style={theme.typography.caption} selectable>{nodePubkey}</Text>
+        </>
+      )}
     </View>
   );
 }
 
 const makeStyles = (theme: MetevoTheme) => ({
   canvas: { gap: layout.rowGap },
-  input: { ...theme.typography.body, ...theme.cardBase, padding: layout.rowGap },
   error: { ...theme.typography.caption, color: theme.voiceStates.attention.ink },
   actions: { flexDirection: 'row' as const, gap: layout.rowGap },
-  qr: { alignItems: 'center' as const },
 });
