@@ -90,4 +90,22 @@ describe('voice orchestrator press length', () => {
     expect(ports.transcribe).toHaveBeenCalledWith('file:///clip.m4a');
     expect(ports.execute).toHaveBeenCalledWith(expect.objectContaining({ cardId: 'read-balance' }));
   });
+
+  test('a release left by a failed mic start does not cut the next hold', async () => {
+    const { orchestrator, ports, flush, advance } = setup();
+    (ports.startRecording as jest.Mock).mockRejectedValueOnce(new Error('permission denied'));
+    const failingPress = orchestrator.press();
+    advance(100);
+    orchestrator.release();
+    await failingPress;
+    await flush();
+
+    advance(1000);
+    await orchestrator.press();
+    advance(MIN_HOLD_MS);
+    orchestrator.release();
+    await flush();
+
+    expect(ports.transcribe).toHaveBeenCalledWith('file:///clip.m4a');
+  });
 });

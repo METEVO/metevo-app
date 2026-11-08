@@ -114,6 +114,8 @@ export class VoiceOrchestrator {
       this.turnId += 1; // barge-in: the interrupted turn lands nowhere
     }
     this.starting = true;
+    this.releaseQueued = false;
+    this.releasedAt = 0;
     // A new turn replaces the last answer, so its progress is not hidden
     // behind a stale reply or error.
     this.setSnapshot({ reply: null, error: null, transcript: null });
