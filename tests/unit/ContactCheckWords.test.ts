@@ -5,7 +5,7 @@ jest.mock('expo-secure-store', () => ({}));
 const NODE = `02${'ab'.repeat(32)}`;
 
 describe('contact check words', () => {
-  test('are four words, stable for the same node whatever its casing', () => {
+  test('are six words, stable for the same node whatever its casing', () => {
     const words = contactCheckWords(NODE);
     expect(words).toHaveLength(CHECK_WORD_COUNT);
     expect(contactCheckWords(` ${NODE.toUpperCase()} `)).toEqual(words);
