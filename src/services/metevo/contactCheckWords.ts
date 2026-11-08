@@ -1,12 +1,15 @@
+import { sha256 } from '@noble/hashes/sha2.js';
+import { concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
+
 import { isValidNodePubkey } from './contacts';
 
 /**
- * Check words: four everyday words derived from a node pubkey. Both people
- * read them aloud; if the words on the two phones match, the shared link
- * belongs to the phone in front of you and not to someone who copied the
- * name. 4 x 8 bits from the key itself: a compressed secp256k1 key is
- * already uniformly distributed after its parity prefix, so no hashing
- * library is needed.
+ * Check words: six everyday words derived from a node pubkey. Both people
+ * compare them face-to-face, with both screens visible; if they match, the
+ * shared link belongs to the phone in front of you and not to someone who
+ * copied the name. The words are SHA-256 over a fixed domain tag and the
+ * whole compressed key, keeping 6 x 8 = 48 bits: grinding a key to match
+ * them is not cheap. Never relay them by voice call or NFC.
  */
 const CHECK_WORDS: readonly string[] = [
   'apple', 'arrow', 'bag', 'ball', 'banana', 'bank', 'basket', 'bath', 'beach', 'bean', 'bear',
@@ -35,18 +38,15 @@ const CHECK_WORDS: readonly string[] = [
   'lantern', 'lizard', 'mango', 'medal', 'meadow', 'mitten', 'moth', 'mug',
 ];
 
-/** Bytes from both ends of the 32-byte key, so two keys that share a
- * prefix or a suffix still get different words. */
-const KEY_BYTE_POSITIONS = [0, 31, 1, 30] as const;
+const CHECK_WORD_DOMAIN = 'metevo-contact-check-v1';
 
-export const CHECK_WORD_COUNT = KEY_BYTE_POSITIONS.length;
+export const CHECK_WORD_COUNT = 6;
 
 export function contactCheckWords(nodePubkey: string): string[] {
   if (!isValidNodePubkey(nodePubkey)) {
     throw new Error('contact node pubkey is invalid');
   }
-  const hex = nodePubkey.trim().toLowerCase().slice(2);
-  return KEY_BYTE_POSITIONS.map(
-    (position) => CHECK_WORDS[Number.parseInt(hex.slice(position * 2, position * 2 + 2), 16)],
-  );
+  const compressedKey = hexToBytes(nodePubkey.trim().toLowerCase());
+  const digest = sha256(concatBytes(utf8ToBytes(CHECK_WORD_DOMAIN), compressedKey));
+  return Array.from(digest.subarray(0, CHECK_WORD_COUNT), (byte) => CHECK_WORDS[byte]);
 }
