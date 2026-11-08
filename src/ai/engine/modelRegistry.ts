@@ -44,6 +44,9 @@ const WHISPER_MODEL_PRESETS: Record<string, RegistryModelDescriptor> = {
   WHISPER_TINY,
   WHISPER_TINY_Q8_0,
   WHISPER_SMALL_Q8_0,
+  // Backward compatibility for builds created before the preset was named
+  // consistently with the QVAC SDK. Both keys resolve to the same model.
+  WHISPER_EN_SMALL_Q8_0: WHISPER_SMALL_Q8_0,
   WHISPER_BASE_Q8_0,
   WHISPER_LARGE_V3_TURBO,
 };

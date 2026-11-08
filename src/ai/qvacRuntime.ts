@@ -5,6 +5,7 @@ import { ENV } from '../config/env';
 import { localModelPath } from './localModel';
 import { loadQwenModel, releaseQwenModel } from './qwen';
 import { initializeWhisper, releaseWhisper } from './whisper';
+import { resolveModelSource, whisperModelPresets } from './engine/modelRegistry';
 
 /**
  * The one runtime service behind the voice agent (design phase 1): it owns
@@ -187,7 +188,14 @@ class QvacRuntime {
 
     await this.noteBootCrashGuard(kind);
 
-    const localPath = localModelPath(spec.folder, spec.fileName);
+    const whisperSource =
+      kind === 'stt'
+        ? resolveModelSource(spec.fileName, whisperModelPresets)
+        : null;
+    const localPath =
+      whisperSource?.kind === 'registry'
+        ? null
+        : localModelPath(spec.folder, whisperSource?.kind === 'file' ? whisperSource.source : spec.fileName);
     if (localPath === null && spec.httpUrl !== undefined && spec.bytes !== undefined) {
       const ok = await this.downloadModel(
         kind,
@@ -202,7 +210,7 @@ class QvacRuntime {
     }
 
     const path = localModelPath(spec.folder, spec.fileName);
-    if (path === null) {
+    if (path === null && whisperSource?.kind !== 'registry') {
       this.setError(
         kind,
         `The ${kind} model is not on this phone yet. Push ${spec.fileName} into the app's models/${spec.folder}/ folder.`,
@@ -215,8 +223,17 @@ class QvacRuntime {
     this.publish();
     try {
       if (kind === 'stt') {
-        await initializeWhisper('en', path);
+        if (whisperSource?.kind === 'registry') {
+          await initializeWhisper('en', whisperSource.source);
+        } else if (path !== null) {
+          await initializeWhisper('en', path);
+        } else {
+          throw new Error('Whisper model source is unavailable.');
+        }
       } else if (kind === 'llm') {
+        if (path === null) {
+          throw new Error('Qwen model source is unavailable.');
+        }
         await loadQwenModel(path);
       }
       this.statuses[kind] = 'ready';

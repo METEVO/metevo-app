@@ -130,7 +130,7 @@ const baseAppEnvSchema = z.object({
    * downloads and checksum-verifies it on device on first use) or a local
    * model file name resolved under <documents>/models/whisper for offline
    * sideloading. The voice agent runs English only. */
-  EXPO_PUBLIC_QVAC_WHISPER_MODEL_ENGLISH: stringFromEnv('WHISPER_EN_SMALL_Q8_0'),
+  EXPO_PUBLIC_QVAC_WHISPER_MODEL_ENGLISH: stringFromEnv('WHISPER_SMALL_Q8_0'),
   /** Qwen LLM model: a QVAC registry preset name (downloaded on device on
    * first use) or a local model file name resolved under
    * <documents>/models/qwen for offline sideloading — the registry hub is
