@@ -4,6 +4,7 @@ import {
   lowBalanceWarning,
   paymentMessage,
   parseWholeUsdm,
+  spokenDollars,
 } from '../../src/services/metevo/paymentMessages';
 import type { PaymentFlowStage } from '../../src/hooks/usePaymentFlow';
 
@@ -45,6 +46,23 @@ describe('payment stage messages', () => {
 
   test('success repeats who received how much', () => {
     expect(paymentMessage('settled', context).spoken).toBe('Done. Bob received 20 dollars.');
+  });
+});
+
+describe('spoken dollars', () => {
+  test.each([
+    [1, '1 dollar'],
+    [20, '20 dollars'],
+    [0, '0 dollars'],
+    [15.5, '15.5 dollars'],
+  ])('%s reads as "%s"', (amount, spoken) => {
+    expect(spokenDollars(amount)).toBe(spoken);
+  });
+
+  test('a one-dollar send says dollar in the singular', () => {
+    expect(paymentMessage('settled', { recipient: 'Bob', amount: 1 }).spoken).toBe(
+      'Done. Bob received 1 dollar.',
+    );
   });
 });
 
