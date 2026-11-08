@@ -126,6 +126,7 @@ EXPO_PUBLIC_WALLET_NETWORK=regtest
 Both phones use the same URL. `adb reverse` decides which node each one reaches. Build and install the debug APK on both devices:
 
 ```bash
+npm run bundle:qvac   # QVAC voice worker: the build stops with a clear error without it
 cd android && NODE_ENV=development ./gradlew :app:assembleDebug -PreactNativeArchitectures=arm64-v8a
 adb -s <ALICE_SERIAL> install -r app/build/outputs/apk/debug/app-debug.apk
 adb -s <BOB_SERIAL>   install -r app/build/outputs/apk/debug/app-debug.apk
