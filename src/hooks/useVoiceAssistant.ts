@@ -37,6 +37,8 @@ export function useVoiceAssistant(
   error: string | null;
   message: string | null;
   messageIsError: boolean;
+  /** A turn is being processed: the shell shows the loading cue. */
+  busy: boolean;
   recording: boolean;
   lastClipUri: string | null;
   runtime: RuntimeSnapshot;
@@ -156,13 +158,19 @@ export function useVoiceAssistant(
     runtimeState.statuses.stt === 'loading' ||
     runtimeState.statuses.llm === 'downloading' ||
     runtimeState.statuses.llm === 'loading';
-  const message =
-    snapshot.reply ??
-    snapshot.error ??
-    runtimeError ??
+  const turnBusy =
+    snapshot.phase === 'transcribing' ||
+    snapshot.phase === 'understanding' ||
+    snapshot.phase === 'acting';
+  const busy = turnBusy && snapshot.error === null;
+  const progress =
     (runtimeBusy ? runtimeState.statusMessage ?? 'Loading the voice models…' : null) ??
     (snapshot.phase === 'transcribing' ? 'Transcribing…' : null) ??
-    (snapshot.phase === 'understanding' ? 'Understanding…' : null);
+    (snapshot.phase === 'understanding' ? 'Understanding…' : null) ??
+    (snapshot.phase === 'acting' ? 'Working on it…' : null);
+  const message = busy
+    ? progress
+    : snapshot.reply ?? snapshot.error ?? runtimeError ?? progress;
   const messageIsError =
     snapshot.error !== null || runtimeError !== null || snapshot.phase === 'error';
 
@@ -173,6 +181,7 @@ export function useVoiceAssistant(
     error: snapshot.error,
     message,
     messageIsError,
+    busy,
     recording: recorder.phase === 'recording',
     lastClipUri,
     runtime: runtimeState,
