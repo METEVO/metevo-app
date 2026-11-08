@@ -1,5 +1,6 @@
 import {
   ContactLinkError,
+  contactShareMessage,
   decodeContactLink,
   encodeContactLink,
   MAX_CONTACT_LINK_BYTES,
@@ -149,5 +150,15 @@ describe('contact sharing v2 (phone and email)', () => {
     expect(() => decodeContactLink(link('v=2&name=Maria&phone=%2B393331234567'))).toThrow(ContactLinkError);
     expect(() => decodeContactLink(link(`v=2&name=Maria&node=${NODE}&email=a%40b.it&email=c%40d.it`))).toThrow(ContactLinkError);
     expect(() => decodeContactLink(link(`v=2&name=Maria&node=${NODE}&address=x`))).toThrow(ContactLinkError);
+  });
+});
+
+describe('contact share message', () => {
+  test('explains the link and ends with it on its own line, still decodable', () => {
+    const message = contactShareMessage({ name: ' Maria ', nodePubkey: NODE, phone: '+393331234567' });
+    const lines = message.split('\n');
+    expect(lines[0]).toBe('Add Maria to your METEVO contacts: tap the link below.');
+    expect(message).toContain('Paste a contact link');
+    expect(decodeContactLink(lines[lines.length - 1])).toEqual({ name: 'Maria', nodePubkey: NODE, phone: '+393331234567' });
   });
 });
