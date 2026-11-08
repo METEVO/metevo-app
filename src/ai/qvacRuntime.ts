@@ -295,10 +295,9 @@ class QvacRuntime {
     const partPath = `${finalPath}${DOWNLOAD_SUFFIX}`;
 
     try {
-      const freeKb = await FileSystem.getFreeDiskStorageAsync();
-      // The legacy API reports kilobytes; require the model plus headroom.
-      const requiredKb = Math.ceil((bytes * 1.2) / 1024);
-      if (typeof freeKb === 'number' && freeKb < requiredKb) {
+      const freeBytes = await FileSystem.getFreeDiskStorageAsync();
+      const requiredBytes = Math.ceil(bytes * 1.2);
+      if (typeof freeBytes === 'number' && freeBytes < requiredBytes) {
         this.setError(kind, 'Not enough free storage for the voice model download.');
         return false;
       }
@@ -310,6 +309,9 @@ class QvacRuntime {
     this.statusMessage = `Downloading the ${kind} model 0%…`;
     this.publish();
     try {
+      // The downloader writes into an existing folder only; on a fresh
+      // install models/<folder> has never been created.
+      await FileSystem.makeDirectoryAsync(baseDir, { intermediates: true });
       let lastReportedPercent = -1;
       const downloader = FileSystem.createDownloadResumable(
         httpUrl,
@@ -364,7 +366,7 @@ class QvacRuntime {
     this.publish();
     // The cause chain carries the host's own failure (e.g. why an addon
     // refused to load); walk it so the diagnostics are not lost.
-    const chain: string[] = [];
+    const chain: string[] = cause instanceof Error ? [] : [message];
     let current: unknown = cause;
     for (let depth = 0; current instanceof Error && depth < 6; depth += 1) {
       chain.push(current.message);
