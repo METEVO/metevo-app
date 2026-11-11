@@ -6,6 +6,9 @@ import { metevoDesignTokens } from '../../design/designTokens';
 import { useTheme, useThemedStyles, type MetevoTheme } from '../../design/ThemeContext';
 import { logContactEvent } from '../../services/metevo/contactEvents';
 import { classifyScannedCode } from '../../services/metevo/contactQr';
+import { openNfcSettings } from '../../services/metevo/contactNfc';
+import { useContactNfcReader } from '../../hooks/useContactNfc';
+import { TextLink } from './CompactField';
 import { layout, scale } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
 
@@ -24,6 +27,8 @@ function useViewfinderSide(): number {
 
 const FOREIGN_CODE = 'Not a METEVO contact. Scan the QR shown in their METEVO app.';
 const NOT_QUEUED = 'This contact is already waiting for review. Close Contacts to see it.';
+const NFC_NOT_METEVO = 'That phone is not sharing a METEVO contact. Ask them to open Show QR code.';
+const NFC_FAILED = 'The tap was too short. Hold the phones back to back and keep them still.';
 
 interface ContactQrScannerProps {
   /** Returns false when the import queue did not accept the link. */
@@ -90,6 +95,22 @@ export function ContactQrScanner({ onContactLink, onCancel }: ContactQrScannerPr
     }
   }, [onContactLink]);
 
+  // NFC and camera feed the same routing: a tapped link that is not a
+  // METEVO contact gets the same notice as a foreign QR code.
+  const onNfcLink = useCallback((link: string) => {
+    const received = classifyScannedCode(link);
+    if (received.kind === 'foreign') {
+      setNotice(FOREIGN_CODE);
+      return false;
+    }
+    if (onContactLink(received.link)) return true;
+    logContactEvent('scan:not-queued');
+    setNotice(NOT_QUEUED);
+    return false;
+  }, [onContactLink]);
+  const nfc = useContactNfcReader(onNfcLink);
+  const nfcNotice = nfc.notice === 'not-metevo' ? NFC_NOT_METEVO : nfc.notice === 'failed' ? NFC_FAILED : null;
+
   let body: React.ReactNode;
   let action: React.ReactNode = null;
   if (permission === null) {
@@ -113,12 +134,16 @@ export function ContactQrScanner({ onContactLink, onCancel }: ContactQrScannerPr
     action = <ActionButton label="Open Settings" variant="primary" onPress={() => void Linking.openSettings()} grow />;
   }
 
-  const status = notice ?? (permission?.granted ? 'Point the camera at the QR code on their phone.' : 'Scan a contact');
+  const hint = nfc.status === 'ready'
+    ? 'Point the camera at their QR code, or hold the phones back to back.'
+    : permission?.granted ? 'Point the camera at the QR code on their phone.' : 'Scan a contact';
+  const shownNotice = notice ?? nfcNotice;
+  const status = shownNotice ?? hint;
 
   return (
     <View style={styles.canvas}>
       <Text
-        style={[notice === null ? theme.typography.caption : styles.notice, styles.status]}
+        style={[shownNotice === null ? theme.typography.caption : styles.notice, styles.status]}
         numberOfLines={2}
         accessibilityLiveRegion="polite"
       >
@@ -129,6 +154,9 @@ export function ContactQrScanner({ onContactLink, onCancel }: ContactQrScannerPr
         <ActionButton label="Back" variant="outlined" onPress={onCancel} grow />
         {action}
       </View>
+      {nfc.status === 'disabled' && (
+        <TextLink label="NFC is off. Turn it on to receive by tapping phones." onPress={() => void openNfcSettings()} />
+      )}
     </View>
   );
 }
