@@ -27,7 +27,7 @@ const IDLE_ACTIONS: { id: IntentId; label: string }[] = [
   { id: 'send-usdm', label: 'Send money' },
   { id: 'create-usdm-invoice', label: 'Receive money' },
   { id: 'contacts', label: 'Contacts' },
-  { id: 'swap', label: 'Swap' },
+  { id: 'swap', label: 'Buy USDm' },
 ];
 
 export interface IntentCardProps {

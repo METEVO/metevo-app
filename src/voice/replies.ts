@@ -17,7 +17,7 @@ const REPLY_TEMPLATES: Record<IntentId, string> = {
   contacts: 'Opening your contacts.',
   profile: 'Opening your profile.',
   'invoice-request': 'Opening the invoice request.',
-  swap: 'Opening the swap simulation. No funds will be exchanged.',
+  swap: 'Opening Buy USDm. Review the quote and confirm before paying.',
 };
 
 const NOT_UNDERSTOOD = 'I did not understand. Please say it again, or type it.';
