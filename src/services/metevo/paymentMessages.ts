@@ -20,7 +20,8 @@ export interface PaymentMessage {
 /** "1 dollar", "20 dollars", "15.5 dollars": cents are kept, never rounded away. */
 export function spokenDollars(amount: number): string {
   const value = Number(amount.toFixed(2));
-  return `${value} ${value === 1 ? 'dollar' : 'dollars'}`;
+  const text = value.toLocaleString('en-US', { useGrouping: false, maximumFractionDigits: 2 });
+  return `${text} ${value === 1 ? 'dollar' : 'dollars'}`;
 }
 
 /**

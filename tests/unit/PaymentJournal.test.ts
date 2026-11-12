@@ -19,6 +19,7 @@ let mockFiles: Record<string, string> = {};
 
 jest.mock('expo-file-system/legacy', () => ({
   documentDirectory: '/docs/',
+  moveAsync: jest.fn(async ({ from, to }: { from: string; to: string }) => { mockFiles[to] = mockFiles[from]; delete mockFiles[from]; }),
   getInfoAsync: jest.fn(async (path: string) => ({ exists: path in mockFiles })),
   readAsStringAsync: jest.fn(async (path: string) => mockFiles[path]),
   writeAsStringAsync: jest.fn(async (path: string, value: string) => {
@@ -144,3 +145,24 @@ describe('journal messages', () => {
     );
   });
 });
+
+ test('one hash is journaled once across concurrent checks and restart, even after display eviction', async () => {
+   mockFiles = {};
+   const payment = { direction: 'sent' as const, amountUsdm: 1, counterparty: null, channel: 'remote' as const, demo: false, paymentKey: 'wallet:sent:hash' };
+   await Promise.all([recordSettledPayment(payment), recordSettledPayment(payment)]);
+   expect(await listPayments()).toHaveLength(1);
+   expect(summarizeSpending(await listPayments()).week.sentUsdm).toBe(1);
+   const stored = JSON.parse(mockFiles['/docs/payment-journal.json']);
+   stored.entries = [];
+   mockFiles['/docs/payment-journal.json'] = JSON.stringify(stored);
+   await recordSettledPayment(payment);
+   expect(await listPayments()).toHaveLength(0);
+   await recordSettledPayment({ ...payment, paymentKey: 'another-wallet:sent:hash' });
+   expect(await listPayments()).toHaveLength(1);
+ });
+
+ test('legacy journal migrates without losing entries', async () => {
+   mockFiles = { '/docs/payment-journal.json': JSON.stringify([entry()]) };
+   await recordSettledPayment({ direction: 'sent', amountUsdm: 1, counterparty: null, channel: 'remote', demo: false, paymentKey: 'wallet:sent:new' });
+   expect(await listPayments()).toHaveLength(2);
+ });
