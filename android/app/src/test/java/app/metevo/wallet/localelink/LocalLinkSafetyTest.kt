@@ -25,6 +25,7 @@ class LocalLinkSafetyTest {
         assertFalse(LocalLinkState.armInvoice(LocalLinkState.ServedInvoice("late", "invoice")))
         LocalLinkState.setForeground(true)
         assertNull(LocalLinkState.readCredentials())
+        assertFalse(LocalLinkState.armInvoice(LocalLinkState.ServedInvoice("old", "invoice")))
         LocalLinkState.setForeground(false)
     }
 }
