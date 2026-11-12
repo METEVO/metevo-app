@@ -13,6 +13,7 @@ const INTENT_DESCRIPTIONS: Record<IntentId, string> = {
   contacts: 'Open your contacts',
   profile: 'Show this wallet and its mode',
   'invoice-request': 'Answer an invoice request relayed by the LSP',
+  swap: 'Simulate a USDm and bitcoin swap (no funds move)',
 };
 
 /**

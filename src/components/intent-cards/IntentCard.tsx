@@ -17,6 +17,7 @@ import { SendBtcCard } from './SendBtcCard';
 import { SendPaymentCard } from './SendPaymentCard';
 import { InvoiceRequestCard } from './InvoiceRequestCard';
 import { ProfileCard } from './ProfileCard';
+import { SwapCard } from './SwapCard';
 import { IntentCardShell } from './IntentCardShell';
 
 const IDLE_TITLE = 'Ready when you are';
@@ -26,6 +27,7 @@ const IDLE_ACTIONS: { id: IntentId; label: string }[] = [
   { id: 'send-usdm', label: 'Send money' },
   { id: 'create-usdm-invoice', label: 'Receive money' },
   { id: 'contacts', label: 'Contacts' },
+  { id: 'swap', label: 'Swap' },
 ];
 
 export interface IntentCardProps {
@@ -49,9 +51,10 @@ const CARDS: Record<IntentId, React.ComponentType<IntentCardProps>> = {
   contacts: ContactsPanel,
   profile: ProfileCard,
   'invoice-request': InvoiceRequestCard,
+  swap: SwapCard,
 };
 
-/** The design's HOME-01 panel: title plus the three quick actions. */
+/** The design's HOME-01 panel: title plus the quick actions. */
 function IdleMenu({ onSelectIntent }: IntentCardProps) {
   const styles = useThemedStyles(makeStyles);
 

@@ -93,6 +93,22 @@ export function parseWithRules(transcript: string): WalletInstruction | null {
   if (/\b(spending|how much did i spend|spending summary)\b/.test(text)) {
     return emptyInstruction('GET_SPENDING_SUMMARY');
   }
+  if (/\b(swap|exchange|convert)\b/.test(text)) {
+    const satAmount = firstMatch(text, SAT_AMOUNT);
+    const usdAmount = firstMatch(text, USD_AMOUNT);
+    return {
+      ...emptyInstruction('SWAP'),
+      amount: satAmount ?? usdAmount,
+      currency:
+        satAmount === null
+          ? usdAmount !== null
+            ? 'USDm'
+            : null
+          : /\d\s*(btc|bitcoin)\b/.test(text)
+            ? 'BTC'
+            : 'sats',
+    };
+  }
   if (
     /\b(receive|receive money|request (money|funds|payment)|payment request|my invoice)\b/.test(text)
   ) {
