@@ -46,6 +46,11 @@ export function replyForUnclear(): string {
   return NOT_UNDERSTOOD;
 }
 
+/** The spoken reply when the talk button was tapped instead of held. */
+export function replyForShortPress(): string {
+  return 'Hold the button while you speak, then let go.';
+}
+
 /** The spoken reply when the voice pipeline itself failed. */
 export function replyForError(error: string): string {
   return sanitizeForSpeech(error);
