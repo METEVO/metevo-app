@@ -1,5 +1,6 @@
 import { Image } from 'react-native';
 
+import { PaymentValidationError } from './paymentGuard';
 import { ENV } from '../../config/env';
 import {
   loadDeviceWalletConfig,
@@ -139,7 +140,8 @@ export function createBareWalletSessionGateway(): WalletSessionGateway {
     if (frame.ok === true) {
       pendingRequest.resolve(frame.result);
     } else {
-      pendingRequest.reject(new Error(String(frame.error ?? 'worklet error')));
+      const ErrorType = frame.errorName === 'PaymentValidationError' ? PaymentValidationError : Error;
+      pendingRequest.reject(new ErrorType(String(frame.error ?? 'worklet error')));
     }
   }
 

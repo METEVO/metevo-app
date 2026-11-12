@@ -67,7 +67,7 @@ export function createRemoteRlnWalletSessionGateway(
 
   function openClient(): RlnRestClient {
     if (client === null) {
-      throw new Error('the wallet is not open');
+      throw new PaymentValidationError('the wallet is not open');
     }
     return client;
   }

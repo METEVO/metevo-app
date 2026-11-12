@@ -1,6 +1,6 @@
 import { ENV } from '../../config/env';
 import { walletConfigFromDevice } from './deviceConfig';
-import { assertPayableInvoice, assertRgbReceiveRequest, decodedInvoiceView, getPaymentStatus } from './paymentGuard';
+import { PaymentValidationError, assertPayableInvoice, assertRgbReceiveRequest, decodedInvoiceView, getPaymentStatus } from './paymentGuard';
 import type {
   WalletProgressListener,
   WalletSessionGateway,
@@ -107,7 +107,7 @@ export function createWdkWalletSessionGateway(): WalletSessionGateway {
     },
     async submitPayment(proposal) {
       if (wallet === null) {
-        throw new Error('the wallet is not open');
+        throw new PaymentValidationError('the wallet is not open');
       }
       // Real-node boundary: even a clearly-marked demo proposal must fail
       // validation here instead of reaching sendPayment.
@@ -127,7 +127,7 @@ export function createWdkWalletSessionGateway(): WalletSessionGateway {
     },
     async createUsdmInvoice(amountBaseUnits) {
       if (wallet === null) {
-        throw new Error('the wallet is not open');
+        throw new PaymentValidationError('the wallet is not open');
       }
       const { createUsdmLightningInvoice } = loadWdkService();
       return createUsdmLightningInvoice(wallet.account, usdmAssetId, amountBaseUnits);
@@ -141,17 +141,17 @@ export function createWdkWalletSessionGateway(): WalletSessionGateway {
     },
     async connectPeer(peerUri) {
       if (wallet === null) {
-        throw new Error('the wallet is not open');
+        throw new PaymentValidationError('the wallet is not open');
       }
       await wallet.account.connectPeer(peerUri);
     },
     async decodeInvoice(invoice) {
-      if (wallet === null) throw new Error('the wallet is not open');
+      if (wallet === null) throw new PaymentValidationError('the wallet is not open');
       return decodedInvoiceView(await wallet.account.decodeInvoice(invoice));
     },
     async createRgbReceiveInvoice(assetId, amountBaseUnits) {
       assertRgbReceiveRequest(assetId, amountBaseUnits);
-      if (wallet === null) throw new Error('the wallet is not open');
+      if (wallet === null) throw new PaymentValidationError('the wallet is not open');
       if (usdmAssetId !== null && assetId !== usdmAssetId) throw new Error('unexpected receive asset');
       const result = await loadWdkService().createUsdmReceiveInvoice(wallet.account, { assetId, amountBaseUnits });
       if (!result.recipientId) throw new Error('RGB receive invoice has no recipient id');

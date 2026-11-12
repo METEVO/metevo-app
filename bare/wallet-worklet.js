@@ -13,6 +13,7 @@
  * parameters. They live in worklet memory only while the node runs.
  */
 import {
+  PaymentValidationError,
   assertPayableInvoice,
   assertRgbReceiveRequest,
   decodedInvoiceView,
@@ -67,7 +68,7 @@ function emitProgress(step, message) {
 
 function requireOpenWallet() {
   if (wallet === null) {
-    throw new Error('the wallet is not open')
+    throw new PaymentValidationError('the wallet is not open')
   }
   return wallet
 }
@@ -219,7 +220,7 @@ async function dispatchFrame(line) {
     IPC.write(JSON.stringify({ id: request.id, ok: true, result }) + '\n')
   } catch (cause) {
     const error = cause instanceof Error ? cause.message : String(cause)
-    IPC.write(JSON.stringify({ id: request.id, ok: false, error }) + '\n')
+    IPC.write(JSON.stringify({ id: request.id, ok: false, error, errorName: cause instanceof PaymentValidationError ? 'PaymentValidationError' : 'Error' }) + '\n')
   }
 }
 

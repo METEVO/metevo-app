@@ -81,7 +81,7 @@ export async function createUsdmReceiveInvoice(account, options) {
         }
     }
     const response = (await account.createRgbInvoice(request));
-    const invoice = response?.invoice ?? response?.recipient_id;
+    const invoice = response?.invoice;
     if (typeof invoice !== 'string' || invoice.length === 0) {
         throw new Error('createRgbInvoice returned no invoice');
     }
