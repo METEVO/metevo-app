@@ -2,6 +2,7 @@
   "expo": {
     "name": "METEVO",
     "slug": "metevo",
+    "scheme": "metevo",
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
@@ -13,6 +14,13 @@
         "expo-audio",
         {
           "microphonePermission": "METEVO listens only while you press the talk button, and processes your voice on this device."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "METEVO uses the camera only to read a contact QR code while you scan it.",
+          "recordAudioAndroid": false
         }
       ],
       [
