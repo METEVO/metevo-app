@@ -148,6 +148,7 @@ export function ReceiveRequestCard({
   useEffect(() => {
     return () => {
       const link = linkRef.current;
+      if (isLocalLinkActive) cancelledRef.current = true;
       if (link !== null && isLocalLinkActive) {
         void link.stopGroup().catch(() => undefined);
       }
@@ -219,12 +220,14 @@ export function ReceiveRequestCard({
   }, [amountDraft, createRequest]);
 
   const startLocalReceive = useCallback(async () => {
-    if (linkRef.current !== null) {
+    if (linkRef.current !== null || localStageRef.current === 'local-preparing') {
       setNote('The previous local session is still stopping. Try again shortly.');
       return;
     }
     setNote(null);
     cancelledRef.current = false;
+    localStageRef.current = 'local-preparing';
+    setStage('local-preparing');
     // The watcher is single-flight: end the pending public request and let it
     // unwind first, otherwise the local flow would inherit its promise and
     // report its outcome as this one.
@@ -292,7 +295,7 @@ export function ReceiveRequestCard({
       await link.stopGroup().catch(() => undefined);
       linkRef.current = null;
     }
-  }, [createUsdmInvoice, watcher]);
+  }, [amountBaseUnits, createUsdmInvoice, watcher]);
 
   const stopLocalReceive = useCallback(() => {
     cancelledRef.current = true;
