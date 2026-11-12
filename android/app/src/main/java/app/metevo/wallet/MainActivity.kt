@@ -14,10 +14,12 @@ class MainActivity : ReactActivity() {
   override fun onResume() {
     super.onResume()
     app.metevo.wallet.localelink.LocalLinkState.setForeground(true)
+    app.metevo.wallet.contactnfc.ContactNfcState.setForeground(true)
   }
 
   override fun onPause() {
     app.metevo.wallet.localelink.LocalLinkState.setForeground(false)
+    app.metevo.wallet.contactnfc.ContactNfcState.setForeground(false)
     super.onPause()
   }
 

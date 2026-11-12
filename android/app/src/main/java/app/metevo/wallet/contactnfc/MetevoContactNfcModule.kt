@@ -65,7 +65,10 @@ class MetevoContactNfcModule(private val reactContext: ReactApplicationContext) 
                 promise.reject("EINVAL", "contact frame has an invalid size: ${frame.size}")
                 return
             }
-            ContactNfcState.sharedFrame.set(frame)
+            if (!ContactNfcState.arm(frame)) {
+                promise.reject("ECANCELLED", "contact sharing requires the foreground")
+                return
+            }
             promise.resolve(null)
         } catch (cause: Exception) {
             promise.reject("EINVAL", "contact frame is not valid base64", cause)
@@ -80,15 +83,16 @@ class MetevoContactNfcModule(private val reactContext: ReactApplicationContext) 
 
     @ReactMethod
     fun readFrame(timeoutMs: Int, promise: Promise) {
+        mainHandler.post {
         val adapter = NfcAdapter.getDefaultAdapter(reactContext)
         if (adapter == null || !adapter.isEnabled) {
             promise.reject("ENFC", "NFC is off or not available")
-            return
+            return@post
         }
         val activity = reactContext.currentActivity
-        if (activity == null) {
+        if (activity == null || reactContext.lifecycleState != com.facebook.react.common.LifecycleState.RESUMED) {
             promise.reject("ENFC", "no foreground activity for reader mode")
-            return
+            return@post
         }
         val read = PendingRead(promise, adapter)
         synchronized(lock) {
@@ -96,6 +100,7 @@ class MetevoContactNfcModule(private val reactContext: ReactApplicationContext) 
             pendingRead = read
         }
         mainHandler.postDelayed(read.timeout, timeoutMs.coerceAtLeast(1).toLong())
+        try {
         adapter.enableReaderMode(
             activity,
             { tag ->
@@ -120,14 +125,20 @@ class MetevoContactNfcModule(private val reactContext: ReactApplicationContext) 
             NfcAdapter.FLAG_READER_NFC_A or NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK,
             null,
         )
+        } catch (cause: Exception) {
+            finish(read) { it.reject("EREAD", "reader mode could not start", cause) }
+        }
+        }
     }
 
     @ReactMethod
     fun cancelRead(promise: Promise) {
-        synchronized(lock) { pendingRead }?.let { read ->
-            finish(read) { it.reject("ECANCELLED", "read cancelled") }
+        mainHandler.post {
+            synchronized(lock) { pendingRead }?.let { read ->
+                finish(read) { it.reject("ECANCELLED", "read cancelled") }
+            }
+            promise.resolve(null)
         }
-        promise.resolve(null)
     }
 
     @ReactMethod
@@ -150,6 +161,8 @@ class MetevoContactNfcModule(private val reactContext: ReactApplicationContext) 
         }
         mainHandler.removeCallbacks(read.timeout)
         mainHandler.post {
+            // An old read must not disable a newer reader session.
+            if (synchronized(lock) { pendingRead != null }) return@post
             reactContext.currentActivity?.let { activity ->
                 try {
                     read.adapter.disableReaderMode(activity)

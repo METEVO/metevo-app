@@ -48,11 +48,11 @@ class MetevoContactNfcApduService : HostApduService() {
             return STATUS_NOT_SUPPORTED
         }
         // Selecting succeeds only while a contact is actually being shared.
-        return if (ContactNfcState.sharedFrame.get() != null) STATUS_OK else STATUS_NOTHING_SHARED
+        return if (ContactNfcState.read() != null) STATUS_OK else STATUS_NOTHING_SHARED
     }
 
     private fun handleReadBinary(commandApdu: ByteArray): ByteArray {
-        val frame = ContactNfcState.sharedFrame.get() ?: return STATUS_NOTHING_SHARED
+        val frame = ContactNfcState.read() ?: return STATUS_NOTHING_SHARED
         if (commandApdu.size < 5) {
             return STATUS_NOT_SUPPORTED
         }

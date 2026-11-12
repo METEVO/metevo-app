@@ -12,7 +12,6 @@ import { encodeContactLink, decodeContactLink, MAX_CONTACT_LINK_BYTES } from './
  * The frame is built and checked here; the Kotlin side only stores and
  * serves bytes, like the local-link credential frame.
  */
-export const CONTACT_NFC_AID = 'F04D455445564F02';
 const LENGTH_HEADER_BYTES = 2;
 export const MAX_CONTACT_NFC_FRAME_BYTES = LENGTH_HEADER_BYTES + MAX_CONTACT_LINK_BYTES;
 

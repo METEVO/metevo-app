@@ -39,13 +39,33 @@ export function useContactNfcShare(link: string): ContactNfcStatus | 'failed' | 
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     if (status !== 'ready') return undefined;
-    let active = true;
-    void startContactNfcSharing(link)
-      .then(() => { if (active) logContactEvent('nfc:sharing'); })
-      .catch(() => { if (active) setFailed(true); });
+    let mounted = true;
+    let foreground = AppState.currentState === 'active';
+    let generation = 0;
+    let pending = Promise.resolve();
+    const update = () => {
+      const run = ++generation;
+      pending = pending.then(async () => {
+        await stopContactNfcSharing();
+        if (!mounted || !foreground || run !== generation) return;
+        await startContactNfcSharing(link);
+        if (!mounted || !foreground || run !== generation) {
+          await stopContactNfcSharing();
+          return;
+        }
+        logContactEvent('nfc:sharing');
+      }).catch(() => { if (mounted && foreground) setFailed(true); });
+    };
+    update();
+    const subscription = AppState.addEventListener('change', (state) => {
+      foreground = state === 'active';
+      update();
+    });
     return () => {
-      active = false;
-      void stopContactNfcSharing();
+      mounted = false;
+      foreground = false;
+      subscription.remove();
+      update();
     };
   }, [link, status]);
   return failed ? 'failed' : status;
@@ -88,11 +108,20 @@ export function useContactNfcReader(onLink: (link: string) => boolean) {
 
   useEffect(() => {
     if (status !== 'ready') return undefined;
-    let active = true;
-    void loop(() => active);
+    let active = false;
+    let generation = 0;
+    const update = (state: string) => {
+      active = state === 'active';
+      const run = ++generation;
+      void cancelContactNfcRead().then(() => {
+        if (active && run === generation) void loop(() => active && run === generation);
+      }).catch(() => { if (active) setNotice('failed'); });
+    };
+    update(AppState.currentState);
+    const subscription = AppState.addEventListener('change', update);
     return () => {
-      active = false;
-      void cancelContactNfcRead();
+      subscription.remove();
+      update('background');
     };
   }, [loop, status]);
 
