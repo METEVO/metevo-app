@@ -1,52 +1,39 @@
-import { useCallback, useEffect, useState } from 'react';
-
-import { SwapFlow, SwapFlowStart, SwapFlowState } from '../services/swap/swapFlow';
-import { createSimulatedSwapService } from '../services/swap/swapService';
+import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import { ENV } from '../config/env';
+import { SwapFlow, SwapFlowStart } from '../services/swap/swapFlow';
+import { purchaseRuntime } from '../services/swap/purchaseRuntime';
 import { announceForAccessibility, speakEnglish } from '../utils/speaker';
+import { useWalletSession } from './useWalletSession';
 
-/** A device without any screen lock has no prompt to show: the tap on
- * "Confirm" is the confirmation there. */
-async function authorizeWithDeviceLock(reason: string): Promise<void> {
-  const { authenticateToAccessSecrets, hasDeviceLock } = await import(
-    '../services/metevo/secure-store'
-  );
-  if (await hasDeviceLock().catch(() => true)) {
-    await authenticateToAccessSecrets(reason);
-  }
-}
-
-function announce(text: string): void {
-  speakEnglish(text);
-  announceForAccessibility(text);
-}
-
-function createFlow(start: SwapFlowStart): SwapFlow {
-  return new SwapFlow(
-    {
-      service: createSimulatedSwapService(),
-      authorize: authorizeWithDeviceLock,
-      announce,
-      now: Date.now,
-    },
-    start,
-  );
-}
-
-/** Binds one `SwapFlow` to the card's lifetime; `restart` begins a fresh one. */
 export function useSwapFlow(start: SwapFlowStart) {
-  const [flow, setFlow] = useState(() => createFlow(start));
-  const [state, setState] = useState<SwapFlowState>(() => flow.getState());
-
-  useEffect(() => {
-    setState(flow.getState());
-    const unsubscribe = flow.subscribe(setState);
-    return () => {
-      unsubscribe();
-      flow.dispose();
-    };
-  }, [flow]);
-
-  const restart = useCallback(() => setFlow(createFlow(start)), [start]);
-
-  return { flow, state, restart };
+  const session = useWalletSession();
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  const node = session.wallet?.nodePubkey ?? '';
+  const flow = useMemo(() => {
+    let runtime: ReturnType<typeof purchaseRuntime> | undefined;
+    const getRuntime = () => { runtime ??= purchaseRuntime(() => sessionRef.current, node); return runtime; };
+    return new SwapFlow({
+      enabled: () => ENV.EXPO_PUBLIC_REAL_USDM_PURCHASE && ENV.EXPO_PUBLIC_WALLET_MODE !== 'mock' && !!node,
+      expectedAssetId: () => sessionRef.current.wallet?.usdmAssetId ?? null,
+      ledger: () => getRuntime().ledger,
+      purchase: {
+        buy: (amount) => getRuntime().ports.buy(amount), claim: (params) => getRuntime().ports.claim(params),
+        decodeInvoice: (invoice) => getRuntime().ports.decodeInvoice(invoice),
+        payInvoice: (invoice) => getRuntime().ports.payInvoice(invoice),
+        checkPayment: (hash) => getRuntime().ports.checkPayment(hash),
+        createRgbReceiveInvoice: (asset, amount) => getRuntime().ports.createRgbReceiveInvoice(asset, amount),
+        verifyDelivery: (recipient, asset, amount) => getRuntime().ports.verifyDelivery(recipient, asset, amount),
+        now: Date.now, sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      },
+      async authorize(reason) {
+        const { hasDeviceLock, authenticateToAccessSecrets } = await import('../services/metevo/secure-store');
+        if (await hasDeviceLock().catch(() => true)) await authenticateToAccessSecrets(reason);
+      },
+      announce(text) { speakEnglish(text); announceForAccessibility(text); }, now: Date.now,
+    }, start);
+  }, [node, start]);
+  const state = useSyncExternalStore(flow.subscribe, flow.getState);
+  useEffect(() => { if (node && ENV.EXPO_PUBLIC_WALLET_MODE !== 'mock') void flow.restore(); return () => flow.dispose(); }, [flow, node]);
+  return { flow, state, enabled: ENV.EXPO_PUBLIC_REAL_USDM_PURCHASE && ENV.EXPO_PUBLIC_WALLET_MODE !== 'mock' && !!node };
 }

@@ -1,218 +1,32 @@
-import { SIMULATION_NOTICE, SwapFlow, SwapFlowPorts } from '../../src/services/swap/swapFlow';
-import { SIMULATED_QUOTE_TTL_MS } from '../../src/services/swap/swapQuote';
-import { SwapExecutionResult, SwapService, createSimulatedSwapService } from '../../src/services/swap/swapService';
-
-const NOW = 1_700_000_000_000;
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
+import { SwapFlow, SwapFlowPorts } from '../../src/services/swap/swapFlow';
+import { PurchaseOrder, UsdmPurchaseLedger, UsdmPurchasePorts } from '../../src/services/swap/usdmPurchase';
+const hash = 'a'.repeat(64);
+function setup(enabled = true) {
+  let rows: PurchaseOrder[] = [];
+  const ledger = new UsdmPurchaseLedger({ load: async () => rows, save: async (next) => { rows = next; } });
+  const purchase: UsdmPurchasePorts = {
+    buy: jest.fn(async () => ({ paymentHash: hash, invoice: 'lnbcrt1test', sats: 1000, usdAmount: 1, assetId: 'rgb:usdm', assetAmount: 100000000, amountMsat: 1000000, satsPerUsd: 1000, expiresAt: 100 })),
+    decodeInvoice: async () => ({ paymentHash: hash, amountMsat: 1000000, assetId: null, assetAmount: null, payeePubkey: null }),
+    payInvoice: jest.fn(async () => ({ paymentHash: hash })), checkPayment: async () => 'settled',
+    createRgbReceiveInvoice: async () => ({ invoice: 'rgb:receive', recipientId: 'receiver' }),
+    claim: async () => ({ paymentHash: hash, assetId: 'rgb:usdm', assetAmount: 100000000, status: 'delivered' }),
+    verifyDelivery: async () => true, now: () => 1000, sleep: async () => {},
+  };
+  const ports: SwapFlowPorts = { enabled: () => enabled, expectedAssetId: () => 'rgb:usdm', ledger: () => ledger, purchase, authorize: jest.fn(async () => {}), announce: jest.fn(), now: () => 1000 };
+  const flow = new SwapFlow(ports, { draft: '1' });
+  return { flow, ports, purchase, ledger };
 }
-
-function setup(overrides: Partial<SwapFlowPorts> = {}, draft = '10') {
-  let clock = NOW;
-  const announcements: string[] = [];
-  const service = createSimulatedSwapService({ delayMs: 0 });
-  const ports: SwapFlowPorts = {
-    service,
-    authorize: jest.fn().mockResolvedValue(undefined),
-    announce: (text) => announcements.push(text),
-    now: () => clock,
-    ...overrides,
-  };
-  const flow = new SwapFlow(ports, { direction: 'USDM_TO_BTC', draft });
-  return {
-    flow,
-    ports,
-    announcements,
-    advance: (ms: number) => {
-      clock += ms;
-    },
-  };
-}
-
-describe('swap flow', () => {
-  test('entry -> review -> one biometric prompt -> simulation completed', async () => {
-    const { flow, ports, announcements } = setup();
-    flow.review(null);
-    expect(flow.getState().stage).toBe('review');
-    expect(announcements[0]).toContain(SIMULATION_NOTICE);
-
-    await flow.confirm();
-    expect(ports.authorize).toHaveBeenCalledTimes(1);
-    expect(flow.getState().stage).toBe('completed');
-    expect(announcements.at(-1)).toContain('No funds were exchanged');
-  });
-
-  test('an invalid amount stays on the entry with a spoken note', () => {
-    const { flow, announcements } = setup({}, '1.005');
-    flow.review(null);
-    const state = flow.getState();
-    expect(state.stage).toBe('entry');
-    expect(state.stage === 'entry' && state.note).toBe('Enter a valid amount.');
-    expect(announcements).toEqual(['Enter a valid amount.']);
-  });
-
-  test('a known balance below the amount warns but still allows the simulation', async () => {
-    const { flow, announcements } = setup({}, '10');
-    flow.review(999);
-    const state = flow.getState();
-    expect(state.stage).toBe('review');
-    const warning = 'Your balance is 9.99 USDm: a real swap would fail.';
-    expect(state.stage === 'review' && state.balanceWarning).toBe(warning);
-    expect(announcements[0]).toContain(warning);
-    await flow.confirm();
-    expect(flow.getState().stage).toBe('completed');
-  });
-
-  test('no warning when the balance covers the amount or is unknown', () => {
-    const covered = setup({}, '10');
-    covered.flow.review(1_000);
-    const unknown = setup({}, '10');
-    unknown.flow.review(null);
-    for (const { flow } of [covered, unknown]) {
-      const state = flow.getState();
-      expect(state.stage === 'review' && state.balanceWarning).toBeNull();
-    }
-  });
-
-  const entry = (flow: SwapFlow) => {
-    const state = flow.getState();
-    if (state.stage !== 'entry') throw new Error(`expected entry, got ${state.stage}`);
-    return state;
-  };
-
-  test('reverse converts the typed amount at the example rate instead of keeping the number', () => {
-    const { flow } = setup({}, '10');
-    flow.reverse();
-    expect(entry(flow)).toMatchObject({ direction: 'BTC_TO_USDM', draft: '10000', btcUnit: 'SATS' });
-    flow.reverse();
-    expect(entry(flow)).toMatchObject({ direction: 'USDM_TO_BTC', draft: '10.00' });
-  });
-
-  test('reverse in the BTC unit converts into BTC decimals', () => {
-    const { flow } = setup({}, '10');
-    flow.setBtcUnit('BTC');
-    flow.reverse();
-    expect(entry(flow)).toMatchObject({ draft: '0.0001', btcUnit: 'BTC' });
-  });
-
-  test('reverse clears an amount that is not a valid number', () => {
-    const { flow } = setup({}, 'abc');
-    flow.reverse();
-    expect(entry(flow).draft).toBe('');
-  });
-
-  test('switching sats <-> BTC keeps the same value', () => {
-    const flow = new SwapFlow(setup().ports, { direction: 'BTC_TO_USDM', draft: '5000' });
-    flow.setBtcUnit('BTC');
-    expect(entry(flow)).toMatchObject({ draft: '0.00005', btcUnit: 'BTC' });
-    flow.setBtcUnit('SATS');
-    expect(entry(flow)).toMatchObject({ draft: '5000', btcUnit: 'SATS' });
-  });
-
-  test('a BTC amount is reviewed in whole sats and edited back in BTC', () => {
-    const flow = new SwapFlow(setup().ports, {
-      direction: 'BTC_TO_USDM',
-      draft: '0.00005',
-      btcUnit: 'BTC',
-    });
-    flow.review(null);
-    const state = flow.getState();
-    expect(state.stage === 'review' && state.quote.amountIn).toBe(5_000);
-    flow.edit();
-    expect(entry(flow)).toMatchObject({ draft: '0.00005', btcUnit: 'BTC' });
-  });
-
-  test('a sats amount typed with decimals is refused, not rounded', () => {
-    const flow = new SwapFlow(setup().ports, { direction: 'BTC_TO_USDM', draft: '5000.5' });
-    flow.review(null);
-    expect(entry(flow).note).toBe('Enter a valid amount.');
-  });
-
-  test('a cancelled fingerprint returns to the review without simulating', async () => {
-    const execute = jest.fn();
-    const service: SwapService = { ...createSimulatedSwapService({ delayMs: 0 }), execute };
-    const { flow } = setup({
-      service,
-      authorize: jest.fn().mockRejectedValue(new Error('cancelled')),
-    });
-    flow.review(null);
-    await flow.confirm();
-    const state = flow.getState();
-    expect(state.stage).toBe('review');
-    expect(state.stage === 'review' && state.note).toContain('Nothing happened');
-    expect(execute).not.toHaveBeenCalled();
-  });
-
-  test('a double tap on confirm prompts and simulates only once', async () => {
-    const pending = deferred<void>();
-    const authorize = jest.fn().mockReturnValue(pending.promise);
-    const base = createSimulatedSwapService({ delayMs: 0 });
-    const execute = jest.fn<Promise<SwapExecutionResult>, Parameters<SwapService['execute']>>(
-      (quote, now) => base.execute(quote, now),
-    );
-    const { flow } = setup({ authorize, service: { ...base, execute } });
-    flow.review(null);
-
-    const first = flow.confirm();
-    const second = flow.confirm();
-    pending.resolve();
-    await Promise.all([first, second]);
-
-    expect(authorize).toHaveBeenCalledTimes(1);
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(flow.getState().stage).toBe('completed');
-  });
-
-  test('an expired quote goes back to the amount instead of prompting', async () => {
-    const { flow, ports, advance } = setup();
-    flow.review(null);
-    advance(SIMULATED_QUOTE_TTL_MS);
-    await flow.confirm();
-    const state = flow.getState();
-    expect(state.stage).toBe('entry');
-    expect(state.stage === 'entry' && state.draft).toBe('10.00');
-    expect(ports.authorize).not.toHaveBeenCalled();
-  });
-
-  test('a simulated failure is reported and spoken', async () => {
-    const { flow, announcements } = setup({
-      service: createSimulatedSwapService({ delayMs: 0, fail: true }),
-    });
-    flow.review(null);
-    await flow.confirm();
-    const state = flow.getState();
-    expect(state.stage).toBe('failed');
-    expect(announcements.at(-1)).toBe('The simulation failed. No funds were exchanged.');
-  });
-
-  test('closing the card drops a late fingerprint result', async () => {
-    const pending = deferred<void>();
-    const execute = jest.fn();
-    const { flow } = setup({
-      authorize: jest.fn().mockReturnValue(pending.promise),
-      service: { ...createSimulatedSwapService({ delayMs: 0 }), execute },
-    });
-    flow.review(null);
-    const confirming = flow.confirm();
-    flow.dispose();
-    pending.resolve();
-    await confirming;
-    expect(execute).not.toHaveBeenCalled();
-    expect(flow.getState().stage).toBe('authorizing');
-  });
-
-  test('edit keeps the reviewed amount', () => {
-    const { flow } = setup({}, '12.5');
-    flow.review(null);
-    flow.edit();
-    const state = flow.getState();
-    expect(state.stage === 'entry' && state.draft).toBe('12.50');
-  });
+test('disabled purchase never requests a quote or payment', async () => { const s = setup(false); await s.flow.review(); await s.flow.confirm(); expect(s.purchase.buy).not.toHaveBeenCalled(); expect(s.purchase.payInvoice).not.toHaveBeenCalled(); });
+test('whole USD only; voice cannot execute without review and confirmation', async () => { const s = setup(); await s.flow.confirm(); expect(s.purchase.payInvoice).not.toHaveBeenCalled(); s.flow.setDraft('1.5'); await s.flow.review(); expect(s.purchase.buy).not.toHaveBeenCalled(); });
+test('review shows real quote; concurrent confirmations pay once', async () => { const s = setup(); await s.flow.review(); expect(s.flow.getState()).toMatchObject({ stage: 'review', quote: { sats: 1000, usdAmount: 1 } }); await Promise.all([s.flow.confirm(), s.flow.confirm()]); expect(s.purchase.payInvoice).toHaveBeenCalledTimes(1); expect(s.flow.getState().stage).toBe('completed'); });
+test('cancelled authorization and disposal while authorizing never submit', async () => {
+  const s = setup(); await s.flow.review(); s.ports.authorize = async () => { throw new Error('cancel'); }; await s.flow.confirm(); expect(s.flow.getState().stage).toBe('review');
+  let finish!: () => void; s.ports.authorize = () => new Promise((resolve) => { finish = resolve; }); const confirming = s.flow.confirm(); s.flow.dispose(); finish(); await confirming; expect(s.purchase.payInvoice).not.toHaveBeenCalled();
+});
+test('quote expiry after authorization never pays', async () => { const s = setup(); await s.flow.review(); s.ports.authorize = async () => { s.purchase.now = () => 200000; }; await s.flow.confirm(); expect(s.purchase.payInvoice).not.toHaveBeenCalled(); expect(s.flow.getState().stage).toBe('failed'); });
+test('a pending purchase is restored and resumed without another payment', async () => {
+  const s = setup(); s.purchase.verifyDelivery = async () => false;
+  await s.flow.review(); await s.flow.confirm(); expect(s.flow.getState().stage).toBe('pending');
+  const reopened = new SwapFlow(s.ports, { draft: '2' }); await reopened.restore(); expect(reopened.getState().stage).toBe('pending');
+  s.purchase.verifyDelivery = async () => true; await reopened.resume(); expect(reopened.getState().stage).toBe('completed'); expect(s.purchase.payInvoice).toHaveBeenCalledTimes(1);
 });

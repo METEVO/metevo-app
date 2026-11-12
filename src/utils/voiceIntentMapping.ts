@@ -31,14 +31,7 @@ function payableAmount(amount: number | null): amount is number {
 
 /** Spoken swap amount as the card's editable text, only when it fits the
  * unit exactly (sats 0 decimals, BTC 8, dollars 2); otherwise left empty. */
-function swapDraft(amount: number | null, maxDecimals: number): string {
-  if (amount === null || !Number.isFinite(amount) || amount <= 0) {
-    return '';
-  }
-  const text = String(amount);
-  const pattern = maxDecimals === 0 ? /^\d+$/ : new RegExp(`^\\d+(\\.\\d{1,${maxDecimals}})?$`);
-  return pattern.test(text) ? text : '';
-}
+
 
 export function intentActionFromInstruction(
   instruction: WalletInstruction,
@@ -83,17 +76,13 @@ export function intentActionFromInstruction(
         transcript,
       };
     case 'SWAP': {
-      const currency = instruction.currency ?? '';
-      const fromBitcoin = BTC_CURRENCY_PATTERN.test(currency);
-      const btcUnit = /sat/i.test(currency) || !fromBitcoin ? 'SATS' : 'BTC';
+      const purchaseUsd = /\b(buy|purchase)\b/i.test(transcript) &&
+        /^(usd|usdm|dollars?)$/i.test(instruction.currency ?? '') &&
+        Number.isSafeInteger(instruction.amount) && instruction.amount! > 0;
       return {
         cardId: 'swap',
-        payload: {
-          direction: fromBitcoin ? 'BTC_TO_USDM' : 'USDM_TO_BTC',
-          draft: swapDraft(instruction.amount, fromBitcoin ? (btcUnit === 'SATS' ? 0 : 8) : 2),
-          btcUnit,
-        },
-        announcement: 'Opening the swap simulation. No funds will be exchanged.',
+        payload: purchaseUsd ? { purchaseUsd: true, draft: String(instruction.amount) } : null,
+        announcement: 'Opening Buy USDm. Enter the whole USDm amount you want to receive, then review and confirm.',
         transcript,
       };
     }

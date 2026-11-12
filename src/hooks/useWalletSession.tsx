@@ -9,6 +9,7 @@ import React, {
   type ReactNode,
 } from 'react';
 
+import { ENV } from '../config/env';
 import { ThemeMode, useThemePreference } from '../design/ThemeContext';
 import {
   PaymentNetworkStatus,
@@ -222,6 +223,29 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       connectPeer,
     ],
   );
+
+  const recoverySessionRef = useRef(session);
+  recoverySessionRef.current = session;
+  const recoveryNode = wallet?.nodePubkey ?? null;
+  useEffect(() => {
+    if (!recoveryNode || connection !== 'online' || ENV.EXPO_PUBLIC_WALLET_MODE === 'mock') return undefined;
+    let disposed = false;
+    let running = false;
+    const recover = async () => {
+      if (running || disposed) return;
+      running = true;
+      try {
+        const { purchaseRuntime, resumePurchaseOrders } = await import('../services/swap/purchaseRuntime');
+        if (disposed) return;
+        const runtime = purchaseRuntime(() => recoverySessionRef.current, recoveryNode);
+        await resumePurchaseOrders(runtime);
+      } catch { /* Orders remain durable; the purchase card exposes retry. */ }
+      finally { running = false; }
+    };
+    void recover();
+    const timer = setInterval(() => { void recover(); }, 30_000);
+    return () => { disposed = true; clearInterval(timer); };
+  }, [recoveryNode, connection]);
 
   return (
     <WalletSessionContext.Provider value={session}>

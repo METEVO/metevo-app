@@ -86,45 +86,18 @@ describe('wallet instruction -> intent card mapping', () => {
     expect(intentActionFromInstruction(instruction({ intent: 'UNKNOWN' }), '')).toBeNull();
   });
 
-  test('a dollar swap opens the simulation from USDm with the spoken amount', () => {
-    const action = intentActionFromInstruction(
-      instruction({ intent: 'SWAP', amount: 12.5, currency: 'USD' }),
-      'Swap 12.5 dollars to bitcoin',
-    );
-    expect(action!.cardId).toBe('swap');
-    expect(action!.payload).toEqual({ direction: 'USDM_TO_BTC', draft: '12.5', btcUnit: 'SATS' });
-    expect(action!.announcement).toContain('No funds will be exchanged');
+  test.each([
+    { amount: 12.5, currency: 'USD', transcript: 'Swap 12.5 dollars to bitcoin' },
+    { amount: 5000, currency: 'sats', transcript: 'Swap 5000 sats to dollars' },
+    { amount: 0.001, currency: 'BTC', transcript: 'Swap 0.001 bitcoin to dollars' },
+  ])('unsupported input units never become a USD purchase amount', ({ amount, currency, transcript }) => {
+    const action = intentActionFromInstruction(instruction({ intent: 'SWAP', amount, currency }), transcript)!;
+    expect(action.cardId).toBe('swap'); expect(action.payload).toBeNull();
+    expect(action.announcement).toContain('review and confirm');
   });
-
-  test('a sats swap opens the simulation from BTC', () => {
-    const action = intentActionFromInstruction(
-      instruction({ intent: 'SWAP', amount: 5000, currency: 'sats' }),
-      'Swap 5000 sats to dollars',
-    );
-    expect(action!.payload).toEqual({ direction: 'BTC_TO_USDM', draft: '5000', btcUnit: 'SATS' });
-  });
-
-  test('a BTC swap keeps the decimals and opens in the BTC unit', () => {
-    const action = intentActionFromInstruction(
-      instruction({ intent: 'SWAP', amount: 0.001, currency: 'BTC' }),
-      'Swap 0.001 bitcoin to dollars',
-    );
-    expect(action!.payload).toEqual({ direction: 'BTC_TO_USDM', draft: '0.001', btcUnit: 'BTC' });
-  });
-
-  test('a swap amount the card cannot hold exactly is left empty', () => {
-    expect(
-      intentActionFromInstruction(instruction({ intent: 'SWAP', amount: 10.5, currency: 'sats' }), '')!
-        .payload,
-    ).toEqual({ direction: 'BTC_TO_USDM', draft: '', btcUnit: 'SATS' });
-    expect(
-      intentActionFromInstruction(instruction({ intent: 'SWAP', amount: 1.005, currency: 'USD' }), '')!
-        .payload,
-    ).toEqual({ direction: 'USDM_TO_BTC', draft: '', btcUnit: 'SATS' });
-    expect(intentActionFromInstruction(instruction({ intent: 'SWAP' }), '')!.payload).toEqual({
-      direction: 'USDM_TO_BTC',
-      draft: '',
-      btcUnit: 'SATS',
-    });
+  test('an explicit whole-dollar purchase may prefill but never execute', () => {
+    const action = intentActionFromInstruction(instruction({ intent: 'SWAP', amount: 10, currency: 'USD' }), 'Buy 10 dollars with sats')!;
+    expect(action.payload).toEqual({ purchaseUsd: true, draft: '10' });
+    expect(intentActionFromInstruction(instruction({ intent: 'SWAP', amount: 1.5, currency: 'USD' }), 'Buy 1.5 dollars')!.payload).toBeNull();
   });
 });
