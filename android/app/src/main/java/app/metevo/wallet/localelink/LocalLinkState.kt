@@ -11,6 +11,28 @@ import java.util.concurrent.atomic.AtomicReference
  * never touches wallet seeds or node keys.
  */
 object LocalLinkState {
+    @Volatile private var foreground = false
+
+    @Synchronized fun setForeground(active: Boolean) {
+        foreground = active
+        if (!active) clear()
+    }
+
+    @Synchronized fun armCredentials(frame: ByteArray): Boolean {
+        if (!foreground) return false
+        credentialFrame.set(frame)
+        return true
+    }
+
+    @Synchronized fun armInvoice(invoice: ServedInvoice): Boolean {
+        if (!foreground) return false
+        servedInvoice.set(invoice)
+        return true
+    }
+
+    @Synchronized fun readCredentials(): ByteArray? =
+        if (foreground) credentialFrame.get() else null
+
     /** The 240-byte credential frame served over the private AID. */
     val credentialFrame = AtomicReference<ByteArray?>(null)
 
