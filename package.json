@@ -12,7 +12,9 @@
     "postinstall": "patch-package",
     "bundle:wallet": "npm run compile:worklet && bare-pack bare/wallet-worklet.js --linked --imports node_modules/bare-node-runtime/imports.json -o bare/wallet.rlnbundle",
     "compile:worklet": "tsc -p tsconfig.worklet.json",
-    "bundle:qvac": "node scripts/bundle-qvac-sdk.mjs"
+    "bundle:qvac": "node scripts/bundle-qvac-sdk.mjs",
+    "ios:device": "expo run:ios --device",
+    "ios:prepare": "expo prebuild --platform ios"
   },
   "dependencies": {
     "@qvac/asr-ggml-android-arm64": "0.7.1",

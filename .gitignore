@@ -6,7 +6,9 @@ android/build/
 android/local.properties
 build/
 *.log
-.env.local
+.env
+.env.*
+!.env.example
 scripts/device-wallet-config.json
 ios/Pods/
 

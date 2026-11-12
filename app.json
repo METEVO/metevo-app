@@ -29,6 +29,14 @@
           "installMissingPrebuilds": true
         }
       ]
-    ]
+    ],
+    "ios": {
+      "bundleIdentifier": "app.metevo.wallet",
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "METEVO connects to the development server and test wallet on your local network.",
+        "NSFaceIDUsageDescription": "METEVO uses Face ID to confirm wallet actions when biometric authentication is enabled."
+      }
+    }
   }
 }
