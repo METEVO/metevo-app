@@ -101,6 +101,11 @@ export function usePaymentFlow() {
   /** Bumped by cancel: a request loop from an abandoned attempt stops and
    * never reopens an old proposal. */
   const requestRunRef = useRef(0);
+  /** The balance refreshes while a card is open (settlement, polling). Read
+   * through a ref so a new value never recreates `start`: the card's effect
+   * would re-run it and ask the recipient for a second invoice. */
+  const walletRef = useRef(wallet);
+  walletRef.current = wallet;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -214,7 +219,7 @@ export function usePaymentFlow() {
             });
             const warning = lowBalanceWarning(
               intent.amount,
-              wallet?.balanceUsdmBaseUnits ?? null,
+              walletRef.current?.balanceUsdmBaseUnits ?? null,
             );
             contextRef.current = { ...contextRef.current, balanceWarning: warning };
             setBalanceWarning(warning);
@@ -242,7 +247,7 @@ export function usePaymentFlow() {
         failWith('The invoice request failed. Try again.');
       }
     },
-    [ensureRelay, enterStage, failWith, wallet?.nodePubkey, wallet?.balanceUsdmBaseUnits],
+    [ensureRelay, enterStage, failWith, wallet?.nodePubkey],
   );
 
   const confirm = useCallback(async () => {
