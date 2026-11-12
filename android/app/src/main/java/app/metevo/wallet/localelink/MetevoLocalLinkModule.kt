@@ -51,7 +51,10 @@ class MetevoLocalLinkModule(private val reactContext: ReactApplicationContext) :
                 promise.reject("EINVAL", "credential frame must be exactly 240 bytes, got ${frame.size}")
                 return
             }
-            LocalLinkState.credentialFrame.set(frame)
+            if (!LocalLinkState.armCredentials(frame)) {
+                promise.reject("EBACKGROUND", "start a new receive session in the foreground")
+                return
+            }
             promise.resolve(null)
         } catch (cause: Exception) {
             promise.reject("ELOCALELINK", "startTagEmulation failed", cause)
@@ -87,7 +90,10 @@ class MetevoLocalLinkModule(private val reactContext: ReactApplicationContext) :
     @ReactMethod
     fun serveInvoice(sessionId: String, invoice: String, promise: Promise) {
         try {
-            LocalLinkState.servedInvoice.set(LocalLinkState.ServedInvoice(sessionId, invoice))
+            if (!LocalLinkState.armInvoice(LocalLinkState.ServedInvoice(sessionId, invoice))) {
+                promise.reject("EBACKGROUND", "the receive session has ended")
+                return
+            }
             promise.resolve(null)
         } catch (cause: Exception) {
             promise.reject("ELOCALELINK", "serveInvoice failed", cause)

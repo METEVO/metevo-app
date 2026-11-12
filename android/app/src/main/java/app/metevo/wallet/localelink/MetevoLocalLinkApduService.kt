@@ -20,6 +20,13 @@ class MetevoLocalLinkApduService : HostApduService() {
             0x45.toByte(), 0x56.toByte(), 0x4F.toByte(), 0x01.toByte(),
         )
 
+        internal fun acceptsSelect(command: ByteArray): Boolean {
+            if (command.size < 5) return false
+            val lc = command[4].toInt() and 0xFF
+            return lc == LOCAL_LINK_AID.size && command.size >= 5 + lc &&
+                command.copyOfRange(5, 5 + lc).contentEquals(LOCAL_LINK_AID)
+        }
+
         private const val INS_SELECT = 0xA4.toByte()
         private const val INS_READ_BINARY = 0xB0.toByte()
 
@@ -41,16 +48,11 @@ class MetevoLocalLinkApduService : HostApduService() {
     }
 
     private fun handleSelect(commandApdu: ByteArray): ByteArray {
-        // Case 4 SELECT: 00 A4 04 00 Lc <AID..> Le
-        val lc = commandApdu[4].toInt() and 0xFF
-        val hasOurAid = commandApdu.size >= 5 + lc &&
-            lc == LOCAL_LINK_AID.size &&
-            commandApdu.copyOfRange(5, 5 + lc).contentEquals(LOCAL_LINK_AID)
-        return if (hasOurAid) STATUS_OK else STATUS_NOT_SUPPORTED
+        return if (acceptsSelect(commandApdu)) STATUS_OK else STATUS_NOT_SUPPORTED
     }
 
     private fun handleReadBinary(commandApdu: ByteArray): ByteArray {
-        val frame = LocalLinkState.credentialFrame.get()
+        val frame = LocalLinkState.readCredentials()
             ?: return STATUS_NOT_INITIALIZED
         if (commandApdu.size < 5) {
             return STATUS_NOT_SUPPORTED
