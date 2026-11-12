@@ -65,7 +65,8 @@ function isJournalEntry(value: unknown): value is JournalEntry {
 export function parseJournal(raw: string): JournalEntry[] {
   try {
     const parsed: unknown = JSON.parse(raw);
-    const entries = Array.isArray(parsed) ? parsed : parsed?.entries;
+    const entries = Array.isArray(parsed) ? parsed :
+      (typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>).entries : null);
     if (!Array.isArray(entries)) {
       return [];
     }
