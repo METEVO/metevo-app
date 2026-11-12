@@ -27,6 +27,7 @@ export type WalletSetupStep =
   | 'ready';
 
 export interface WalletSessionSnapshot {
+  usdmAssetId?: string | null;
   nodePubkey: string | null;
   btcSpendableSat: number;
   balanceUsdmBaseUnits: number | null;
@@ -93,6 +94,8 @@ export interface WalletSessionGateway {
   createUsdmInvoice(
     amountBaseUnits: number | null,
   ): Promise<{ invoice: string; paymentHash: string | null }>;
+  /** Creates an on-chain RGB receive invoice, not a Lightning invoice. */
+  createRgbReceiveInvoice(assetId: string, amountBaseUnits: number): Promise<{ invoice: string; recipientId: string }>;
   /** Whether a usable channel exists with exactly this peer (direct route). */
   hasUsableChannelWith(peerPubkey: string): Promise<boolean>;
   /** Opens the LDK peer session (pubkey@host:port) for a direct payment. */
@@ -212,6 +215,9 @@ function createMockWalletSessionGateway(): WalletSessionGateway {
       // it never reaches a real node.
       const invoice = `lntb1metevomockreceive${amountBaseUnits ?? 'blind'}usdmdemo`;
       return { invoice, paymentHash: null };
+    },
+    async createRgbReceiveInvoice() {
+      throw new Error('real RGB purchases are unavailable in mock mode');
     },
     async hasUsableChannelWith(peerPubkey) {
       // The demo device shares a channel with the demo peer, so the

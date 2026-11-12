@@ -62,6 +62,7 @@ export interface WalletSession {
   createUsdmInvoice(
     amountBaseUnits: number | null,
   ): Promise<{ invoice: string; paymentHash: string | null }>;
+  createRgbReceiveInvoice(assetId: string, amountBaseUnits: number): Promise<{ invoice: string; recipientId: string }>;
   /** Whether a usable channel exists with this peer (direct route). */
   hasUsableChannelWith(peerPubkey: string): Promise<boolean>;
   /** Opens the LDK peer session (pubkey@host:port) for a direct payment. */
@@ -167,6 +168,12 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
     [withGateway],
   );
 
+  const createRgbReceiveInvoice = useCallback(
+    (assetId: string, amountBaseUnits: number) =>
+      withGateway((gateway) => gateway.createRgbReceiveInvoice(assetId, amountBaseUnits)),
+    [withGateway],
+  );
+
   const hasUsableChannelWith = useCallback(
     (peerPubkey: string) =>
       withGateway((gateway) => gateway.hasUsableChannelWith(peerPubkey)),
@@ -193,6 +200,7 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       decodeInvoice,
       refreshTransfers,
       createUsdmInvoice,
+      createRgbReceiveInvoice,
       hasUsableChannelWith,
       connectPeer,
     }),
@@ -209,6 +217,7 @@ export function WalletSessionProvider({ children }: { children: ReactNode }) {
       decodeInvoice,
       refreshTransfers,
       createUsdmInvoice,
+      createRgbReceiveInvoice,
       hasUsableChannelWith,
       connectPeer,
     ],

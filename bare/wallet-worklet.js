@@ -14,6 +14,9 @@
  */
 import {
   assertPayableInvoice,
+  assertRgbReceiveRequest,
+  decodedInvoiceView,
+  createUsdmReceiveInvoice,
   createMetevoWallet,
   createUsdmLightningInvoice,
   findAssetIdByTicker,
@@ -123,6 +126,7 @@ async function readStatus() {
   }
   const status = await getMetevoWalletStatus(wallet.account, usdmAssetId)
   return {
+    usdmAssetId,
     nodePubkey: status.pubkey,
     btcSpendableSat: status.btcSpendableSat,
     balanceUsdmBaseUnits: status.usdmBaseUnits,
@@ -136,6 +140,18 @@ async function submitPayment({ invoice }) {
   const response = await requireOpenWallet().account.sendPayment({ invoice })
   const paymentHash = String(response?.payment_hash ?? response?.paymentHash ?? '')
   return { paymentHash: paymentHash.length > 0 ? paymentHash : null }
+}
+
+async function decodeInvoice({ invoice }) {
+  return decodedInvoiceView(await requireOpenWallet().account.decodeInvoice(invoice))
+}
+
+async function createRgbReceiveInvoice({ assetId, amountBaseUnits }) {
+  assertRgbReceiveRequest(assetId, amountBaseUnits)
+  if (usdmAssetId !== null && usdmAssetId !== assetId) throw new Error('unexpected receive asset')
+  const result = await createUsdmReceiveInvoice(requireOpenWallet().account, { assetId, amountBaseUnits })
+  if (!result.recipientId) throw new Error('RGB receive invoice has no recipient id')
+  return { invoice: result.invoice, recipientId: result.recipientId }
 }
 
 async function checkPayment({ paymentHash }) {
@@ -176,6 +192,8 @@ const handlers = {
   readStatus,
   submitPayment,
   checkPayment,
+  decodeInvoice,
+  createRgbReceiveInvoice,
   refreshTransfers,
   createUsdmInvoice,
   hasUsableChannelWith: checkUsableChannelWith,

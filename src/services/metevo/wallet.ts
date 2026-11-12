@@ -4,6 +4,8 @@ import WalletManagerRgbLightning from '@utexo/wdk-rgb-lightning';
 // React Native app bundle imports them without pulling the WDK binding in).
 import {
   assertPayableInvoice,
+  assertRgbReceiveRequest,
+  decodedInvoiceView,
   getPaymentStatus,
   MetevoPaymentStatus,
   PaymentValidationError,
@@ -12,6 +14,8 @@ import { TransferInfo } from './transferWatcher';
 
 export {
   assertPayableInvoice,
+  assertRgbReceiveRequest,
+  decodedInvoiceView,
   getPaymentStatus,
   MetevoPaymentStatus,
   PaymentValidationError,
@@ -130,7 +134,7 @@ export async function ensureColorableUtxos(
 export async function createUsdmReceiveInvoice(
   account: MetevoWallet['account'],
   options: { assetId: string | null; amountBaseUnits: number | null; durationSeconds?: number },
-): Promise<{ invoice: string; kind: 'blind' | 'witness' }> {
+): Promise<{ invoice: string; kind: 'blind' | 'witness'; recipientId?: string }> {
   const aware = options.assetId !== null;
   const request: Record<string, unknown> = {
     min_confirmations: 1,
@@ -149,7 +153,7 @@ export async function createUsdmReceiveInvoice(
   if (typeof invoice !== 'string' || invoice.length === 0) {
     throw new Error('createRgbInvoice returned no invoice');
   }
-  return { invoice, kind: aware ? 'witness' : 'blind' };
+  return { invoice, kind: aware ? 'witness' : 'blind', ...(typeof response?.recipient_id === 'string' ? { recipientId: response.recipient_id } : {}) };
 }
 
 /**
@@ -185,14 +189,17 @@ export async function refreshWalletTransfers(
     }
     const record = entry as Record<string, unknown>;
     const transferId = String(
-      record.transfer_id ?? record.transferId ?? record.txid ?? '',
+      record.transfer_id ?? record.transferId ?? record.idx ?? record.txid ?? '',
     );
     if (transferId.length === 0) {
       continue;
     }
-    const amountRaw = record.receive_amount ?? record.amount ?? null;
+    const assignments = Array.isArray(record.assignments) ? record.assignments : [];
+    const fungible = assignments.find((item: Record<string, unknown>) => item.type === 'Fungible');
+    const amountRaw = record.receive_amount ?? record.amount ?? fungible?.value ?? null;
     mapped.push({
       transferId,
+      ...(typeof record.recipient_id === 'string' ? { recipientId: record.recipient_id } : {}),
       kind: String(record.kind ?? ''),
       status: String(record.status ?? ''),
       amount:

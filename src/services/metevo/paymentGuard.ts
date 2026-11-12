@@ -35,6 +35,8 @@ export interface ReviewedPayment {
 
 /** The decoded bolt11 fields the payment boundary checks. */
 export interface DecodedInvoiceView {
+  paymentHash?: string | null;
+  amountMsat?: number | null;
   payeePubkey: string | null;
   assetId: string | null;
   assetAmount: number | null;
@@ -125,4 +127,26 @@ export async function getPaymentStatus(
     return 'failed';
   }
   return 'pending';
+}
+
+/** Normalize the wallet SDK's decoded BOLT11 without inventing missing fields. */
+export function decodedInvoiceView(value: unknown): DecodedInvoiceView {
+  const raw = value as Record<string, unknown> | null;
+  const text = (snake: string, camel: string): string | null => {
+    const item = raw?.[snake] ?? raw?.[camel];
+    return typeof item === 'string' && item.length > 0 ? item : null;
+  };
+  const integer = (snake: string, camel: string): number | null => {
+    const item = raw?.[snake] ?? raw?.[camel];
+    return typeof item === 'number' && Number.isSafeInteger(item) ? item : null;
+  };
+  return { paymentHash: text('payment_hash', 'paymentHash'), amountMsat: integer('amt_msat', 'amountMsat'),
+    payeePubkey: text('payee_pubkey', 'payeePubkey'), assetId: text('asset_id', 'assetId'),
+    assetAmount: integer('asset_amount', 'assetAmount') };
+}
+
+export function assertRgbReceiveRequest(assetId: string, amount: number): void {
+  if (!assetId.trim() || !Number.isSafeInteger(amount) || amount <= 0) {
+    throw new PaymentValidationError('RGB receive requires an asset and a positive safe integer amount');
+  }
 }

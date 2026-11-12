@@ -18,6 +18,7 @@ export type TransferWatchStatus = 'pending' | 'settled' | 'failed' | 'unknown';
  * ignored instead of guessed. */
 export interface TransferInfo {
   transferId: string;
+  recipientId?: string;
   kind: string;
   status: string;
   amount: number | null;

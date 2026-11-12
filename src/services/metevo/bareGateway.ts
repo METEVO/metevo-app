@@ -220,6 +220,12 @@ export function createBareWalletSessionGateway(): WalletSessionGateway {
         invoice: proposal.invoice,
       })) as { paymentHash: string | null };
     },
+    async decodeInvoice(invoice) {
+      return await request('decodeInvoice', { invoice }) as import('./paymentGuard').DecodedInvoiceView;
+    },
+    async createRgbReceiveInvoice(assetId, amountBaseUnits) {
+      return await request('createRgbReceiveInvoice', { assetId, amountBaseUnits }) as { invoice: string; recipientId: string };
+    },
     async checkPayment(paymentHash): Promise<MetevoPaymentStatus> {
       return (await request('checkPayment', { paymentHash })) as MetevoPaymentStatus;
     },

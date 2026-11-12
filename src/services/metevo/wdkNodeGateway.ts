@@ -1,6 +1,6 @@
 import { ENV } from '../../config/env';
 import { walletConfigFromDevice } from './deviceConfig';
-import { assertPayableInvoice, getPaymentStatus } from './paymentGuard';
+import { assertPayableInvoice, assertRgbReceiveRequest, decodedInvoiceView, getPaymentStatus } from './paymentGuard';
 import type {
   WalletProgressListener,
   WalletSessionGateway,
@@ -98,6 +98,7 @@ export function createWdkWalletSessionGateway(): WalletSessionGateway {
       const { getMetevoWalletStatus } = loadWdkService();
       const status = await getMetevoWalletStatus(wallet.account, usdmAssetId);
       return {
+        usdmAssetId,
         nodePubkey: status.pubkey,
         btcSpendableSat: status.btcSpendableSat,
         balanceUsdmBaseUnits: status.usdmBaseUnits,
@@ -143,6 +144,18 @@ export function createWdkWalletSessionGateway(): WalletSessionGateway {
         throw new Error('the wallet is not open');
       }
       await wallet.account.connectPeer(peerUri);
+    },
+    async decodeInvoice(invoice) {
+      if (wallet === null) throw new Error('the wallet is not open');
+      return decodedInvoiceView(await wallet.account.decodeInvoice(invoice));
+    },
+    async createRgbReceiveInvoice(assetId, amountBaseUnits) {
+      assertRgbReceiveRequest(assetId, amountBaseUnits);
+      if (wallet === null) throw new Error('the wallet is not open');
+      if (usdmAssetId !== null && assetId !== usdmAssetId) throw new Error('unexpected receive asset');
+      const result = await loadWdkService().createUsdmReceiveInvoice(wallet.account, { assetId, amountBaseUnits });
+      if (!result.recipientId) throw new Error('RGB receive invoice has no recipient id');
+      return { invoice: result.invoice, recipientId: result.recipientId };
     },
     async checkPayment(paymentHash) {
       if (wallet === null) {
