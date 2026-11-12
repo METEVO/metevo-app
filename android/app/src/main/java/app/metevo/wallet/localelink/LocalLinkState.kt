@@ -25,7 +25,7 @@ object LocalLinkState {
     }
 
     @Synchronized fun armInvoice(invoice: ServedInvoice): Boolean {
-        if (!foreground) return false
+        if (!foreground || credentialFrame.get() == null) return false
         servedInvoice.set(invoice)
         return true
     }
