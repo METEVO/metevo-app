@@ -120,7 +120,7 @@ export async function listPayments(): Promise<JournalEntry[]> {
   } catch (cause) {
     console.warn(
       '[metevo][journal] read failed:',
-      cause instanceof Error ? cause.message : 'unknown',
+      cause instanceof Error ? cause.name : 'unknown',
     );
     return [];
   }
@@ -162,7 +162,7 @@ export function recordSettledPayment(
     } catch (cause) {
       console.warn(
         '[metevo][journal] write failed:',
-        cause instanceof Error ? cause.message : 'unknown',
+        cause instanceof Error ? cause.name : 'unknown',
       );
     }
   });
