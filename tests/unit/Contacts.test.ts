@@ -110,9 +110,24 @@ describe('phone, email and pending contacts', () => {
   });
 
   test('refreshing a contact without details keeps the saved ones', async () => {
-    await rememberContact('Maria', PEER, { phone: '+393331234567' });
+    await rememberContact('Maria', PEER, { phone: '+393331234567', email: 'maria@example.com' });
     await expect(rememberContact('Maria R.', PEER)).resolves.toMatchObject({
-      name: 'Maria R.', phone: '+393331234567',
+      name: 'Maria R.', phone: '+393331234567', email: 'maria@example.com',
+    });
+  });
+
+  test('re-adding a contact with blank details keeps the saved phone and email', async () => {
+    await rememberContact('Maria', PEER, { phone: '+393331234567', email: 'maria@example.com' });
+    await rememberContact('Maria', PEER, { phone: '', email: '' });
+    await expect(listContacts()).resolves.toMatchObject([
+      { name: 'Maria', phone: '+393331234567', email: 'maria@example.com' },
+    ]);
+  });
+
+  test('a new phone replaces the saved one and keeps the saved email', async () => {
+    await rememberContact('Maria', PEER, { phone: '+393331234567', email: 'maria@example.com' });
+    await expect(rememberContact('Maria', PEER, { phone: '+393339876543' })).resolves.toMatchObject({
+      phone: '+393339876543', email: 'maria@example.com',
     });
   });
 

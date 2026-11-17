@@ -125,8 +125,9 @@ export async function listPendingContacts(): Promise<PendingContact[]> {
   return readPending();
 }
 
-/** Adds (or refreshes) a contact; idempotent per node pubkey. Details that
- * are not passed keep their saved values. A pending contact with the same
+/** Adds (or refreshes) a contact; idempotent per node pubkey. A phone or
+ * email that is missing or blank keeps its saved value, so re-adding a contact
+ * never erases its details. A pending contact with the same
  * phone or email is completed: it leaves the pending list. */
 export async function rememberContact(
   name: string,
@@ -141,12 +142,14 @@ export async function rememberContact(
   if (!isValidNodePubkey(pubkey)) {
     throw new Error('contact node pubkey is invalid');
   }
-  const normalizedDetails = details === undefined ? undefined : normalizeDetails(details);
+  const providedDetails = normalizeDetails(details);
   const [contacts, pending] = await Promise.all([readIndex(), readPending()]);
   const existing = contacts.findIndex((entry) => entry.nodePubkey === pubkey);
-  const savedDetails: ContactDetails = normalizedDetails ?? {
-    ...(existing >= 0 && contacts[existing].phone !== undefined ? { phone: contacts[existing].phone } : {}),
-    ...(existing >= 0 && contacts[existing].email !== undefined ? { email: contacts[existing].email } : {}),
+  const phone = providedDetails.phone ?? (existing >= 0 ? contacts[existing].phone : undefined);
+  const email = providedDetails.email ?? (existing >= 0 ? contacts[existing].email : undefined);
+  const savedDetails: ContactDetails = {
+    ...(phone === undefined ? {} : { phone }),
+    ...(email === undefined ? {} : { email }),
   };
   const completed = pending.filter((entry) => sharesDetail(entry, savedDetails));
   // A spoken name must resolve to exactly one node, so two contacts cannot
