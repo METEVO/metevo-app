@@ -12,6 +12,7 @@ const INTENT_DESCRIPTIONS: Record<IntentId, string> = {
   'read-balance': 'Read all balances out loud',
   contacts: 'Open your contacts',
   profile: 'Show this wallet and its mode',
+  'import-contact': 'Review and explicitly add a shared contact',
   'invoice-request': 'Answer an invoice request relayed by the LSP',
 };
 

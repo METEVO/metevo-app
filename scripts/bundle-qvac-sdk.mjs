@@ -27,7 +27,8 @@ const { buildMobileBundle } = await import(pathToFileURL(pluginModule).href);
 
 await buildMobileBundle(
   { modRequest: { projectRoot, platform: 'android' } },
-  { installMissingPrebuilds: true },
+  // The phone-test runner uses --no-install to preserve package.json/lock.
+  { installMissingPrebuilds: !process.argv.includes('--no-install') },
 );
 
 const mobileBundle = join(projectRoot, 'node_modules/@qvac/sdk/dist/worker.mobile.bundle.js');
