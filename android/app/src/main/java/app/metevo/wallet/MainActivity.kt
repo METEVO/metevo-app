@@ -11,6 +11,18 @@ import com.facebook.react.defaults.DefaultReactActivityDelegate
 import expo.modules.ReactActivityDelegateWrapper
 
 class MainActivity : ReactActivity() {
+  override fun onResume() {
+    super.onResume()
+    app.metevo.wallet.localelink.LocalLinkState.setForeground(true)
+    app.metevo.wallet.contactnfc.ContactNfcState.setForeground(true)
+  }
+
+  override fun onPause() {
+    app.metevo.wallet.localelink.LocalLinkState.setForeground(false)
+    app.metevo.wallet.contactnfc.ContactNfcState.setForeground(false)
+    super.onPause()
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     // Set the theme to AppTheme BEFORE onCreate to support
     // coloring the background, status bar, and navigation bar.

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { AppState, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import AttentionVoice from '../../assets/voice_attention_dark.svg';
 import SuccessVoice from '../../assets/voice_success_dark.svg';
@@ -148,6 +148,7 @@ export function ReceiveRequestCard({
   useEffect(() => {
     return () => {
       const link = linkRef.current;
+      if (isLocalLinkActive) cancelledRef.current = true;
       if (link !== null && isLocalLinkActive) {
         void link.stopGroup().catch(() => undefined);
       }
@@ -219,8 +220,14 @@ export function ReceiveRequestCard({
   }, [amountDraft, createRequest]);
 
   const startLocalReceive = useCallback(async () => {
+    if (linkRef.current !== null || localStageRef.current === 'local-preparing') {
+      setNote('The previous local session is still stopping. Try again shortly.');
+      return;
+    }
     setNote(null);
     cancelledRef.current = false;
+    localStageRef.current = 'local-preparing';
+    setStage('local-preparing');
     // The watcher is single-flight: end the pending public request and let it
     // unwind first, otherwise the local flow would inherit its promise and
     // report its outcome as this one.
@@ -231,20 +238,27 @@ export function ReceiveRequestCard({
       await pending;
       publicWatchRef.current = null;
     }
+    if (cancelledRef.current || AppState.currentState !== 'active') return;
     abandonedRef.current = false;
+    localStageRef.current = 'local-preparing';
     setStage('local-preparing');
     const link = getLocalLink();
     linkRef.current = link;
     try {
       const { sessionId, passphrase } = await generateLocalLinkSecrets();
+      if (cancelledRef.current) return;
       await link.startTagEmulation({
         ssid: `DIRECT-metevo-${sessionId.slice(0, 4)}`,
         password: passphrase,
         sessionId,
       });
-      const group = await link.startGroup(48_444);
+      if (cancelledRef.current) return;
+      await link.startGroup(48_444);
+      if (cancelledRef.current) return;
       const { invoice } = await createUsdmInvoice(amountBaseUnits);
+      if (cancelledRef.current) return;
       await link.serveInvoice({ sessionId, invoice });
+      if (cancelledRef.current) return;
 
       setStage('local-serving');
       // The payer taps, joins the group and pays the invoice; the watcher
@@ -281,7 +295,7 @@ export function ReceiveRequestCard({
       await link.stopGroup().catch(() => undefined);
       linkRef.current = null;
     }
-  }, [createUsdmInvoice, watcher]);
+  }, [amountBaseUnits, createUsdmInvoice, watcher]);
 
   const stopLocalReceive = useCallback(() => {
     cancelledRef.current = true;
@@ -291,6 +305,19 @@ export function ReceiveRequestCard({
       watcher.stopWatching();
     }
     setStage('compose');
+  }, [watcher]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') return;
+      if (localStageRef.current !== 'local-preparing' && localStageRef.current !== 'local-serving') return;
+      cancelledRef.current = true;
+      watcher.stopWatching();
+      void linkRef.current?.stopGroup().catch(() => undefined);
+      setStage('compose');
+      setNote('The local receive session ended. Start a new session to receive in person.');
+    });
+    return () => subscription.remove();
   }, [watcher]);
 
   const stopWaiting = useCallback(() => {
