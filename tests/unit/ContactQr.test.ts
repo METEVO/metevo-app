@@ -38,6 +38,13 @@ describe('contact QR symbol', () => {
     expect(longest.length).toBeLessThanOrEqual(MAX_CONTACT_LINK_BYTES);
     expect(encodeContactQr(longest).size).toBeLessThanOrEqual(97);
   });
+
+  test('fits a typical v2 link with phone and email in a small symbol', () => {
+    const v2 = encodeContactLink({
+      name: 'Maria Rossi', nodePubkey: NODE, phone: '+393331234567', email: 'maria.rossi@example.com',
+    });
+    expect(encodeContactQr(v2).size).toBeLessThanOrEqual(57);
+  });
 });
 
 describe('scanned code routing', () => {

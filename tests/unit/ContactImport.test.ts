@@ -1,14 +1,20 @@
 import { ContactImportController, MAX_PENDING_CONTACT_LINKS } from '../../src/services/metevo/contactImport';
 import { encodeContactLink } from '../../src/services/metevo/contactLink';
-import { findContactByName, listContacts, rememberContact } from '../../src/services/metevo/contacts';
+import {
+  findContactByName,
+  listContacts,
+  listPendingContacts,
+  rememberContact,
+  rememberPendingContact,
+} from '../../src/services/metevo/contacts';
 import { replyForContactImport } from '../../src/voice/replies';
 import { pendingHomeEvent } from '../../src/utils/pendingHomeEvent';
 import type { StoredContact } from '../../src/services/metevo/contacts';
 
-let mockJson: string | null = null;
+const mockStore = new Map<string, string>();
 jest.mock('expo-secure-store', () => ({
-  getItemAsync: jest.fn(async () => mockJson),
-  setItemAsync: jest.fn(async (_key: string, value: string) => { mockJson = value; }),
+  getItemAsync: jest.fn(async (key: string) => mockStore.get(key) ?? null),
+  setItemAsync: jest.fn(async (key: string, value: string) => { mockStore.set(key, value); }),
 }));
 
 const NODE = `02${'ab'.repeat(32)}`;
@@ -16,7 +22,7 @@ const OTHER_NODE = `03${'cd'.repeat(32)}`;
 const contact = { name: 'Maria', nodePubkey: NODE };
 const link = encodeContactLink(contact);
 const saved = { ...contact, addedAt: '2026-10-28T12:00:00Z' };
-const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
+const flush = async () => { for (let tick = 0; tick < 6; tick += 1) await Promise.resolve(); };
 
 function fixture(initial: StoredContact[] = []) {
   const store = {
@@ -27,7 +33,7 @@ function fixture(initial: StoredContact[] = []) {
 }
 
 describe('contact import lifecycle', () => {
-  beforeEach(() => { mockJson = null; });
+  beforeEach(() => { mockStore.clear(); });
 
   test('queues without reading or saving until the wallet and shell are available', async () => {
     const { controller, store } = fixture();
@@ -257,5 +263,65 @@ describe('Home incoming-event arbitration', () => {
     expect(pendingHomeEvent({ ...ready, hasInvoice: true, cardBusy: true })).toBeNull();
     expect(pendingHomeEvent(ready)).toBe('import-contact');
     expect(pendingHomeEvent({ ...ready, hasContact: false })).toBeNull();
+  });
+});
+
+describe('importing phone and email (v2 links)', () => {
+  const realStore = { listContacts, listPendingContacts, rememberContact };
+  const v2Link = encodeContactLink({ ...contact, phone: '+393331234567', email: 'maria@example.com' });
+
+  beforeEach(() => { mockStore.clear(); });
+
+  async function openAndWait(controller: ContactImportController, incoming: string) {
+    controller.enqueue(incoming);
+    controller.openNext(true);
+    await flush();
+  }
+
+  test('saves the shared phone and email with the contact', async () => {
+    const controller = new ContactImportController(realStore);
+    await openAndWait(controller, v2Link);
+    await controller.confirm();
+    expect(await findContactByName('Maria')).toMatchObject({
+      nodePubkey: NODE, phone: '+393331234567', email: 'maria@example.com',
+    });
+  });
+
+  test('completes a pending contact and keeps the name chosen on this phone', async () => {
+    await rememberPendingContact('Mamma', { phone: '+393331234567' });
+    const controller = new ContactImportController(realStore);
+    await openAndWait(controller, v2Link);
+    expect(controller.getSnapshot().active).toMatchObject({ stage: 'review', name: 'Mamma', pendingName: 'Mamma', error: null });
+    await controller.confirm();
+    expect(controller.getSnapshot().active?.stage).toBe('saved');
+    expect(await listPendingContacts()).toEqual([]);
+    expect(await findContactByName('mamma')).toMatchObject({ nodePubkey: NODE });
+  });
+
+  test('a different pending contact still blocks its name', async () => {
+    await rememberPendingContact('Maria', { email: 'other@example.com' });
+    const controller = new ContactImportController(realStore);
+    await openAndWait(controller, link);
+    expect(controller.getSnapshot().active).toMatchObject({ stage: 'review', pendingName: null });
+    expect(controller.getSnapshot().active?.error).toContain('already used');
+  });
+});
+
+describe('contact test-trail events', () => {
+  beforeEach(() => { mockStore.clear(); });
+
+  test('the import controller reports each outcome with fixed labels only', async () => {
+    const events: string[] = [];
+    const controller = new ContactImportController(
+      { listContacts, listPendingContacts, rememberContact }, Date.now, (event) => { events.push(event); },
+    );
+    controller.enqueue(encodeContactLink({ ...contact, phone: '+393331234567' }));
+    controller.enqueue('metevo://contact?v=1&name=Bad');
+    controller.openNext(true);
+    await flush();
+    await controller.confirm();
+    controller.close();
+    expect(events).toEqual(['import:queued', 'import:invalid', 'import:review', 'import:saved', 'import:closed']);
+    expect(events.join(' ')).not.toMatch(/Maria|393331234567|02ab/);
   });
 });

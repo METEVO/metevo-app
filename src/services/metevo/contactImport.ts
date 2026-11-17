@@ -5,7 +5,8 @@ import {
   normalizeContactName,
   type SharedContact,
 } from './contactLink';
-import type { StoredContact } from './contacts';
+import type { ContactEvent } from './contactEvents';
+import type { ContactDetails, PendingContact, StoredContact } from './contacts';
 
 export type ContactImportStage =
   | 'loading' | 'review' | 'saving' | 'saved' | 'duplicate' | 'invalid' | 'load-error';
@@ -21,6 +22,8 @@ export interface ContactImportReview extends QueuedContact {
   stage: ContactImportStage;
   name: string;
   existingName: string | null;
+  /** Local name of the pending contact this link completes, if any. */
+  pendingName: string | null;
 }
 
 export interface ContactImportSnapshot {
@@ -31,7 +34,26 @@ export interface ContactImportSnapshot {
 
 interface ContactImportStore {
   listContacts(): Promise<StoredContact[]>;
-  rememberContact(name: string, nodePubkey: string): Promise<StoredContact>;
+  listPendingContacts?(): Promise<PendingContact[]>;
+  rememberContact(name: string, nodePubkey: string, details?: ContactDetails): Promise<StoredContact>;
+}
+
+interface ContactBook {
+  contacts: StoredContact[];
+  pending: PendingContact[];
+}
+
+function matchingPending(pending: PendingContact[], contact: SharedContact): PendingContact | null {
+  return pending.find((entry) =>
+    (contact.phone !== undefined && entry.phone === contact.phone) ||
+    (contact.email !== undefined && entry.email === contact.email)) ?? null;
+}
+
+function sharedDetails(contact: SharedContact): ContactDetails {
+  return {
+    ...(contact.phone === undefined ? {} : { phone: contact.phone }),
+    ...(contact.email === undefined ? {} : { email: contact.email }),
+  };
 }
 
 export const MAX_PENDING_CONTACT_LINKS = 5;
@@ -46,7 +68,11 @@ export class ContactImportController {
   private recentlyClosed = new Map<string, number>();
   private snapshot: ContactImportSnapshot = { active: null, pendingCount: 0, overflowed: false };
 
-  constructor(private readonly store: ContactImportStore, private readonly now = Date.now) {}
+  constructor(
+    private readonly store: ContactImportStore,
+    private readonly now = Date.now,
+    private readonly log: (event: ContactEvent) => void = () => undefined,
+  ) {}
 
   getSnapshot = (): ContactImportSnapshot => this.snapshot;
 
@@ -78,12 +104,17 @@ export class ContactImportController {
     if (
       this.snapshot.active?.key === key || this.queue.some((entry) => entry.key === key) ||
       this.recentlyClosed.has(key)
-    ) return false;
+    ) {
+      this.log('import:not-queued');
+      return false;
+    }
     if (this.queue.length >= MAX_PENDING_CONTACT_LINKS) {
+      this.log('import:not-queued');
       this.publish(this.snapshot.active, true);
       return false;
     }
     this.queue.push({ id: ++this.serial, key, contact, error });
+    this.log(contact === null ? 'import:invalid' : 'import:queued');
     this.publish();
     return true;
   };
@@ -98,27 +129,46 @@ export class ContactImportController {
       ...entry,
       name: entry.contact?.name ?? '',
       existingName: null,
+      pendingName: null,
       stage: entry.contact === null ? 'invalid' : 'loading',
     });
     if (entry.contact !== null) void this.prepare(entry.id);
     return true;
   };
 
+  private async readBook(): Promise<ContactBook> {
+    const [contacts, pending] = await Promise.all([
+      this.store.listContacts(),
+      this.store.listPendingContacts?.() ?? Promise.resolve([]),
+    ]);
+    return { contacts, pending };
+  }
+
   private async prepare(id: number): Promise<void> {
     try {
-      const contacts = await this.store.listContacts();
+      const book = await this.readBook();
       const active = this.snapshot.active;
       if (active?.id !== id || active.contact === null) return;
-      const existing = contacts.find((entry) => entry.nodePubkey.toLowerCase() === active.contact!.nodePubkey);
+      const existing = book.contacts.find((entry) => entry.nodePubkey.toLowerCase() === active.contact!.nodePubkey);
+      const pending = existing ? null : matchingPending(book.pending, active.contact);
+      // The name chosen when asking for the contact is the user's own label.
+      const name = pending?.name ?? active.name;
+      const conflict = existing ? null : this.nameConflict(book, active.contact, name);
+      this.log(existing ? 'import:duplicate'
+        : conflict !== null ? 'import:name-conflict'
+          : pending ? 'import:review-completes-pending' : 'import:review');
       this.publish({
         ...active,
+        name,
         stage: existing ? 'duplicate' : 'review',
         existingName: existing?.name ?? null,
-        error: existing ? null : this.nameConflict(contacts, active.name),
+        pendingName: pending?.name ?? null,
+        error: conflict,
       });
     } catch {
       const active = this.snapshot.active;
       if (active?.id === id) {
+        this.log('import:load-error');
         this.publish({ ...active, stage: 'load-error', error: 'Your contacts could not be loaded. Try again.' });
       }
     }
@@ -136,8 +186,11 @@ export class ContactImportController {
     if (active?.stage === 'review') this.publish({ ...active, name, error: null });
   };
 
-  private nameConflict(contacts: StoredContact[], name: string): string | null {
-    return contacts.some((entry) => entry.name.trim().toLowerCase() === name.trim().toLowerCase())
+  /** The pending entry this link completes is replaced, so its name is free. */
+  private nameConflict(book: ContactBook, contact: SharedContact, name: string): string | null {
+    const completed = matchingPending(book.pending, contact);
+    const sameName = (entry: { name: string }) => entry.name.trim().toLowerCase() === name.trim().toLowerCase();
+    return book.contacts.some(sameName) || book.pending.some((entry) => entry !== completed && sameName(entry))
       ? NAME_CONFLICT : null;
   }
 
@@ -154,20 +207,29 @@ export class ContactImportController {
     // Synchronous transition guards two taps before React has re-rendered.
     this.publish({ ...active, name, stage: 'saving', error: null });
     try {
-      const contacts = await this.store.listContacts();
-      const existing = contacts.find((entry) => entry.nodePubkey.toLowerCase() === active.contact!.nodePubkey);
+      const book = await this.readBook();
+      const existing = book.contacts.find((entry) => entry.nodePubkey.toLowerCase() === active.contact!.nodePubkey);
       if (existing) {
+        this.log('import:duplicate');
         this.publish({ ...active, name, stage: 'duplicate', existingName: existing.name, error: null });
         return;
       }
-      const conflict = this.nameConflict(contacts, name);
+      const conflict = this.nameConflict(book, active.contact, name);
       if (conflict !== null) {
+        this.log('import:name-conflict');
         this.publish({ ...active, name, stage: 'review', error: conflict });
         return;
       }
-      await this.store.rememberContact(name, active.contact.nodePubkey);
+      const details = sharedDetails(active.contact);
+      if (details.phone === undefined && details.email === undefined) {
+        await this.store.rememberContact(name, active.contact.nodePubkey);
+      } else {
+        await this.store.rememberContact(name, active.contact.nodePubkey, details);
+      }
+      this.log('import:saved');
       this.publish({ ...active, name, stage: 'saved', error: null });
     } catch (cause) {
+      this.log('import:save-failed');
       this.publish({
         ...active, name, stage: 'review',
         error: cause instanceof Error && cause.message === 'another contact already uses that name'
@@ -180,6 +242,7 @@ export class ContactImportController {
     const active = this.snapshot.active;
     if (active?.stage === 'saving') return false;
     if (active !== null) {
+      this.log('import:closed');
       this.recentlyClosed.set(active.key, this.now());
       // At most a small session-local deduplication window is retained.
       if (this.recentlyClosed.size > 32) this.recentlyClosed.delete(this.recentlyClosed.keys().next().value!);

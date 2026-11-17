@@ -1,28 +1,46 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Share, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Share, Text, TouchableOpacity, View } from 'react-native';
 
 import { MetevoTheme, useTheme, useThemedStyles } from '../../design/ThemeContext';
 import {
+  PendingContact,
   StoredContact,
   forgetContact,
+  forgetPendingContact,
   isValidNodePubkey,
   listContacts,
+  listPendingContacts,
   rememberContact,
+  rememberPendingContact,
 } from '../../services/metevo/contacts';
 import { layout, scale } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
-import { encodeContactLink } from '../../services/metevo/contactLink';
+import {
+  encodeContactLink,
+  normalizeContactEmail,
+  normalizeContactPhone,
+} from '../../services/metevo/contactLink';
 import { useContactImport } from '../../hooks/useContactImport';
-import { ContactQrCode } from './ContactQrCode';
+import { ContactQrView } from './ContactQrCode';
+import { CompactField, TextLink } from './CompactField';
+import { ContactDetailLines } from './ContactDetailLines';
 import { ContactQrScanner } from './ContactQrScanner';
 import { OwnContactPanel } from './OwnContactPanel';
+import { logContactEvent } from '../../services/metevo/contactEvents';
+import { PendingContactDetails } from './PendingContactDetails';
 
 /**
  * The contact book. A contact is a local label plus the node pubkey the
  * relay needs: the spoken name never leaves the phone, and a payment can
- * only be addressed to a saved node.
+ * only be addressed to a saved node. People known only by phone or email
+ * wait in a pending list until their METEVO contact arrives.
  */
-type ContactsStage = 'list' | 'details' | 'qr' | 'scan' | 'add' | 'alias' | 'delete' | 'self';
+type ContactsStage =
+  | 'list' | 'details' | 'pending' | 'qr' | 'scan' | 'add' | 'alias' | 'delete' | 'self';
+
+function fieldErrorMessage(cause: unknown, fallback: string): string {
+  return cause instanceof Error && cause.name === 'ContactLinkError' ? cause.message : fallback;
+}
 
 interface ContactsPanelProps {
   /** Clears the canvas back to the home idle hint (the Done action). */
@@ -33,10 +51,15 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
   const theme = useTheme();
   const styles = useThemedStyles(makeStyles);
   const [contacts, setContacts] = useState<StoredContact[] | null>(null);
+  const [pendingContacts, setPendingContacts] = useState<PendingContact[]>([]);
   const [stage, setStage] = useState<ContactsStage>('list');
   const [selectedPubkey, setSelectedPubkey] = useState<string | null>(null);
+  const [selectedPendingId, setSelectedPendingId] = useState<string | null>(null);
   const [nameDraft, setNameDraft] = useState('');
   const [pubkeyDraft, setPubkeyDraft] = useState('');
+  const [phoneDraft, setPhoneDraft] = useState('');
+  const [emailDraft, setEmailDraft] = useState('');
+  const [showDetailsDraft, setShowDetailsDraft] = useState(false);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [sharing, setSharing] = useState(false);
   const sharingRef = useRef(false);
@@ -44,9 +67,13 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
 
   const selected =
     contacts?.find((contact) => contact.nodePubkey === selectedPubkey) ?? null;
+  const selectedPending =
+    pendingContacts.find((contact) => contact.id === selectedPendingId) ?? null;
 
   const reload = useCallback(async () => {
-    setContacts(await listContacts());
+    const [saved, pending] = await Promise.all([listContacts(), listPendingContacts()]);
+    setContacts(saved);
+    setPendingContacts(pending);
   }, []);
 
   useEffect(() => {
@@ -56,8 +83,13 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
   function resetDraft() {
     setNameDraft('');
     setPubkeyDraft('');
+    setPhoneDraft('');
+    setEmailDraft('');
+    setShowDetailsDraft(false);
     setFieldError(null);
   }
+
+  const draftDetails = () => ({ phone: phoneDraft, email: emailDraft });
 
   function startAdd() {
     resetDraft();
@@ -69,8 +101,20 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
       setFieldError('Enter a name for the contact.');
       return;
     }
-    if (!isValidNodePubkey(pubkeyDraft)) {
+    const hasPubkey = pubkeyDraft.trim().length > 0;
+    if (hasPubkey && !isValidNodePubkey(pubkeyDraft)) {
       setFieldError('Paste their node pubkey (66 hex characters, starting 02 or 03).');
+      return;
+    }
+    if (!hasPubkey && phoneDraft.trim().length === 0 && emailDraft.trim().length === 0) {
+      setFieldError('Add their node pubkey, or a phone number or email to ask for it.');
+      return;
+    }
+    try {
+      if (phoneDraft.trim().length > 0) setPhoneDraft(normalizeContactPhone(phoneDraft));
+      if (emailDraft.trim().length > 0) setEmailDraft(normalizeContactEmail(emailDraft));
+    } catch (cause) {
+      setFieldError(fieldErrorMessage(cause, 'Check the phone number and email.'));
       return;
     }
     setFieldError(null);
@@ -78,17 +122,41 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
   }
 
   function confirmAlias() {
-    void rememberContact(nameDraft, pubkeyDraft)
-      .then((saved) => {
-        resetDraft();
+    const hasPubkey = pubkeyDraft.trim().length > 0;
+    const save = hasPubkey
+      ? rememberContact(nameDraft, pubkeyDraft, draftDetails()).then((saved) => {
+        logContactEvent('contact:saved');
         setSelectedPubkey(saved.nodePubkey);
         setStage('details');
+      })
+      : rememberPendingContact(nameDraft, draftDetails()).then((saved) => {
+        logContactEvent('contact:saved-pending');
+        setSelectedPendingId(saved.id);
+        setStage('pending');
+      });
+    void save
+      .then(() => {
+        resetDraft();
         return reload();
       })
-      .catch(() => {
-        setFieldError('The contact could not be saved.');
+      .catch((cause: unknown) => {
+        const message = cause instanceof Error ? cause.message : '';
+        setFieldError(
+          message.startsWith('another contact already uses')
+            ? `Another contact already uses that ${message.endsWith('name') ? 'name' : 'phone or email'}.`
+            : 'The contact could not be saved.',
+        );
         setStage('add');
       });
+  }
+
+  function removeSelectedPending() {
+    if (selectedPending === null) return;
+    void forgetPendingContact(selectedPending.id).then(() => {
+      setSelectedPendingId(null);
+      setStage('list');
+      return reload();
+    });
   }
 
   function removeSelected() {
@@ -132,6 +200,7 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
     try {
       encodeContactLink(selected);
       setFieldError(null);
+      logContactEvent('qr:shown-contact');
       setStage('qr');
     } catch {
       setFieldError('The QR code could not be created. Check the contact name and try again.');
@@ -146,20 +215,28 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
     return <ContactQrScanner onContactLink={importScannedLink} onCancel={leaveScanner} />;
   }
 
+  if (stage === 'pending' && selectedPending !== null) {
+    return (
+      <PendingContactDetails
+        contact={selectedPending}
+        onAnswer={importScannedLink}
+        onChanged={() => void reload()}
+        onBack={() => setStage('list')}
+        onDelete={removeSelectedPending}
+      />
+    );
+  }
+
   if (stage === 'qr' && selected !== null) {
     return (
-      <View style={styles.canvas}>
-        <Text style={theme.typography.title}>{selected.name}</Text>
-        <View style={styles.qr}>
-          <ContactQrCode
-            link={encodeContactLink(selected)}
-            accessibilityLabel={`QR code to add ${selected.name}`}
-          />
-        </View>
-        <Text style={theme.typography.body}>Ask the other person to tap Scan QR code in Contacts.</Text>
-        <Text style={theme.typography.caption}>Only the name and the public node key are inside.</Text>
-        <ActionButton label="Back" variant="outlined" onPress={() => setStage('details')} />
-      </View>
+      <ContactQrView
+        link={encodeContactLink(selected)}
+        name={selected.name}
+        contents={selected.phone || selected.email
+          ? 'The name, public node key, phone and email saved for this contact are inside.'
+          : 'Only the name and the public node key are inside.'}
+        onBack={() => setStage('details')}
+      />
     );
   }
 
@@ -167,17 +244,29 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
     return (
       <View style={styles.canvas}>
         <Text style={theme.typography.title}>Add a contact</Text>
-        <LabeledField label="Full name" value={nameDraft} onChangeText={setNameDraft} />
-        <LabeledField
-          label="Node pubkey (paste only)"
-          value={pubkeyDraft}
-          onChangeText={setPubkeyDraft}
-        />
-        {fieldError !== null && <Text style={styles.error}>{fieldError}</Text>}
+        <CompactField label="Full name" value={nameDraft} onChangeText={setNameDraft} />
+        <CompactField label="Node pubkey (optional, paste)" value={pubkeyDraft} onChangeText={setPubkeyDraft} keyboardType="email-address" />
+        {showDetailsDraft ? (
+          <>
+            <CompactField
+              label="Phone with country code"
+              value={phoneDraft}
+              onChangeText={setPhoneDraft}
+              keyboardType="phone-pad"
+            />
+            <CompactField label="Email" value={emailDraft} onChangeText={setEmailDraft} keyboardType="email-address" />
+          </>
+        ) : (
+          <TextLink label="Add phone or email" onPress={() => setShowDetailsDraft(true)} />
+        )}
+        {fieldError !== null && <Text style={styles.error} accessibilityLiveRegion="polite">{fieldError}</Text>}
         <View style={styles.actions}>
           <ActionButton label="Back" variant="outlined" onPress={() => setStage('list')} />
           <ActionButton label="Save" variant="primary" onPress={saveDraft} grow />
         </View>
+        <Text style={theme.typography.caption}>
+          Without a node pubkey, the contact waits until you ask for their METEVO contact.
+        </Text>
       </View>
     );
   }
@@ -187,7 +276,15 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
       <View style={styles.canvas}>
         <Text style={theme.typography.title}>Save the contact?</Text>
         <Text style={theme.typography.body}>{nameDraft.trim()}</Text>
-        <Text style={styles.pubkey}>{pubkeyDraft.trim().toLowerCase()}</Text>
+        {pubkeyDraft.trim().length > 0 ? (
+          <Text style={styles.pubkey}>{pubkeyDraft.trim().toLowerCase()}</Text>
+        ) : (
+          <Text style={theme.typography.caption}>No node pubkey yet: you cannot pay them until they send it.</Text>
+        )}
+        <ContactDetailLines
+          phone={phoneDraft.trim() || undefined}
+          email={emailDraft.trim() || undefined}
+        />
         <View style={styles.actions}>
           <ActionButton label="Try again" variant="outlined" onPress={() => setStage('add')} />
           <ActionButton label="Yes" variant="primary" onPress={confirmAlias} grow />
@@ -224,16 +321,25 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
     return (
       <View style={styles.canvas}>
         <Text style={theme.typography.title}>{selected.name}</Text>
-        <Text style={styles.pubkey}>{selected.nodePubkey}</Text>
-        <Text style={theme.typography.caption}>Payments are addressed to this node.</Text>
+        <Text
+          style={styles.pubkey}
+          selectable
+          accessibilityLabel={`Payments go to node ${selected.nodePubkey}`}
+        >
+          Node {selected.nodePubkey.slice(0, 10)}…{selected.nodePubkey.slice(-6)}
+        </Text>
+        <ContactDetailLines phone={selected.phone} email={selected.email} />
         {fieldError !== null && <Text style={styles.error} accessibilityLiveRegion="polite">{fieldError}</Text>}
-        <ActionButton
-          label={sharing ? 'Sharing…' : 'Share contact'}
-          variant="outlined"
-          onPress={() => void shareSelected()}
-          disabled={sharing}
-        />
-        <ActionButton label="Show QR code" variant="outlined" onPress={showSelectedQr} />
+        <View style={styles.actions}>
+          <ActionButton label="Show QR code" variant="outlined" onPress={showSelectedQr} grow />
+          <ActionButton
+            label={sharing ? 'Sharing…' : 'Share link'}
+            variant="outlined"
+            onPress={() => void shareSelected()}
+            disabled={sharing}
+            grow
+          />
+        </View>
         <View style={styles.actions}>
           <ActionButton label="Back" variant="outlined" onPress={() => setStage('list')} />
           <ActionButton
@@ -254,7 +360,7 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
         <Text style={styles.title}>Contacts</Text>
         <Text style={theme.typography.body}>Saved only on this phone.</Text>
         {fieldError !== null && <Text style={styles.error}>{fieldError}</Text>}
-        {contacts !== null && contacts.length === 0 && (
+        {contacts !== null && contacts.length === 0 && pendingContacts.length === 0 && (
           <Text style={theme.typography.body}>No contacts yet.</Text>
         )}
       </View>
@@ -274,6 +380,24 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
             <Text style={styles.rowTitle}>{contact.name}</Text>
             <Text style={theme.typography.caption}>
               {contact.nodePubkey.slice(0, 10)}…{contact.nodePubkey.slice(-6)}
+            </Text>
+          </TouchableOpacity>
+        ))}
+        {pendingContacts.map((contact) => (
+          <TouchableOpacity
+            key={contact.id}
+            style={styles.rowCard}
+            onPress={() => {
+              setSelectedPendingId(contact.id);
+              setFieldError(null);
+              setStage('pending');
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`${contact.name}, waiting for their METEVO contact`}
+          >
+            <Text style={styles.rowTitle}>{contact.name}</Text>
+            <Text style={theme.typography.caption}>
+              {contact.requestedAt === undefined ? 'No METEVO contact yet' : 'Request sent'}
             </Text>
           </TouchableOpacity>
         ))}
@@ -299,30 +423,6 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
         />
         <ActionButton label="Add contact" variant="primary" onPress={startAdd} grow />
       </View>
-    </View>
-  );
-}
-
-interface LabeledFieldProps {
-  label: string;
-  value: string;
-  onChangeText: (next: string) => void;
-}
-
-function LabeledField({ label, value, onChangeText }: LabeledFieldProps) {
-  const theme = useTheme();
-  const styles = useThemedStyles(makeStyles);
-
-  return (
-    <View style={styles.field}>
-      <Text style={theme.typography.caption}>{label}</Text>
-      <TextInput
-        style={styles.input}
-        value={value}
-        onChangeText={onChangeText}
-        accessibilityLabel={label}
-        autoCapitalize="none"
-      />
     </View>
   );
 }
@@ -357,15 +457,6 @@ const makeStyles = (theme: MetevoTheme) => ({
     ...theme.typography.body,
     fontWeight: '700' as const,
   },
-  field: {
-    ...theme.cardBase,
-    gap: layout.rowGap / 4,
-  },
-  input: {
-    ...theme.typography.body,
-    color: theme.colors.text,
-    padding: 0,
-  },
   pubkey: {
     ...theme.typography.caption,
     color: theme.colors.text,
@@ -373,9 +464,6 @@ const makeStyles = (theme: MetevoTheme) => ({
   error: {
     ...theme.typography.caption,
     color: theme.voiceStates.attention.fill,
-  },
-  qr: {
-    alignItems: 'center' as const,
   },
   actions: {
     flexDirection: 'row' as const,
