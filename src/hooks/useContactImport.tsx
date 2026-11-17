@@ -3,6 +3,7 @@ import { Linking } from 'react-native';
 
 import { logContactEvent } from '../services/metevo/contactEvents';
 import { ContactImportController } from '../services/metevo/contactImport';
+import { keepImportQueue } from '../services/metevo/contactImportQueue';
 import { listenForContactLinks } from '../services/metevo/contactLinkListener';
 import { listContacts, listPendingContacts, rememberContact } from '../services/metevo/contacts';
 
@@ -14,6 +15,7 @@ export function ContactImportProvider({ children }: { children: ReactNode }) {
     Date.now,
     logContactEvent,
   ));
+  useEffect(() => keepImportQueue(controller, logContactEvent), [controller]);
   useEffect(() => listenForContactLinks(Linking, controller.enqueue), [controller]);
   return <ContactImportContext.Provider value={controller}>{children}</ContactImportContext.Provider>;
 }

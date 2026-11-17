@@ -16,13 +16,16 @@ import {
 import { layout, scale } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
 import {
+  contactShareMessage,
   encodeContactLink,
+  isContactLinkCandidate,
   normalizeContactEmail,
   normalizeContactPhone,
 } from '../../services/metevo/contactLink';
 import { useContactImport } from '../../hooks/useContactImport';
 import { ContactQrView } from './ContactQrCode';
 import { CompactField, TextLink } from './CompactField';
+import { ContactCheckWords } from './ContactCheckWords';
 import { ContactDetailLines } from './ContactDetailLines';
 import { ContactQrScanner } from './ContactQrScanner';
 import { OwnContactPanel } from './OwnContactPanel';
@@ -36,7 +39,7 @@ import { PendingContactDetails } from './PendingContactDetails';
  * wait in a pending list until their METEVO contact arrives.
  */
 type ContactsStage =
-  | 'list' | 'details' | 'pending' | 'qr' | 'scan' | 'add' | 'alias' | 'delete' | 'self';
+  | 'list' | 'details' | 'pending' | 'qr' | 'scan' | 'paste' | 'add' | 'alias' | 'delete' | 'self';
 
 function fieldErrorMessage(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.name === 'ContactLinkError' ? cause.message : fallback;
@@ -60,10 +63,11 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
   const [phoneDraft, setPhoneDraft] = useState('');
   const [emailDraft, setEmailDraft] = useState('');
   const [showDetailsDraft, setShowDetailsDraft] = useState(false);
+  const [pasteDraft, setPasteDraft] = useState('');
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [sharing, setSharing] = useState(false);
   const sharingRef = useRef(false);
-  const { controller: contactImports } = useContactImport();
+  const { controller: contactImports, pendingCount: waitingLinks } = useContactImport();
 
   const selected =
     contacts?.find((contact) => contact.nodePubkey === selectedPubkey) ?? null;
@@ -176,7 +180,7 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
     setSharing(true);
     setFieldError(null);
     try {
-      await Share.share({ message: encodeContactLink(selected) });
+      await Share.share({ message: contactShareMessage(selected) });
     } catch {
       setFieldError('The contact could not be shared. Check its name and try again.');
     } finally {
@@ -195,6 +199,22 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
 
   const leaveScanner = useCallback(() => setStage('list'), []);
 
+  /** A copied link goes through the same queue and card as a tapped one;
+   * chat apps often do not make metevo:// links tappable. */
+  function importPastedLink() {
+    const link = pasteDraft.trim();
+    if (!isContactLinkCandidate(link)) {
+      setFieldError('This is not a METEVO contact link. It starts with metevo://contact');
+      return;
+    }
+    logContactEvent('import:pasted');
+    if (!importScannedLink(link)) {
+      setFieldError('This contact is already waiting for review. Close Contacts to see it.');
+      return;
+    }
+    setPasteDraft('');
+  }
+
   function showSelectedQr() {
     if (selected === null) return;
     try {
@@ -209,6 +229,26 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
 
   if (stage === 'self') {
     return <OwnContactPanel onBack={() => setStage('list')} />;
+  }
+
+  if (stage === 'paste') {
+    return (
+      <View style={styles.canvas}>
+        <Text style={theme.typography.title}>Paste a contact link</Text>
+        <CompactField
+          label="metevo://contact?…"
+          value={pasteDraft}
+          onChangeText={setPasteDraft}
+          keyboardType="email-address"
+        />
+        {fieldError !== null && <Text style={styles.error} accessibilityLiveRegion="polite">{fieldError}</Text>}
+        <View style={styles.actions}>
+          <ActionButton label="Back" variant="outlined" onPress={() => setStage('list')} grow />
+          <ActionButton label="Continue" variant="primary" onPress={importPastedLink} disabled={pasteDraft.trim().length === 0} grow />
+        </View>
+        <Text style={theme.typography.caption}>Long-press the field and choose Paste. You will check the contact before saving.</Text>
+      </View>
+    );
   }
 
   if (stage === 'scan') {
@@ -329,6 +369,7 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
           Node {selected.nodePubkey.slice(0, 10)}…{selected.nodePubkey.slice(-6)}
         </Text>
         <ContactDetailLines phone={selected.phone} email={selected.email} />
+        <ContactCheckWords nodePubkey={selected.nodePubkey} />
         {fieldError !== null && <Text style={styles.error} accessibilityLiveRegion="polite">{fieldError}</Text>}
         <View style={styles.actions}>
           <ActionButton label="Show QR code" variant="outlined" onPress={showSelectedQr} grow />
@@ -358,6 +399,18 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
     <View style={styles.panel}>
       <View style={styles.header}>
         <Text style={styles.title}>Contacts</Text>
+        {waitingLinks > 0 && (
+          <TouchableOpacity
+            style={styles.waiting}
+            onPress={() => onClearIntent?.()}
+            accessibilityRole="button"
+            accessibilityLabel={`${waitingLinks} shared ${waitingLinks === 1 ? 'contact is' : 'contacts are'} waiting. Tap to review.`}
+          >
+            <Text style={styles.waitingText}>
+              {waitingLinks === 1 ? '1 contact waiting' : `${waitingLinks} contacts waiting`} → Tap to review
+            </Text>
+          </TouchableOpacity>
+        )}
         <Text style={theme.typography.body}>Saved only on this phone.</Text>
         {fieldError !== null && <Text style={styles.error}>{fieldError}</Text>}
         {contacts !== null && contacts.length === 0 && pendingContacts.length === 0 && (
@@ -414,6 +467,13 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
           grow
         />
       </View>
+      <TextLink
+        label="Paste a contact link"
+        onPress={() => {
+          setFieldError(null);
+          setStage('paste');
+        }}
+      />
       <View style={styles.actions}>
         <ActionButton
           label="Close"
@@ -452,6 +512,18 @@ const makeStyles = (theme: MetevoTheme) => ({
     padding: scale(4),
     minHeight: scale(14.16),
     gap: layout.rowGap / 4,
+  },
+  // Closing Contacts is what lets the Home open the waiting card.
+  waiting: {
+    ...theme.cardBase,
+    borderColor: theme.voiceStates.idle.ink,
+    paddingHorizontal: layout.rowGap,
+    paddingVertical: layout.rowGap / 2,
+  },
+  waitingText: {
+    ...theme.typography.body,
+    fontWeight: '700' as const,
+    color: theme.voiceStates.idle.ink,
   },
   rowTitle: {
     ...theme.typography.body,

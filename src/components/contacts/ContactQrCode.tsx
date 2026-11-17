@@ -6,7 +6,9 @@ import { metevoDesignTokens } from '../../design/designTokens';
 import { useTheme } from '../../design/ThemeContext';
 import { encodeContactQr, QR_QUIET_ZONE_MODULES } from '../../services/metevo/contactQr';
 import { layout, scale } from '../styles';
+import { decodeContactLink } from '../../services/metevo/contactLink';
 import { ActionButton } from '../ui/ActionButton';
+import { ContactCheckWords } from './ContactCheckWords';
 
 const TASK_PANEL_INSET = 10;
 
@@ -64,6 +66,7 @@ export function ContactQrView({ link, name, contents, onBack }: ContactQrViewPro
         <ContactQrCode link={link} accessibilityLabel={`QR code to add ${name}`} />
       </View>
       <ActionButton label="Back" variant="outlined" onPress={onBack} />
+      <ContactCheckWords nodePubkey={decodeContactLink(link).nodePubkey} />
       <Text style={theme.typography.body}>{name}: ask the other person to tap Scan QR code in Contacts.</Text>
       <Text style={theme.typography.caption}>{contents}</Text>
     </View>

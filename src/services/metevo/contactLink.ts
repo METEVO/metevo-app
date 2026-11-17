@@ -158,3 +158,16 @@ export function decodeContactLink(input: string): SharedContact {
     email: fields.get('email'),
   });
 }
+
+/** Text for the system share sheet. Chat apps often show metevo:// links as
+ * plain text, so the message also says how to import a copied link. */
+export function contactShareMessage(contact: SharedContact): string {
+  const link = encodeContactLink(contact);
+  const name = normalizeContactName(contact.name);
+  return [
+    `Add ${name} to your METEVO contacts: tap the link below.`,
+    'If it does not open, copy it and choose Contacts > Paste a contact link in METEVO.',
+    '',
+    link,
+  ].join('\n');
+}

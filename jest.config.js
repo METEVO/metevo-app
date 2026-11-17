@@ -14,7 +14,19 @@ module.exports = {
         },
       },
     ],
+    '^.+\\.js$': [
+      'ts-jest',
+      {
+        tsconfig: {
+          allowJs: true,
+          esModuleInterop: true,
+          target: 'es2022',
+          module: 'commonjs',
+        },
+      },
+    ],
   },
+  transformIgnorePatterns: ['/node_modules/(?!@noble/)'],
   testPathIgnorePatterns: ['/node_modules/'],
   testMatch: ['**/*.test.ts'],
   setupFiles: ['<rootDir>/tests/setup.ts'],
