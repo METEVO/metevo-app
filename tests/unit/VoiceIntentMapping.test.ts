@@ -82,8 +82,22 @@ describe('wallet instruction -> intent card mapping', () => {
     expect(action!.payload).toEqual({ amountUsd: 20 });
   });
 
-  test('unknown and swap instructions are not understood', () => {
+  test('unknown instructions are not understood', () => {
     expect(intentActionFromInstruction(instruction({ intent: 'UNKNOWN' }), '')).toBeNull();
-    expect(intentActionFromInstruction(instruction({ intent: 'SWAP' }), '')).toBeNull();
+  });
+
+  test.each([
+    { amount: 12.5, currency: 'USD', transcript: 'Swap 12.5 dollars to bitcoin' },
+    { amount: 5000, currency: 'sats', transcript: 'Swap 5000 sats to dollars' },
+    { amount: 0.001, currency: 'BTC', transcript: 'Swap 0.001 bitcoin to dollars' },
+  ])('unsupported input units never become a USD purchase amount', ({ amount, currency, transcript }) => {
+    const action = intentActionFromInstruction(instruction({ intent: 'SWAP', amount, currency }), transcript)!;
+    expect(action.cardId).toBe('swap'); expect(action.payload).toBeNull();
+    expect(action.announcement).toContain('review and confirm');
+  });
+  test('an explicit whole-dollar purchase may prefill but never execute', () => {
+    const action = intentActionFromInstruction(instruction({ intent: 'SWAP', amount: 10, currency: 'USD' }), 'Buy 10 dollars with sats')!;
+    expect(action.payload).toEqual({ purchaseUsd: true, draft: '10' });
+    expect(intentActionFromInstruction(instruction({ intent: 'SWAP', amount: 1.5, currency: 'USD' }), 'Buy 1.5 dollars')!.payload).toBeNull();
   });
 });

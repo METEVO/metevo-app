@@ -29,6 +29,10 @@ function payableAmount(amount: number | null): amount is number {
   );
 }
 
+/** Spoken swap amount as the card's editable text, only when it fits the
+ * unit exactly (sats 0 decimals, BTC 8, dollars 2); otherwise left empty. */
+
+
 export function intentActionFromInstruction(
   instruction: WalletInstruction,
   transcript: string,
@@ -71,6 +75,17 @@ export function intentActionFromInstruction(
             : 'Opening your payment request.',
         transcript,
       };
+    case 'SWAP': {
+      const purchaseUsd = /\b(buy|purchase)\b/i.test(transcript) &&
+        /^(usd|usdm|dollars?)$/i.test(instruction.currency ?? '') &&
+        Number.isSafeInteger(instruction.amount) && instruction.amount! > 0;
+      return {
+        cardId: 'swap',
+        payload: purchaseUsd ? { purchaseUsd: true, draft: String(instruction.amount) } : null,
+        announcement: 'Opening Buy USDm. Enter the whole USDm amount you want to receive, then review and confirm.',
+        transcript,
+      };
+    }
     case 'CHECK_BALANCE':
       return {
         cardId: 'read-balance',

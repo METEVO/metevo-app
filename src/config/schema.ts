@@ -152,6 +152,9 @@ const baseAppEnvSchema = z.object({
   /** Free the TTS model after each announcement (one small model at a time). */
   EXPO_PUBLIC_QVAC_TTS_UNLOAD_AFTER_USE: boolFromEnv('true'),
 
+  /** Enables new real purchases only; saved submitted orders still recover. */
+  EXPO_PUBLIC_REAL_USDM_PURCHASE: boolFromEnv('false'),
+
   // --- Network target (Step: payment flows) -----------------------------------
   /** Demo provisioning preset: "regtest" (local metevo-infra) or "signet"
    * (public signet LSP). Selects which device-config profile the setup

@@ -151,6 +151,29 @@ describe('tier 0 rules (intents)', () => {
     expect(parseWithRules('receive 15 dollars')?.amount).toBe(15);
   });
 
+  it('parses swap commands without confusing them with sends', () => {
+    expect(parseWithRules('swap 10 dollars to bitcoin')).toMatchObject({
+      intent: 'SWAP',
+      amount: 10,
+      currency: 'USDm',
+    });
+    expect(parseWithRules('convert 5000 sats to dollars')).toMatchObject({
+      intent: 'SWAP',
+      amount: 5000,
+      currency: 'sats',
+    });
+    expect(parseWithRules('swap 0.001 btc to dollars')).toMatchObject({
+      intent: 'SWAP',
+      amount: 0.001,
+      currency: 'BTC',
+    });
+    expect(parseWithRules('exchange my bitcoin')).toMatchObject({
+      intent: 'SWAP',
+      amount: null,
+      currency: null,
+    });
+  });
+
   it('does not rule-match nonsense (tier 1 decides)', () => {
     expect(parseWithRules('hello what can you do')).toBeNull();
     expect(parseWithRules('flip a coin for me')).toBeNull();

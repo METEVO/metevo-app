@@ -6,7 +6,19 @@ import { AppEnv, appEnvSchema, EnvInput } from './schema';
  * time; other loaders (scripts, later phases) can feed `EnvInput` the same
  * way.
  */
-const RAW_ENV: EnvInput = { ...process.env };
+const RAW_ENV: EnvInput = {
+  ...process.env,
+  // Expo only embeds public keys written with a literal property access.
+  EXPO_PUBLIC_REAL_USDM_PURCHASE: process.env.EXPO_PUBLIC_REAL_USDM_PURCHASE,
+  EXPO_PUBLIC_WALLET_MODE: process.env.EXPO_PUBLIC_WALLET_MODE,
+  EXPO_PUBLIC_NETWORK_TARGET: process.env.EXPO_PUBLIC_NETWORK_TARGET,
+  EXPO_PUBLIC_RLN_NODE_URL: process.env.EXPO_PUBLIC_RLN_NODE_URL,
+  EXPO_PUBLIC_RLN_REQUEST_TIMEOUT_MS: process.env.EXPO_PUBLIC_RLN_REQUEST_TIMEOUT_MS,
+  EXPO_PUBLIC_RLN_USDM_TICKER: process.env.EXPO_PUBLIC_RLN_USDM_TICKER,
+  EXPO_PUBLIC_RLN_USDM_ASSET_ID: process.env.EXPO_PUBLIC_RLN_USDM_ASSET_ID,
+  EXPO_PUBLIC_RLN_PEER_URI: process.env.EXPO_PUBLIC_RLN_PEER_URI,
+  EXPO_PUBLIC_WALLET_AUTH: process.env.EXPO_PUBLIC_WALLET_AUTH,
+};
 
 let cached: AppEnv | null = null;
 
