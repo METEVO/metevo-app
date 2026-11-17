@@ -1,8 +1,8 @@
 import WalletManagerRgbLightning from '@utexo/wdk-rgb-lightning';
 // Payment-boundary guards live in their own runtime-agnostic module (the
 // React Native app bundle imports them without pulling the WDK binding in).
-import { assertPayableInvoice, getPaymentStatus, PaymentValidationError, } from './paymentGuard';
-export { assertPayableInvoice, getPaymentStatus, PaymentValidationError, };
+import { assertPayableInvoice, assertRgbReceiveRequest, decodedInvoiceView, getPaymentStatus, PaymentValidationError, } from './paymentGuard';
+export { assertPayableInvoice, assertRgbReceiveRequest, decodedInvoiceView, getPaymentStatus, PaymentValidationError, };
 const DEFAULT_USDM_TICKER = 'USDM';
 export async function createMetevoWallet(mnemonic, config) {
     const manager = new WalletManagerRgbLightning(mnemonic, {
@@ -81,11 +81,11 @@ export async function createUsdmReceiveInvoice(account, options) {
         }
     }
     const response = (await account.createRgbInvoice(request));
-    const invoice = response?.invoice ?? response?.recipient_id;
+    const invoice = response?.invoice;
     if (typeof invoice !== 'string' || invoice.length === 0) {
         throw new Error('createRgbInvoice returned no invoice');
     }
-    return { invoice, kind: aware ? 'witness' : 'blind' };
+    return { invoice, kind: aware ? 'witness' : 'blind', ...(typeof response?.recipient_id === 'string' ? { recipientId: response.recipient_id } : {}) };
 }
 /**
  * Advance the node's RGB transfer state machine and report the current
@@ -116,13 +116,16 @@ export async function refreshWalletTransfers(account, assetId) {
             continue;
         }
         const record = entry;
-        const transferId = String(record.transfer_id ?? record.transferId ?? record.txid ?? '');
+        const transferId = String(record.transfer_id ?? record.transferId ?? record.idx ?? record.txid ?? '');
         if (transferId.length === 0) {
             continue;
         }
-        const amountRaw = record.receive_amount ?? record.amount ?? null;
+        const assignments = Array.isArray(record.assignments) ? record.assignments : [];
+        const fungible = assignments.find((item) => item.type === 'Fungible');
+        const amountRaw = record.receive_amount ?? record.amount ?? fungible?.value ?? null;
         mapped.push({
             transferId,
+            ...(typeof record.recipient_id === 'string' ? { recipientId: record.recipient_id } : {}),
             kind: String(record.kind ?? ''),
             status: String(record.status ?? ''),
             amount: typeof amountRaw === 'number' && Number.isFinite(amountRaw)

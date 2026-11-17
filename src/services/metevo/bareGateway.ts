@@ -1,5 +1,6 @@
 import { Image } from 'react-native';
 
+import { PaymentValidationError } from './paymentGuard';
 import { ENV } from '../../config/env';
 import {
   loadDeviceWalletConfig,
@@ -139,7 +140,8 @@ export function createBareWalletSessionGateway(): WalletSessionGateway {
     if (frame.ok === true) {
       pendingRequest.resolve(frame.result);
     } else {
-      pendingRequest.reject(new Error(String(frame.error ?? 'worklet error')));
+      const ErrorType = frame.errorName === 'PaymentValidationError' ? PaymentValidationError : Error;
+      pendingRequest.reject(new ErrorType(String(frame.error ?? 'worklet error')));
     }
   }
 
@@ -219,6 +221,12 @@ export function createBareWalletSessionGateway(): WalletSessionGateway {
       return (await request('submitPayment', {
         invoice: proposal.invoice,
       })) as { paymentHash: string | null };
+    },
+    async decodeInvoice(invoice) {
+      return await request('decodeInvoice', { invoice }) as import('./paymentGuard').DecodedInvoiceView;
+    },
+    async createRgbReceiveInvoice(assetId, amountBaseUnits) {
+      return await request('createRgbReceiveInvoice', { assetId, amountBaseUnits }) as { invoice: string; recipientId: string };
     },
     async checkPayment(paymentHash): Promise<MetevoPaymentStatus> {
       return (await request('checkPayment', { paymentHash })) as MetevoPaymentStatus;

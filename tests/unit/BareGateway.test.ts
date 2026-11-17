@@ -216,3 +216,14 @@ describe('bare gateway ipc bridge', () => {
     await expect(statusPromise).resolves.toMatchObject({ nodePubkey: 'pk' });
   });
 });
+
+ test('RGB receive crosses IPC with asset and amount and preserves recipient identity', async () => {
+   const gateway = createBareWalletSessionGateway();
+   const receiving = gateway.createRgbReceiveInvoice('rgb:asset', 100000000);
+   await flushMicrotasks();
+   const worklet = lastWorklet();
+   const request = JSON.parse(worklet.written[worklet.written.length - 1]);
+   expect(request).toMatchObject({ method: 'createRgbReceiveInvoice', params: { assetId: 'rgb:asset', amountBaseUnits: 100000000 } });
+   emitFromWorklet(worklet, { id: request.id, ok: true, result: { invoice: 'rgb:invoice', recipientId: 'utxob:recipient' } });
+   await expect(receiving).resolves.toEqual({ invoice: 'rgb:invoice', recipientId: 'utxob:recipient' });
+ });

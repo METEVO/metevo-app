@@ -78,6 +78,7 @@ const paymentSchema = z
 const transferSchema = z
   .object({
     idx: z.number().int(),
+    recipient_id: z.string().nullable().optional(),
     status: z.string(),
     kind: z.string(),
     assignments: z.array(z.object({ type: z.string(), value: z.number().optional() }).passthrough()),
@@ -122,6 +123,7 @@ export interface RlnRestClient {
   findNiaAssetIdByTicker(ticker: string): Promise<string | null>;
   listChannels(): Promise<RlnChannel[]>;
   listPayments(): Promise<RlnPayment[]>;
+  createRgbReceiveInvoice(assetId: string, amount: number, proxyEndpoint: string): Promise<{ invoice: string; recipientId: string }>;
   createLnInvoice(request: RlnLnInvoiceRequest): Promise<string>;
   decodeLnInvoice(invoice: string): Promise<RlnDecodedInvoice>;
   decodeLnInvoicePaymentHash(invoice: string): Promise<string>;
@@ -230,6 +232,14 @@ export function createRlnRestClient(config: RlnRestClientConfig): RlnRestClient 
       return (await call('GET', '/listpayments', z.object({ payments: z.array(paymentSchema) }))).payments;
     },
 
+    async createRgbReceiveInvoice(assetId, amount, proxyEndpoint) {
+      const response = await call('POST', '/rgbinvoice', z.object({ invoice: z.string().min(1), recipient_id: z.string().min(1) }), {
+        asset_id: assetId, assignment: { type: 'Fungible', value: amount }, witness: true,
+        min_confirmations: 1, expiration_timestamp: Math.floor(Date.now() / 1000) + 3600,
+        transport_endpoints: [proxyEndpoint],
+      });
+      return { invoice: response.invoice, recipientId: response.recipient_id };
+    },
     async createLnInvoice(request) {
       const response = await call('POST', '/lninvoice', z.object({ invoice: z.string().min(1) }), {
         amt_msat: request.amtMsat,

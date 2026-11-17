@@ -20,6 +20,37 @@ export function assertPayableInvoice(invoice) {
         throw new PaymentValidationError('the proposal is not a payable lightning invoice; nothing was submitted');
     }
 }
+/**
+ * The relay (or any third party) supplies the invoice, so the node must only
+ * pay one that matches what the user saw. Returns the first mismatched field,
+ * or null when the invoice is the reviewed payment. A missing asset amount is
+ * a mismatch: a zero-amount invoice cannot satisfy a fixed-amount review.
+ */
+export function describeInvoiceMismatch(decoded, reviewed, expectedAssetId) {
+    const payee = decoded.payeePubkey?.toLowerCase() ?? null;
+    const wanted = reviewed.payeePubkey?.toLowerCase() ?? null;
+    if (payee !== null && wanted !== null && payee !== wanted) {
+        return 'destination';
+    }
+    if (expectedAssetId !== null && decoded.assetId !== expectedAssetId) {
+        return 'asset';
+    }
+    if (decoded.assetAmount === null ||
+        decoded.assetAmount !== reviewed.assetAmountBaseUnits) {
+        return 'amount';
+    }
+    return null;
+}
+/**
+ * The in-person receiver serves its own invoice, so the invoice must pay the
+ * node that offered it. One addressed to another node is not the receiver's,
+ * and one that names no payee cannot be checked: both are refused rather than
+ * paid blind.
+ */
+export function invoicePaysAnotherNode(decoded, nodePubkey) {
+    const payee = decoded.payeePubkey?.toLowerCase() ?? null;
+    return payee === null || payee !== nodePubkey.toLowerCase();
+}
 export async function getPaymentStatus(account, paymentHash) {
     if (paymentHash.length === 0) {
         return 'unknown';
@@ -49,4 +80,24 @@ export async function getPaymentStatus(account, paymentHash) {
         return 'failed';
     }
     return 'pending';
+}
+/** Normalize the wallet SDK's decoded BOLT11 without inventing missing fields. */
+export function decodedInvoiceView(value) {
+    const raw = value;
+    const text = (snake, camel) => {
+        const item = raw?.[snake] ?? raw?.[camel];
+        return typeof item === 'string' && item.length > 0 ? item : null;
+    };
+    const integer = (snake, camel) => {
+        const item = raw?.[snake] ?? raw?.[camel];
+        return typeof item === 'number' && Number.isSafeInteger(item) ? item : null;
+    };
+    return { paymentHash: text('payment_hash', 'paymentHash'), amountMsat: integer('amt_msat', 'amountMsat'),
+        payeePubkey: text('payee_pubkey', 'payeePubkey'), assetId: text('asset_id', 'assetId'),
+        assetAmount: integer('asset_amount', 'assetAmount') };
+}
+export function assertRgbReceiveRequest(assetId, amount) {
+    if (!assetId.trim() || !Number.isSafeInteger(amount) || amount <= 0) {
+        throw new PaymentValidationError('RGB receive requires an asset and a positive safe integer amount');
+    }
 }

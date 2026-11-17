@@ -3,6 +3,7 @@ import { WalletConfigError } from './deviceConfig';
 import {
   PaymentValidationError,
   assertPayableInvoice,
+  assertRgbReceiveRequest,
   describeInvoiceMismatch,
   getPaymentStatus,
 } from './paymentGuard';
@@ -36,6 +37,7 @@ const CHANNEL_POLL_INTERVAL_MS = 2_000;
 
 export interface RemoteRlnGatewayDependencies {
   createClient(): Promise<RlnRestClient>;
+  loadRgbProxyEndpoint?: () => Promise<string>;
   authenticate(reason: string): Promise<void>;
   usdmTicker: string;
   pinnedUsdmAssetId: string | null;
@@ -65,7 +67,7 @@ export function createRemoteRlnWalletSessionGateway(
 
   function openClient(): RlnRestClient {
     if (client === null) {
-      throw new Error('the wallet is not open');
+      throw new PaymentValidationError('the wallet is not open');
     }
     return client;
   }
@@ -136,6 +138,7 @@ export function createRemoteRlnWalletSessionGateway(
         usdmAssetId === null ? Promise.resolve(null) : node.assetBalance(usdmAssetId),
       ]);
       return {
+        usdmAssetId,
         nodePubkey: info.pubkey,
         btcSpendableSat: btc.vanilla.spendable,
         // Spendable over Lightning; the on-chain figure still counts the
@@ -179,6 +182,8 @@ export function createRemoteRlnWalletSessionGateway(
       // before the user authorises anything.
       const decoded = await openClient().decodeLnInvoice(invoice);
       return {
+        paymentHash: decoded.paymentHash,
+        amountMsat: decoded.amountMsat,
         payeePubkey: decoded.payeePubkey,
         assetId: decoded.assetId,
         assetAmount: decoded.assetAmount,
@@ -209,6 +214,13 @@ export function createRemoteRlnWalletSessionGateway(
       return { invoice, paymentHash: await node.decodeLnInvoicePaymentHash(invoice) };
     },
 
+    async createRgbReceiveInvoice(assetId, amountBaseUnits) {
+      assertRgbReceiveRequest(assetId, amountBaseUnits);
+      if (usdmAssetId !== null && assetId !== usdmAssetId) throw new Error('unexpected receive asset');
+      const proxy = await dependencies.loadRgbProxyEndpoint?.();
+      if (!proxy) throw new WalletConfigError('RGB proxy endpoint is not provisioned');
+      return openClient().createRgbReceiveInvoice(assetId, amountBaseUnits, proxy);
+    },
     async hasUsableChannelWith(peerPubkey) {
       const target = peerPubkey.toLowerCase();
       return (await openClient().listChannels()).some(
@@ -231,6 +243,7 @@ function toTransferInfo(transfer: RlnTransfer): TransferInfo {
   const fungible = transfer.assignments.find((assignment) => assignment.type === 'Fungible');
   return {
     transferId: String(transfer.idx),
+    ...(typeof transfer.recipient_id === 'string' ? { recipientId: transfer.recipient_id } : {}),
     kind: transfer.kind,
     status: transfer.status,
     amount: typeof fungible?.value === 'number' ? fungible.value : null,
@@ -239,6 +252,9 @@ function toTransferInfo(transfer: RlnTransfer): TransferInfo {
 
 function defaultDependencies(): RemoteRlnGatewayDependencies {
   return {
+    async loadRgbProxyEndpoint() {
+      return (await import('./deviceConfig')).loadDeviceWalletConfig().then((config) => config.rgbProxyEndpoint);
+    },
     async createClient() {
       const baseUrl = ENV.EXPO_PUBLIC_RLN_NODE_URL;
       if (baseUrl === undefined) {

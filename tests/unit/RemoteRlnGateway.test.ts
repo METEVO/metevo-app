@@ -34,6 +34,7 @@ function fakeClient(overrides: Partial<RlnRestClient> = {}): jest.Mocked<RlnRest
     findNiaAssetIdByTicker: jest.fn(async () => USDM),
     listChannels: jest.fn(async () => [usableUsdmChannel()]),
     listPayments: jest.fn(async () => []),
+    createRgbReceiveInvoice: jest.fn(async () => ({ invoice: 'rgb:invoice', recipientId: 'utxob:recipient' })),
     createLnInvoice: jest.fn(async () => 'lnbcrt1invoice'),
     decodeLnInvoicePaymentHash: jest.fn(async () => 'f'.repeat(64)),
     decodeLnInvoice: jest.fn(async () => ({
@@ -249,3 +250,13 @@ describe('remote RLN wallet gateway', () => {
     await expect(gateway.readStatus()).resolves.toMatchObject({ nodePubkey: null });
   });
 });
+
+ test('RGB gateway refuses the wrong asset and forwards a valid receive request', async () => {
+   const client = fakeClient();
+   const { gateway } = gatewayWith(client, { loadRgbProxyEndpoint: async () => 'rpc://proxy.test/json-rpc' });
+   await gateway.openWallet('remote-rln-node', () => {});
+   await expect(gateway.createRgbReceiveInvoice('wrong', 100000000)).rejects.toThrow('unexpected');
+   await expect(gateway.createRgbReceiveInvoice(USDM, 0)).rejects.toThrow('positive');
+   expect(client.createRgbReceiveInvoice).not.toHaveBeenCalled();
+   await expect(gateway.createRgbReceiveInvoice(USDM, 100000000)).resolves.toEqual({ invoice: 'rgb:invoice', recipientId: 'utxob:recipient' });
+ });

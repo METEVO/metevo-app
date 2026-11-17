@@ -121,3 +121,10 @@ describe('rgb-lightning-node REST client', () => {
     expect(new RlnApiError('/x', 400, 'InvalidRequest').name).toBe('RlnApiError');
   });
 });
+
+test('RGB receive uses the node tagged assignment and returns recipient identity', async () => {
+  const { client, calls } = clientWith(async () => jsonResponse(200, { invoice: 'rgb:invoice', recipient_id: 'utxob:recipient' }));
+  await expect(client.createRgbReceiveInvoice('rgb:asset', 100000000, 'rpc://proxy.test/json-rpc')).resolves.toEqual({ invoice: 'rgb:invoice', recipientId: 'utxob:recipient' });
+  expect(calls[0].url).toBe('http://node.test:3001/rgbinvoice');
+  expect(JSON.parse(calls[0].init.body as string)).toMatchObject({ asset_id: 'rgb:asset', assignment: { type: 'Fungible', value: 100000000 }, transport_endpoints: ['rpc://proxy.test/json-rpc'], witness: true });
+});
