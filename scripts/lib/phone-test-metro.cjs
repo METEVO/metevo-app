@@ -42,7 +42,7 @@ async function probeMetroPort(port) {
  * Check TCP availability too: a non-HTTP service must not look free. */
 async function chooseMetroPort({ root, firstPort = 8081, probe = probeMetroPort, onBusy = () => {} }) {
   if (!Number.isInteger(firstPort) || firstPort < 1 || firstPort > 65535) {
-    throw new Error('METEVO_METRO_PORT deve essere un numero intero da 1 a 65535.');
+    throw new Error('METEVO_METRO_PORT must be an integer from 1 to 65535.');
   }
   for (let port = firstPort; port < Math.min(firstPort + 20, 65536); port++) {
     const result = await probe(port);
@@ -50,7 +50,7 @@ async function chooseMetroPort({ root, firstPort = 8081, probe = probeMetroPort,
     if (isProjectMetro(result.status, root)) return { port, reuse: true };
     onBusy(port);
   }
-  throw new Error('Nessuna porta Metro libera nelle 20 porte esaminate. Imposta METEVO_METRO_PORT e riprova.');
+  throw new Error('No free Metro port among the 20 ports checked. Set METEVO_METRO_PORT and retry.');
 }
 
 module.exports = { chooseMetroPort, readMetroStatus, isProjectMetro };

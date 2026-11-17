@@ -40,7 +40,7 @@ describe('phone test Metro port selection', () => {
 
   test('limits searching when all ports are occupied', async () => {
     const probe = jest.fn().mockResolvedValue({ available: false, status: null });
-    await expect(chooseMetroPort({ root: ROOT, probe })).rejects.toThrow('Nessuna porta');
+    await expect(chooseMetroPort({ root: ROOT, probe })).rejects.toThrow('No free Metro port');
     expect(probe).toHaveBeenCalledTimes(20);
   });
 
