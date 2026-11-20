@@ -5,6 +5,7 @@ import { transcribeAudio } from '../ai/whisper';
 import { parseWalletInstruction } from '../ai/qwen';
 import { cleanTranscript } from '../voice/stt';
 import { understandTranscript } from '../voice/intents';
+import { answerDisplayMs, voiceStatusLine } from '../voice/statusLine';
 import {
   OrchestratorPorts,
   VoiceOrchestrator,
@@ -150,9 +151,22 @@ export function useVoiceAssistant(
     orchestratorRef.current?.release();
   }, []);
 
+  // An answer is shown only for a short while after it lands: left on the
+  // line, it reads as the state of whatever screen comes next.
+  const answer = snapshot.reply ?? snapshot.error;
+  const [answerVisible, setAnswerVisible] = useState(false);
+  useEffect(() => {
+    if (answer === null) {
+      setAnswerVisible(false);
+      return undefined;
+    }
+    setAnswerVisible(true);
+    const hideTimer = setTimeout(() => setAnswerVisible(false), answerDisplayMs(answer));
+    return () => clearTimeout(hideTimer);
+  }, [answer]);
+
   /** The voice line the home shell renders: replies, failures, and the
    * runtime's provisioning progress, whichever is most current. */
-  const runtimeError = runtimeState.errors.stt ?? runtimeState.errors.llm ?? null;
   const runtimeBusy =
     runtimeState.statuses.stt === 'downloading' ||
     runtimeState.statuses.stt === 'loading' ||
@@ -168,11 +182,16 @@ export function useVoiceAssistant(
     (snapshot.phase === 'transcribing' ? 'Transcribing…' : null) ??
     (snapshot.phase === 'understanding' ? 'Understanding…' : null) ??
     (snapshot.phase === 'acting' ? 'Working on it…' : null);
-  const message = busy
-    ? progress
-    : snapshot.reply ?? snapshot.error ?? runtimeError ?? progress;
-  const messageIsError =
-    snapshot.error !== null || runtimeError !== null || snapshot.phase === 'error';
+  const statusLine = voiceStatusLine({
+    busy,
+    progress,
+    reply: answerVisible ? snapshot.reply : null,
+    turnError: answerVisible ? snapshot.error : null,
+    sttError: runtimeState.errors.stt,
+    llmError: runtimeState.errors.llm,
+  });
+  const message = statusLine.message;
+  const messageIsError = statusLine.isError;
 
   return {
     phase: snapshot.phase,
