@@ -12,6 +12,7 @@ import {
   useTheme,
   useThemedStyles,
 } from '../design/ThemeContext';
+import { ENV } from '../config/env';
 import { metevoDesignTokens } from '../design/designTokens';
 import { useAudioPreference } from '../hooks/useAudioPreference';
 import { scale } from './styles';
@@ -36,7 +37,8 @@ interface StatusHeaderProps {
 
 /**
  * Fixed top shell region of the design: the profile chip and the audio
- * state chip, then the wallet connection state with the DEMO marker.
+ * state chip, then the wallet connection state with the DEMO marker, which
+ * only appears while the wallet is simulated (mock mode).
  *
  * The audio chip is the user's own spoken-output switch: it is only ever
  * changed by a tap here, never by the app.
@@ -45,6 +47,7 @@ export function StatusHeader({ connection, onOpenProfile }: StatusHeaderProps) {
   const theme = useTheme();
   const styles = useThemedStyles(makeStyles);
 
+  const isDemo = ENV.EXPO_PUBLIC_WALLET_MODE === 'mock';
   const audio = useAudioPreference();
   const audioLabel = audio.enabled ? 'Audio on' : 'Audio off';
   const AudioIcon = audio.enabled
@@ -77,7 +80,7 @@ export function StatusHeader({ connection, onOpenProfile }: StatusHeaderProps) {
       </View>
       <View style={styles.row}>
         <Text style={styles.connectionState}>{CONNECTION_LABELS[connection]}</Text>
-        <Text style={styles.demo}>DEMO</Text>
+        {isDemo ? <Text style={styles.demo}>DEMO</Text> : null}
       </View>
     </View>
   );
