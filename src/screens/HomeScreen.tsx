@@ -17,6 +17,7 @@ import { InvoiceInboxProvider, useInvoiceInbox } from '../hooks/useInvoiceInbox'
 import { useIntents } from '../hooks/useIntents';
 import { useVoiceAssistant } from '../hooks/useVoiceAssistant';
 import { WalletSession, useWalletSession } from '../hooks/useWalletSession';
+import { USDM_PRECISION_DIGITS, formatSats, formatUsdmBalance } from '../utils/balanceFormat';
 import { archiveRecording } from '../utils/recordingArchive';
 
 /**
@@ -241,24 +242,6 @@ function HomeShell({ session }: { session: WalletSession }) {
 
 /** Background poll cadence while the LSP provisions the USDm channel. */
 const CHANNEL_REFRESH_INTERVAL_MS = 5_000;
-
-const USDM_PRECISION_DIGITS = 8;
-
-/** Formats the wallet's USDm base units as the design's "20.00 USDm". */
-function formatUsdmBalance(baseUnits: number | null): string {
-  if (baseUnits === null) {
-    return '— USDm';
-  }
-  return `${(baseUnits / 10 ** USDM_PRECISION_DIGITS).toFixed(2)} USDm`;
-}
-
-function formatSats(sats: number | null): string {
-  if (sats === null) {
-    return '— sats';
-  }
-  // Fixed grouping: the reference design shows 99,678,917 regardless of locale.
-  return `${sats.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')} sats`;
-}
 
 const makeStyles = (theme: MetevoTheme) => ({
   shell: {
