@@ -4,6 +4,7 @@ import { Text, View } from 'react-native';
 import AttentionVoice from '../../assets/voice_attention_dark.svg';
 import SuccessVoice from '../../assets/voice_success_dark.svg';
 import { MetevoTheme, useThemedStyles } from '../../design/ThemeContext';
+import { useBackAction } from '../../hooks/useBackAction';
 import { relayErrorMessage, useInvoiceInbox } from '../../hooks/useInvoiceInbox';
 import { useWalletSession } from '../../hooks/useWalletSession';
 import { playTacton } from '../../services/metevo/tacton';
@@ -11,6 +12,7 @@ import { speakAnnouncement } from '../../services/spokenInteraction';
 import { useAttentionSignal } from '../AttentionSignal';
 import { layout } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
+import { IGNORE_BACK } from '../../utils/backActionStack';
 
 /**
  * The recipient's card for a relayed invoice request (the "Bob confirms"
@@ -77,6 +79,15 @@ export function InvoiceRequestCard({
   const [note, setNote] = useState<string | null>(null);
 
   useAttentionSignal(stage === 'error');
+  // Back on the review leaves the request unanswered: the payer's own wait
+  // times out, and the same request does not come back on this phone.
+  const leaveUnanswered = useCallback(() => {
+    inbox.dismiss();
+    onClearIntent?.();
+  }, [inbox, onClearIntent]);
+  useBackAction(
+    stage === 'creating' ? IGNORE_BACK : stage === 'review' ? leaveUnanswered : null,
+  );
 
   const accept = useCallback(async () => {
     if (request === null) {

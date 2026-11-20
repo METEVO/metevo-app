@@ -7,7 +7,9 @@ import SuccessVoice from '../../assets/voice_success_dark.svg';
 import { useAttentionSignal } from '../AttentionSignal';
 import { InPersonPaymentCard } from './InPersonPaymentCard';
 import { MetevoTheme, useThemedStyles } from '../../design/ThemeContext';
+import { useBackAction } from '../../hooks/useBackAction';
 import { usePaymentFlow } from '../../hooks/usePaymentFlow';
+import { IGNORE_BACK } from '../../utils/backActionStack';
 import { StoredContact, listContacts } from '../../services/metevo/contacts';
 import { paymentMessage, parseWholeUsdm } from '../../services/metevo/paymentMessages';
 import {
@@ -73,6 +75,7 @@ function TapSendSetup({
   const [recipient, setRecipient] = useState<string | null>(null);
   const [amountDraft, setAmountDraft] = useState('');
   const [rejection, setRejection] = useState<string | null>(null);
+  useBackAction(recipient === null ? null : () => setRecipient(null));
 
   useEffect(() => {
     let alive = true;
@@ -208,6 +211,8 @@ function RelaySendPaymentCard({
     cancel();
     onClearIntent?.();
   }, [cancel, onClearIntent]);
+  const moneyMoving = stage === 'authorizing' || stage === 'submitting' || stage === 'watching';
+  useBackAction(moneyMoving ? IGNORE_BACK : finish);
 
   if (stage === 'requesting') {
     return (

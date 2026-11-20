@@ -7,6 +7,7 @@ import {
   MetevoTheme,
   useThemedStyles,
 } from '../../design/ThemeContext';
+import { useBackAction } from '../../hooks/useBackAction';
 import { useKeepScreenOn } from '../../hooks/useKeepScreenOn';
 import { useTransferWatcher } from '../../hooks/useTransferWatcher';
 import { useWalletSession } from '../../hooks/useWalletSession';
@@ -16,6 +17,7 @@ import { recordSettledPayment, type PaymentChannel } from '../../services/metevo
 import { metevoDesignTokens } from '../../design/designTokens';
 import { scale, layout } from '../styles';
 import { ActionButton } from '../ui/ActionButton';
+import { BackAction, IGNORE_BACK } from '../../utils/backActionStack';
 import { useAttentionSignal } from '../AttentionSignal';
 
 type ReceiveStage =
@@ -28,6 +30,29 @@ type ReceiveStage =
   | 'local-serving'
   | 'local-received'
   | 'local-error';
+
+/** Back mirrors the on-screen way out of each stage; null closes the card. */
+function receiveBackAction(
+  stage: ReceiveStage,
+  actions: { stopWaiting: BackAction; stopLocalReceive: BackAction; backToCompose: BackAction },
+): BackAction | null {
+  switch (stage) {
+    case 'compose':
+      return null;
+    case 'creating':
+      return IGNORE_BACK;
+    case 'waiting':
+      return actions.stopWaiting;
+    case 'local-preparing':
+    case 'local-serving':
+      return actions.stopLocalReceive;
+    case 'received':
+    case 'request-error':
+    case 'local-received':
+    case 'local-error':
+      return actions.backToCompose;
+  }
+}
 
 /** The request amount when the voice command named none. */
 const DEFAULT_AMOUNT_USD = 20;
@@ -304,6 +329,7 @@ export function ReceiveRequestCard({
     setNote(null);
     setStage('compose');
   }, []);
+  useBackAction(receiveBackAction(stage, { stopWaiting, stopLocalReceive, backToCompose }));
 
   if (stage === 'local-received') {
     return (
