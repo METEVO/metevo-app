@@ -9,8 +9,14 @@ import { isAudioEnabled } from '../services/audioPreference';
  * the on-screen text stays the source of truth.
  */
 
+const FALLBACK_LANGUAGE = 'en-US';
+
 let generation = 0;
 let speech: typeof import('expo-speech') | undefined;
+
+function logSpeechError(error: unknown): void {
+  console.warn('[metevo] speech failed:', error);
+}
 
 /** Reads one short English sentence out loud. Safe to call fire-and-forget. */
 export function speakEnglish(text: string): void {
@@ -23,8 +29,15 @@ export function speakEnglish(text: string): void {
     try {
       speech ??= await import('expo-speech');
       speech.stop();
-      const voices = await speech.getAvailableVoicesAsync();
+      // Right after the app (re)starts the system voice is still binding and
+      // listing voices fails; speak() itself waits for the engine, so the
+      // reply goes out in plain US English instead of being dropped.
+      const voices = await speech.getAvailableVoicesAsync().catch(() => null);
       if (current !== generation) {
+        return;
+      }
+      if (voices === null) {
+        speech.speak(trimmed, { language: FALLBACK_LANGUAGE, onError: logSpeechError });
         return;
       }
       const voice = voices.find((candidate) =>
@@ -36,7 +49,7 @@ export function speakEnglish(text: string): void {
       speech.speak(trimmed, {
         language: voice.language,
         voice: voice.identifier,
-        onError: (error) => console.warn('[metevo] speech failed:', error),
+        onError: logSpeechError,
       });
     } catch (cause) {
       console.warn(
