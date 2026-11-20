@@ -5,7 +5,9 @@ import AttentionVoice from '../../assets/voice_attention_dark.svg';
 import ProcessingVoice from '../../assets/voice_processing_dark.svg';
 import SuccessVoice from '../../assets/voice_success_dark.svg';
 import { ENV } from '../../config/env';
+import { useBackAction } from '../../hooks/useBackAction';
 import { useInPersonPayment } from '../../hooks/useInPersonPayment';
+import { IGNORE_BACK } from '../../utils/backActionStack';
 import type { InPersonProposal } from '../../hooks/useInPersonPayment';
 import { useThemedStyles, MetevoTheme } from '../../design/ThemeContext';
 import { useAttentionSignal } from '../AttentionSignal';
@@ -30,6 +32,7 @@ export function InPersonPaymentCard({ onClearIntent }: IntentCardProps) {
     cancel();
     onClearIntent?.();
   }, [cancel, onClearIntent]);
+  useBackAction(stage === 'paying' || stage === 'watching' ? IGNORE_BACK : finish);
 
   React.useEffect(() => {
     if (stage === 'idle') {

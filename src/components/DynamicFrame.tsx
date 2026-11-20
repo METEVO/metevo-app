@@ -3,6 +3,7 @@ import React from 'react';
 import { useAttentionActive } from './AttentionSignal';
 import { IntentCard } from './intent-cards';
 import { TaskPanel } from './TaskPanel';
+import { BackActionProvider } from '../hooks/useBackAction';
 import { IntentId } from '../types/intents';
 
 interface DynamicFrameProps {
@@ -35,12 +36,14 @@ export function DynamicFrame({
 
   return (
     <TaskPanel variant={attention ? 'attention' : 'idle'}>
-      <IntentCard
-        id={intent}
-        onClearIntent={onClearIntent}
-        onSelectIntent={onSelectIntent}
-        payload={payload}
-      />
+      <BackActionProvider active={intent !== null} onFallback={() => onClearIntent?.()}>
+        <IntentCard
+          id={intent}
+          onClearIntent={onClearIntent}
+          onSelectIntent={onSelectIntent}
+          payload={payload}
+        />
+      </BackActionProvider>
     </TaskPanel>
   );
 }

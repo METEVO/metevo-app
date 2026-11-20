@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 import { MetevoTheme, useTheme, useThemedStyles } from '../../design/ThemeContext';
+import { useBackAction } from '../../hooks/useBackAction';
 import {
   StoredContact,
   forgetContact,
@@ -18,6 +19,15 @@ import { ActionButton } from '../ui/ActionButton';
  * only be addressed to a saved node.
  */
 type ContactsStage = 'list' | 'details' | 'add' | 'alias' | 'delete';
+
+/** Where Back leads from each stage, matching its on-screen way out; null closes the card. */
+const PREVIOUS_STAGE: Record<ContactsStage, ContactsStage | null> = {
+  list: null,
+  details: 'list',
+  add: 'list',
+  alias: 'add',
+  delete: 'details',
+};
 
 interface ContactsPanelProps {
   /** Clears the canvas back to the home idle hint (the Done action). */
@@ -36,6 +46,8 @@ export function ContactsPanel({ onClearIntent }: ContactsPanelProps) {
 
   const selected =
     contacts?.find((contact) => contact.nodePubkey === selectedPubkey) ?? null;
+  const previousStage = PREVIOUS_STAGE[stage];
+  useBackAction(previousStage === null ? null : () => setStage(previousStage));
 
   const reload = useCallback(async () => {
     setContacts(await listContacts());
