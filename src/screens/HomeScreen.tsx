@@ -17,6 +17,7 @@ import { InvoiceInboxProvider, useInvoiceInbox } from '../hooks/useInvoiceInbox'
 import { useIntents } from '../hooks/useIntents';
 import { useVoiceAssistant } from '../hooks/useVoiceAssistant';
 import { WalletSession, useWalletSession } from '../hooks/useWalletSession';
+import { pickHomePanel } from '../utils/homePanel';
 import { archiveRecording } from '../utils/recordingArchive';
 
 /**
@@ -48,8 +49,8 @@ export function HomeScreen() {
  * The connected home shell of the design (HOME-01): profile and audio
  * chips, the wallet state row, the balance box, the fixed task card and
  * the microphone anchored below it. The card holds the idle menu or the
- * active intent panel; the offline and connection states replace it with
- * the design's attention card.
+ * active intent panel; the offline and connection states replace the idle
+ * menu with the design's attention card, never an open card.
  *
  * A finished recording goes through the on-device QVAC voice agent
  * (Whisper -> Qwen instruction -> intent mapping) and lands as a card with
@@ -134,6 +135,15 @@ function HomeShell({ session }: { session: WalletSession }) {
     return () => clearInterval(refreshTimer);
   }, [walletOpen, channelProvisioning, refreshWallet]);
 
+  const panel = pickHomePanel({
+    walletOpen,
+    taskOpen: intent !== null,
+    nodeOffline,
+    errorMessage: session.errorMessage,
+    connecting,
+    channelProvisioning,
+  });
+
   const connection = !walletOpen
     ? 'closed'
     : nodeOffline
@@ -149,7 +159,7 @@ function HomeShell({ session }: { session: WalletSession }) {
         sats={formatSats(session.wallet?.btcSpendableSat ?? null)}
       />
 
-      {nodeOffline ? (
+      {panel === 'offline' ? (
         <TaskPanel variant="attention">
           <View style={styles.statusPanel}>
             <View style={styles.statusCopy}>
@@ -165,7 +175,7 @@ function HomeShell({ session }: { session: WalletSession }) {
             />
           </View>
         </TaskPanel>
-      ) : session.errorMessage !== null ? (
+      ) : panel === 'error' ? (
         <TaskPanel variant="attention">
           <View style={styles.statusPanel}>
             <View style={styles.statusCopy}>
@@ -179,7 +189,7 @@ function HomeShell({ session }: { session: WalletSession }) {
             />
           </View>
         </TaskPanel>
-      ) : connecting ? (
+      ) : panel === 'connecting' ? (
         <TaskPanel>
           <View style={styles.statusCopy}>
             <Text style={styles.panelTitle}>{'Connecting to your wallet node…'}</Text>
@@ -188,7 +198,7 @@ function HomeShell({ session }: { session: WalletSession }) {
             </Text>
           </View>
         </TaskPanel>
-      ) : channelProvisioning ? (
+      ) : panel === 'provisioning' ? (
         <TaskPanel>
           <View style={styles.statusCopy}>
             <Text style={styles.panelTitle}>{'Opening your USDm channel…'}</Text>
@@ -198,12 +208,19 @@ function HomeShell({ session }: { session: WalletSession }) {
           </View>
         </TaskPanel>
       ) : (
-        <DynamicFrame
-          intent={intent}
-          onClearIntent={() => simulateIntent(null)}
-          onSelectIntent={(next) => simulateIntent(next)}
-          payload={payload}
-        />
+        <>
+          {nodeOffline && (
+            <Text accessibilityLiveRegion="polite" style={styles.offlineNotice}>
+              Wallet offline. This task stays open and reconnects by itself.
+            </Text>
+          )}
+          <DynamicFrame
+            intent={intent}
+            onClearIntent={() => simulateIntent(null)}
+            onSelectIntent={(next) => simulateIntent(next)}
+            payload={payload}
+          />
+        </>
       )}
 
       <View style={styles.spacer} />
@@ -294,6 +311,10 @@ const makeStyles = (theme: MetevoTheme) => ({
     color: theme.voiceStates.attention.ink,
   },
   statusBody: theme.typography.body,
+  offlineNotice: {
+    ...theme.typography.caption,
+    color: theme.voiceStates.attention.ink,
+  },
   voiceRegion: {
     gap: layout.rowGap,
     alignItems: 'center' as const,
