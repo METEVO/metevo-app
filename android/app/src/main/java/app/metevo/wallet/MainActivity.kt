@@ -1,6 +1,5 @@
 package app.metevo.wallet
 
-import android.os.Build
 import android.os.Bundle
 
 import com.facebook.react.ReactActivity
@@ -41,21 +40,15 @@ class MainActivity : ReactActivity() {
   }
 
   /**
-    * Align the back button behavior with Android S
-    * where moving root activities to background instead of finishing activities.
-    * @see <a href="https://developer.android.com/reference/android/app/Activity#onBackPressed()">onBackPressed</a>
-    */
+   * Back on the Home sends the app to the background on every Android
+   * version. On Android 16 the system default sometimes finished the
+   * activity instead: the wallet then reconnected from scratch and the
+   * first spoken reply was lost while the system voice re-bound.
+   */
   override fun invokeDefaultOnBackPressed() {
-      if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.R) {
-          if (!moveTaskToBack(false)) {
-              // For non-root activities, use the default implementation to finish them.
-              super.invokeDefaultOnBackPressed()
-          }
-          return
+      if (!moveTaskToBack(false)) {
+          // Not the task root: finish it as usual.
+          super.invokeDefaultOnBackPressed()
       }
-
-      // Use the default back button implementation on Android S
-      // because it's doing more than [Activity.moveTaskToBack] in fact.
-      super.invokeDefaultOnBackPressed()
   }
 }
