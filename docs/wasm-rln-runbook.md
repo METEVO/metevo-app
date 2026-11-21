@@ -45,3 +45,51 @@ adb install -r --no-streaming app/build/outputs/apk/release/app-release.apk
 
 `gradlew` may lose its exec bit; use `sh ./gradlew`. Stale JS bundle: delete
 `app/build/generated/assets/react/release/index.android.bundle` and rebuild.
+
+## METEVO LSP service (utexo-lsp, port 8080)
+
+Go service built from `/home/aballarini/metevo-hack/utexo-lsp`:
+
+```bash
+cd /home/aballarini/metevo-hack/utexo-lsp
+CGO_ENABLED=1 go build -o /home/aballarini/utexo-lsp-data/application ./main.go
+```
+
+Start (detached; live process must run with the second form, asset pinned):
+
+```bash
+cd /home/aballarini/metevo-hack/utexo-lsp && \
+LSP_BASE_URL=http://127.0.0.1:3101 \
+RGB_NODE_BASE_URL=http://127.0.0.1:3101 \
+APAY_BEARER_TOKEN=my-shared-secret-token \
+DATABASE_DRIVER=sqlite \
+DATABASE_URL=/home/aballarini/utexo-lsp-data/utexo_lsp.db \
+LIGHTNING_ADDRESS_DOMAIN_URL=http://127.0.0.1:8080 \
+SUPPORTED_ASSET_IDS=rgb:G_UMjqXO-WDfjO0Z-K~ik1W2-7mhdFbx-yyv2LGo-hZZHkwo \
+setsid /home/aballarini/utexo-lsp-data/application \
+  > /home/aballarini/utexo-lsp-data/lsp.log 2>&1 &
+```
+
+Health: `curl -s http://127.0.0.1:8080/health` → `{"ok":true}`; process check
+`pgrep -f utexo-lsp-data/application`. Stop: `pkill -f utexo-lsp-data/application`.
+
+One-time bootstrap (first bring-up on a fresh node only — issues the IFA USDM
+asset, 1,000,000,000,000 base units, precision 8):
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/metevo/bootstrap \
+  -H "Authorization: Bearer my-shared-secret-token" \
+  -H "Content-Type: application/json" -d '{}'
+```
+
+- `200` → `{asset_id, ticker: "USDM", name, precision: 8, issued, config}`.
+  Save the JSON to `/home/aballarini/utexo-lsp-data/bootstrap.json` and restart
+  the service with `SUPPORTED_ASSET_IDS=<asset_id>` as above.
+- `409` → an asset with ticker `USDM` already exists on the node (once-only
+  issuance): the body names the existing `asset_id`; do NOT re-issue, just
+  ensure the running process has `SUPPORTED_ASSET_IDS` set to it.
+
+On the fresh node the 200's `issued` field reads `0` (the node reports
+`issued_supply: null` for a just-issued IFA); the real supply is verified with
+`POST :3101/assetbalance {"asset_id": …}` → `settled: 1000000000000`.
+
