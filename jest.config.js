@@ -14,7 +14,21 @@ module.exports = {
         },
       },
     ],
+    // ESM-only packages (exports map, no CJS build); ts-jest compiles them
+    // to commonjs so jest can require them on Node 22.
+    'node_modules/(?:@scure|@noble)/.*\\.js$': [
+      'ts-jest',
+      {
+        tsconfig: {
+          allowJs: true,
+          esModuleInterop: true,
+          target: 'es2022',
+          module: 'commonjs',
+        },
+      },
+    ],
   },
+  transformIgnorePatterns: ['/node_modules/(?!(?:@scure|@noble)/)'],
   testPathIgnorePatterns: ['/node_modules/'],
   testMatch: ['**/*.test.ts'],
   setupFiles: ['<rootDir>/tests/setup.ts'],
