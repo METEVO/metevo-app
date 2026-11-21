@@ -1,3 +1,8 @@
+jest.mock('expo-crypto', () => ({
+  // Deterministic bytes; the real module is native and untransformed in jest.
+  getRandomValues: (array: Uint8Array) => array.fill(7),
+}));
+
 jest.mock('expo-secure-store', () => {
   const store = new Map<string, string>();
   return {

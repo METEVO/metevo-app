@@ -1,8 +1,18 @@
+import * as ExpoCrypto from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
 import { generateMnemonic, validateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
+
+// Hermes ships no WebCrypto; @noble's randomBytes (used by generateMnemonic)
+// needs crypto.getRandomValues, so bridge it to expo-crypto once, before use.
+const globalCrypto = globalThis as unknown as {
+  crypto?: { getRandomValues?: (array: Uint8Array) => Uint8Array };
+};
+if (!globalCrypto.crypto?.getRandomValues) {
+  globalCrypto.crypto = { getRandomValues: ExpoCrypto.getRandomValues };
+}
 
 const SEED_KEY = 'metevo.seed_v1';
 const EXISTS_KEY = 'metevo.wallet_exists_v1';
