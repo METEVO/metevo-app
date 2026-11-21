@@ -369,10 +369,15 @@ window.__metevoDispatch = async (raw) => {
       case "status": {
         const channels = JSON.parse(node.listChannelsJson());
         const snap = await readWalletSnapshot(s.wallet, s.online);
+        // The LSP pushes the device's USDM to the remote side of the asset
+        // channel, so the channel row is authoritative once it exists.
+        const assetChannel = (channels || []).find((c) => c.asset_id != null) || null;
         reply({
           nodePubkey: unwrapPubkey(JSON.parse(node.nodePubkeyJson())),
           btcSpendableSat: snap.btcSpendableSat,
-          balanceUsdmBaseUnits: snap.usdm ? Number(snap.usdm.settled ?? 0) : null,
+          balanceUsdmBaseUnits: assetChannel
+            ? Number(assetChannel.asset_remote_amount || 0)
+            : snap.usdm ? Number(snap.usdm.settled ?? 0) : null,
           channelReady: (channels || []).some((c) => c.is_usable === true || c.ready === true),
         });
         return;
