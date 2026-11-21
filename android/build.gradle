@@ -23,7 +23,7 @@ allprojects {
 apply plugin: "expo-root-project"
 apply plugin: "com.facebook.react.rootproject"
 
-// METEVO: the @utexo RLN staging hook was removed. The wallet runs in
-// remote mode (plain HTTP to the regtest node), so the on-device RLN Bare
-// addon is not packaged; bare-kit's own link step stages the QVAC addons
-// the voice worklet needs (see qvac/addons.manifest.json).
+// On-device RLN: stage the @utexo Bare addon into the APK so the wallet
+// worklet can load it from nativeLibraryDir. The hook pins bare-kit 0.15.5.
+ext.utexoBarePackageDir = "$rootDir/../node_modules/@utexo/rgb-lightning-node-bare"
+apply from: "$rootDir/../node_modules/@utexo/rgb-lightning-node-bare/android/staging.gradle"

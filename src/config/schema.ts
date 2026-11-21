@@ -93,7 +93,7 @@ const baseAppEnvSchema = z.object({
   /** Wallet runtime: "mock" simulates the full setup flow (Expo Go demos),
    * "wdk" drives the real @utexo/wdk-rgb-lightning node (debug APK builds),
    * "remote" drives an rgb-lightning-node daemon over its REST API. */
-  EXPO_PUBLIC_WALLET_MODE: z.enum(['mock', 'wdk', 'remote']).default('mock'),
+  EXPO_PUBLIC_WALLET_MODE: z.enum(['mock', 'wdk', 'remote', 'wasm']).default('mock'),
   /** Bitcoin network for the embedded wallet node. */
   EXPO_PUBLIC_WALLET_NETWORK: z.enum(['regtest', 'testnet', 'signet', 'mainnet']).default('regtest'),
   /** How long the wallet setup waits for the LSP to provision the USDm

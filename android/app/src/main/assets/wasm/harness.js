@@ -348,6 +348,12 @@ window.__metevoDispatch = async (raw) => {
           const existing = JSON.parse(node.listChannelsJson());
           const existingReady = (existing || []).find((c) => c.is_usable === true);
           if (existingReady) {
+            // The persisted channel state can claim usable while the peer
+            // session died (app was stopped). Re-establish the LSP session.
+            try {
+              const info = await (await helperFetch(`${MOBILE_HELPER}/lspinfo`)).json();
+              void node.connectPeer("127.0.0.1:9802", info.pubkey).catch(() => {});
+            } catch (_e) { /* best effort */ }
             return { ok: true, reused: true, channel: existingReady };
           }
           return { ok: true, channel: null, pendingChannel: true, channels: existing };
@@ -621,6 +627,23 @@ window.__metevoDispatch = async (raw) => {
       }
       case "selftest": {
         const result = await withWallet(async () => {
+          // Self-heal: the gateway peer session can die while the app is
+          // stopped and nothing reconnects it on its own.
+          try {
+            const rawPeers = await node.listPeersValue();
+            const peers = typeof rawPeers === "string" ? JSON.parse(rawPeers) : rawPeers;
+            if (!Array.isArray(peers) || peers.length === 0) {
+              const info = await (await helperFetch(`${MOBILE_HELPER}/lspinfo`)).json();
+              await node.connectPeer("127.0.0.1:9802", info.pubkey);
+              for (let w = 0; w < 20; w += 1) {
+                await pump(node);
+                const chans = JSON.parse(node.listChannelsJson());
+                if ((chans || []).some((c) => c.is_usable === true)) break;
+                await new Promise((r) => setTimeout(r, 500));
+              }
+            }
+          } catch (_e) { /* fall through to the normal flow */ }
+
           const usable = JSON.parse(node.listChannelsJson());
           if (!(usable || []).some((c) => c.is_usable === true)) {
             throw new Error("no usable channel yet");

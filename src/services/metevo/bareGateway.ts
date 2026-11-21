@@ -1,4 +1,4 @@
-import { Image } from 'react-native';
+import { Asset } from 'expo-asset';
 
 import { ENV } from '../../config/env';
 import {
@@ -20,7 +20,6 @@ import type {
   WalletSessionSnapshot,
   WalletSetupStep,
 } from './wallet-gateway';
-import { rewriteLinkedAddons } from './bundleAddonRewrite';
 
 // Metro serves this file as an asset (see metro.config.js); the worklet
 // evaluates its contents inside the Bare runtime.
@@ -62,9 +61,14 @@ export function createBareWalletSessionGateway(): WalletSessionGateway {
     if (worklet !== null) {
       return worklet;
     }
-    // The bundle resolves to a packaged file URI in release builds and to
-    // the Metro dev-server URL in development; fetch reads both.
-    const source = Image.resolveAssetSource(walletBundleAsset);
+    // Resolve the packaged asset through expo-asset: in release,
+    // Image.resolveAssetSource returns a bare name ("bare_wallet"), not a
+    // fetchable URI. expo-asset copies it to a file:// cache path.
+    const asset = Asset.fromModule(walletBundleAsset);
+    if (!asset.localUri) {
+      await asset.downloadAsync();
+    }
+    const source = { uri: asset.localUri ?? asset.uri };
     console.log('[metevo] worklet: fetching bundle from', source.uri);
     const response = await fetch(source.uri);
     const bundleContent = await response.text();
@@ -74,15 +78,10 @@ export function createBareWalletSessionGateway(): WalletSessionGateway {
     // compiled-in registry; the wallet's addons are staged as .so files in
     // the APK's native library directory. Rewrite the references to
     // file: URLs before the worklet evaluates the bundle.
-    const device = await loadDeviceWalletConfig();
-    const { source: rewrittenBundle, rewritten: addonCount } =
-      rewriteLinkedAddons(bundleContent, device.nativeLibraryDir);
-    console.log(
-      '[metevo] worklet: rewrote',
-      addonCount,
-      'addons to',
-      device.nativeLibraryDir,
-    );
+    // bare-kit 0.15.6's link step registers the RLN addon, so the packed
+    // bundle's `linked:` specifiers resolve without rewriting.
+    const rewrittenBundle = bundleContent;
+    console.log('[metevo] worklet: using packed linked addons');
 
     // Lazy require: bare-kit's JS calls TurboModuleRegistry.getEnforcing at
     // import time, which must never happen in runtimes without the native
