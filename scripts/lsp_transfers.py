@@ -3,7 +3,9 @@
 
 Usage:
   lsp_transfers.py [asset_id]          list transfers
-  lsp_transfers.py [asset_id] recover  fail + delete pending transfers
+  lsp_transfers.py [asset_id] recover  fail the oldest WaitingCounterparty batch
+                                       (the RLN daemon has no deletetransfers
+                                       route; failed transfers free the UTXO)
 """
 import json
 import sys

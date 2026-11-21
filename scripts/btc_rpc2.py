@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Query the 'rgb-node-api-analysis' bitcoind (127.0.0.1:18443, admin/passw)."""
+"""Query the 'rgb-node-api-analysis' bitcoind (127.0.0.1:18443, dev/dev)."""
 import base64
 import json
 import sys

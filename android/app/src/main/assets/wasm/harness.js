@@ -85,6 +85,11 @@ function withWallet(fn) {
 let lastBtcSat = 0;
 let lastUsdm = null;
 
+function unwrapPubkey(info) {
+  if (typeof info === "string") return info;
+  return (info && info.pubkey) || null;
+}
+
 async function readWalletSnapshot(wallet, online) {
   // Settle pending RGB transfers when the wallet is idle; a long flow holds
   // the wallet and this throws "busy", which the callers treat as a miss.
@@ -93,7 +98,11 @@ async function readWalletSnapshot(wallet, online) {
   }
   try {
     const bal = await wallet.getBtcBalanceValue();
-    lastBtcSat = Number(bal && (bal.settled || bal.spendable) || 0) || lastBtcSat;
+    // BtcBalance = {vanilla:{settled,spendable}, colored:{...}}; colored sats
+    // are pinned by allocations, so only vanilla is practically spendable.
+    lastBtcSat = Number(
+      (bal && bal.vanilla && (bal.vanilla.spendable ?? bal.vanilla.settled)) || 0,
+    );
   } catch (_e) { /* keep last */ }
   const storedAsset = localStorage.getItem("metevo.usdm_asset_id");
   if (storedAsset) {
@@ -184,7 +193,10 @@ async function provisionChannel(s) {
   for (let i = 0; i < 360; i += 1) {
     await pump(node);
     if (i % 6 === 5) {
-      try { await s.wallet.syncOnline(s.online); } catch (_e) { /* ignore */ }
+      // Queued: background provisioning must not overlap a running flow.
+      await withWallet(async () => {
+        try { await s.wallet.syncOnline(s.online); } catch (_e) { /* ignore */ }
+      });
     }
     const channels = JSON.parse(node.listChannelsJson());
     const channel = (channels || []).find(
@@ -352,7 +364,7 @@ window.__metevoDispatch = async (raw) => {
         const channels = JSON.parse(node.listChannelsJson());
         const snap = await readWalletSnapshot(s.wallet, s.online);
         reply({
-          nodePubkey: JSON.parse(node.nodePubkeyJson()).pubkey ?? null,
+          nodePubkey: unwrapPubkey(JSON.parse(node.nodePubkeyJson())),
           btcSpendableSat: snap.btcSpendableSat,
           balanceUsdmBaseUnits: snap.usdm ? Number(snap.usdm.settled ?? 0) : null,
           channelReady: (channels || []).some((c) => c.is_usable === true || c.ready === true),
@@ -483,10 +495,12 @@ window.__metevoDispatch = async (raw) => {
 
         setStatus("funding device wallet");
         let bal = null;
+        const btcSpendable = (b) =>
+          Number((b && b.vanilla && (b.vanilla.spendable ?? b.vanilla.settled)) || 0);
         try {
           bal = await s.wallet.getBtcBalanceValue();
         } catch (_e) { /* busy: treat as unfunded and fund below */ }
-        if (Number(bal && (bal.settled || bal.spendable) || 0) < 200000) {
+        if (btcSpendable(bal) < 200000) {
           let address = null;
           for (let a = 0; a < 10 && !address; a += 1) {
             try {
@@ -500,7 +514,7 @@ window.__metevoDispatch = async (raw) => {
             try {
               bal = await s.wallet.getBtcBalanceValue();
             } catch (_e) { /* retry */ }
-            if (Number(bal && (bal.settled || bal.spendable) || 0) > 0) break;
+            if (btcSpendable(bal) > 0) break;
             await sleep(1000);
           }
         }
@@ -522,13 +536,16 @@ window.__metevoDispatch = async (raw) => {
 
         setStatus("creating blind receive invoice");
         const proxy = "rpc://192.168.178.20:3005/json-rpc";
+        // One whole USDM in base units (precision 8); 100 base units would
+        // render as 0.00 USDm on the balance card.
+        const usdmUnit = 100000000;
         const attempts = [
           [null, "Any"],
           [null, { Any: {} }],
           [null, { type: "Any" }],
           [null, {}],
-          [assetId, [{ amount: 100 }]],
-          [assetId, { Fungible: 100 }],
+          [assetId, [{ amount: usdmUnit }]],
+          [assetId, { Fungible: usdmUnit }],
         ];
         let invoiceData = null;
         const attemptErrors = [];
@@ -549,7 +566,7 @@ window.__metevoDispatch = async (raw) => {
         setStatus("LSP sends USDm on-chain");
         const sent = await callHelper("/lsp/sendrgb", {
           asset_id: assetId,
-          amount: 100,
+          amount: usdmUnit,
           recipient_id: recipientId,
           transport_endpoints: [proxy],
         });
@@ -657,6 +674,7 @@ window.__metevoDispatch = async (raw) => {
                 const match = (await readLivePayments()).find(
                   (p) =>
                     p.status === "succeeded" &&
+                    p.payment_hash !== sent.payment_hash &&
                     (receivedHash === null || p.payment_hash === receivedHash),
                 );
                 if (match) { receivedOk = true; receivedHash = match.payment_hash; break; }
@@ -706,7 +724,7 @@ async function helperFetch(url, opts) {
     });
     window.ReactNativeWebView &&
       window.ReactNativeWebView.postMessage(
-        JSON.stringify({ helper: url.replace("http://192.168.178.20:3010", ""), id, body: opts && opts.body ? JSON.parse(opts.body) : null }),
+        JSON.stringify({ helper: url.replace(MOBILE_HELPER, ""), id, body: opts && opts.body ? JSON.parse(opts.body) : null }),
       );
     setTimeout(() => {
       if (helperPending.has(id)) {

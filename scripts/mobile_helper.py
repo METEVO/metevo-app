@@ -1,12 +1,14 @@
 import base64
 import json
 import os
+import threading
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 RPC = "http://127.0.0.1:19445"
 AUTH = base64.b64encode(b"admin:passw").decode()
 WALLET = "bdk-test"
+ISSUE_LOCK = threading.Lock()
 
 
 def rpc(method, params):
@@ -24,6 +26,43 @@ def rpc(method, params):
 
 
 class Handler(BaseHTTPRequestHandler):
+    def _handle_issueusdm(self):
+        cache = "/tmp/metevo_usdm_asset.json"
+        if os.path.exists(cache):
+            with open(cache, encoding="utf-8") as handle:
+                self._json(200, {"asset": json.load(handle), "cached": True})
+            return
+        post_url = "http://127.0.0.1:3101/createutxos"
+        post = json.dumps(
+            {"up_to": False, "num": 3, "size": 20000, "fee_rate": 1, "skip_sync": False}
+        ).encode()
+        try:
+            with urllib.request.urlopen(
+                urllib.request.Request(post_url, data=post, headers={"content-type": "application/json"}),
+                timeout=60,
+            ) as resp:
+                resp.read()
+        except Exception:  # noqa: BLE001
+            pass
+        post_url = "http://127.0.0.1:3101/issueassetnia"
+        post = json.dumps(
+            {
+                "ticker": "USDM",
+                "name": "Metevo USDm",
+                "precision": 8,
+                # 100 USDM total; the device receives 1 USDM per delivery.
+                "amounts": [10000000000],
+            }
+        ).encode()
+        with urllib.request.urlopen(
+            urllib.request.Request(post_url, data=post, headers={"content-type": "application/json"}),
+            timeout=60,
+        ) as resp:
+            issued = json.loads(resp.read())
+        with open(cache, "w", encoding="utf-8") as handle:
+            json.dump(issued["asset"], handle)
+        self._json(200, issued)
+
     def _cors(self):
         self.send_header("access-control-allow-origin", "*")
         self.send_header("access-control-allow-headers", "content-type")
@@ -74,40 +113,9 @@ class Handler(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(length) or b"{}")
         try:
             if self.path.startswith("/lsp/issueusdm"):
-                cache = "/tmp/metevo_usdm_asset.json"
-                if os.path.exists(cache):
-                    with open(cache, encoding="utf-8") as handle:
-                        self._json(200, {"asset": json.load(handle), "cached": True})
-                    return
-                post_url = "http://127.0.0.1:3101/createutxos"
-                post = json.dumps(
-                    {"up_to": False, "num": 3, "size": 20000, "fee_rate": 1, "skip_sync": False}
-                ).encode()
-                try:
-                    with urllib.request.urlopen(
-                        urllib.request.Request(post_url, data=post, headers={"content-type": "application/json"}),
-                        timeout=60,
-                    ) as resp:
-                        resp.read()
-                except Exception:  # noqa: BLE001
-                    pass
-                post_url = "http://127.0.0.1:3101/issueassetnia"
-                post = json.dumps(
-                    {
-                        "ticker": "USDM",
-                        "name": "Metevo USDm",
-                        "precision": 8,
-                        "amounts": [100000000],
-                    }
-                ).encode()
-                with urllib.request.urlopen(
-                    urllib.request.Request(post_url, data=post, headers={"content-type": "application/json"}),
-                    timeout=60,
-                ) as resp:
-                    issued = json.loads(resp.read())
-                with open(cache, "w", encoding="utf-8") as handle:
-                    json.dump(issued["asset"], handle)
-                self._json(200, issued)
+                # Serialise: two concurrent misses would issue two USDM assets.
+                with ISSUE_LOCK:
+                    self._handle_issueusdm()
                 return
             if self.path.startswith("/lsp/sendrgb"):
                 amount = int(body["amount"])
