@@ -449,9 +449,12 @@ Status after the 2026-11-20 evening session (commit `ad7074b`):
    existing channel and provisions in the background (never a second virtual session).
 3. ~~autoDrive~~ — done: `autoDriveStartValue(400)` + queued RGB work
    (`processPendingRgbTransactions`, `driveRgbFundingWork`).
-4. **Partially done:** `send`/`check`/`invoice`/`selftest` now use the `*Live*` family, but
-   an end-to-end LSP→device invoice/keysend test has NOT run yet (needs a build with
-   `EXPO_PUBLIC_WASM_SELFTEST=1`; mind the 3,000,000 msat RGB HTLC floor).
+4. ~~Switch invoices and keysends to the `*Live*` API family~~ — **DONE and VERIFIED
+   2026-11-21**: `wasm selftest ok` with `sentOk:true, receivedOk:true` on the first
+   attempt (device→LSP keysend via `keysendLiveJson`, LSP→device keysend tracked via
+   `livePaymentsValue`; LSP `/listpayments` shows Outbound Succeeded with preimage and the
+   matching InboundAutoClaim). `createLnInvoiceLiveValue`/`sendPaymentLiveJson` are wired
+   in the same style but a BOLT11-invoice round trip is still untested.
 5. ~~Decouple wallet readiness~~ — done (fast `open`, background provisioning).
 6. Direct peer payment (not via the LSP) — open, needs a second peer.
 7. ~~Helper into the repo~~ — done: `scripts/mobile_helper.py`, ports/routes documented in
