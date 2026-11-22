@@ -93,8 +93,11 @@ function unwrapPubkey(info) {
 async function readWalletSnapshot(wallet, online) {
   // Settle pending RGB transfers when the wallet is idle; a long flow holds
   // the wallet and this throws "busy", which the callers treat as a miss.
+  // skip_sync=true on the polling path: an Esplora rescan while an RGB
+  // transfer is confirming makes the assignment look evicted
+  // (e2e-test-wasm.js:571-575). The diagnostic path does one real sync.
   if (online) {
-    try { await wallet.refreshValue(online, null, [], false); } catch (_e) { /* busy or nothing */ }
+    try { await wallet.refreshValue(online, null, [], true); } catch (_e) { /* busy or nothing */ }
   }
   try {
     const bal = await wallet.getBtcBalanceValue();
@@ -120,6 +123,8 @@ async function readWalletSnapshot(wallet, online) {
 let openProvisionPromise = null;
 // Last provisioning failure, surfaced in the status reply/Home attention card.
 let provisionError = null;
+// Tick counter for the throttled wallet diagnostics.
+let statusTick = 0;
 
 // Safe helper call for the provisioning loop (never throws).
 async function callHelperSafe(path, body) {
@@ -445,6 +450,33 @@ window.__metevoDispatch = async (raw) => {
         const channelAssetAmount = assetChannel
           ? Number(assetChannel.asset_local_amount || 0)
           : 0;
+        // Balance-accounting diagnostics (docs/superpowers/2026-11-22-balance-accounting-issue.md).
+        statusTick += 1;
+        if (statusTick % 12 === 5) {
+          try {
+            const diag = { sync: null, unspents: null, asset: null, transfersAsset: null, backup: null };
+            const stored = localStorage.getItem("metevo.usdm_asset_id");
+            if (stored) {
+              // One real (skip_sync=false) refresh, then read what the wallet
+              // actually holds: this is the balance-accounting probe.
+              try { await withWallet(() => s.wallet.refreshValue(s.online, stored, [], false)); } catch (_e) { /* busy */ }
+            }
+            try { diag.sync = node.chainSyncStatusValue(); } catch (_e) { diag.sync = String(_e); }
+            try {
+              diag.unspents = await withWallet(() => s.wallet.listUnspentsValue(true));
+            } catch (_e) { diag.unspents = String(_e); }
+            if (stored) {
+              try {
+                diag.asset = await withWallet(() => s.wallet.getAssetBalanceValue(stored));
+              } catch (_e) { diag.asset = String(_e); }
+              try {
+                diag.transfersAsset = await withWallet(() => s.wallet.listTransfersValue(stored));
+              } catch (_e) { diag.transfersAsset = String(_e); }
+            }
+            try { diag.backup = s.wallet.backupInfo(); } catch (_e) { diag.backup = String(_e); }
+            post({ step: "wallet-diag", diag });
+          } catch (_e) { /* diagnostics must never break the status reply */ }
+        }
         reply({
           nodePubkey: unwrapPubkey(JSON.parse(node.nodePubkeyJson())),
           btcSpendableSat: snap.btcSpendableSat,
