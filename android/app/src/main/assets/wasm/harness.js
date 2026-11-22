@@ -143,40 +143,21 @@ async function provisionChannel(s) {
   }
   if (!seen) throw new Error("the LSP never listed this node as a peer");
 
-  // The LSP opens a trusted virtual channel to us and pushes liquidity.
-  // Retry: its connect_peer_if_necessary fails if the peer briefly drops.
-  let opened = false;
-  let lastError = "";
-  for (let attempt = 0; attempt < 8 && !opened; attempt += 1) {
-    try {
-      const resp = await helperFetch(`${MOBILE_HELPER}/lsp/openvirtual`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          peer_pubkey: livePubkey,
-          capacity_sat: 500000,
-          push_msat: 250000000,
-        }),
+  // The Go METEVO LSP (port 8080) provisions the channel from its cron within
+  // ~30 s of the peer appearing: 500k sats capacity, 250k sats push and the
+  // bootstrap USDM asset push land in one virtual channel. The harness must
+  // NOT self-open via /lsp/openvirtual: RLN allows one virtual channel session
+  // per peer pair, and a sats-only self-open blocks the asset channel forever.
+  for (let i = 0; i < 360; i += 1) {
+    await pump(node);
+    if (i % 6 === 5) {
+      // Queued: background provisioning must not overlap a running flow.
+      await withWallet(async () => {
+        try { await s.wallet.syncOnline(s.online); } catch (_e) { /* ignore */ }
       });
-      if (resp.ok) {
-        opened = true;
-      } else {
-        const body = (await resp.text()).slice(0, 300);
-        lastError = `${resp.status} ${body}`;
-        if (body.includes("already exists")) {
-          const channels = JSON.parse(node.listChannelsJson());
-          if ((channels || []).some((c) => c.is_usable === true)) opened = true;
-          if (!opened && body.includes("virtual channel session already exists")) opened = true;
-        }
-      }
-    } catch (e) {
-      lastError = String(e);
     }
-    if (!opened) {
-      for (let i = 0; i < 6; i += 1) {
-        await pump(node);
-        await new Promise((r) => setTimeout(r, 500));
-      }
+    if (i % 20 === 19) {
+      // Keepalive: re-establish the peer session if the relay dropped it.
       try {
         const peers = await (await helperFetch(`${MOBILE_HELPER}/lsp/peers`)).json();
         const stillThere = (peers.peers || []).some(
@@ -186,17 +167,6 @@ async function provisionChannel(s) {
           void node.connectPeer("127.0.0.1:9802", info.pubkey).catch(() => {});
         }
       } catch (_e) { /* retry */ }
-    }
-  }
-  if (!opened) throw new Error(`the LSP rejected the virtual channel open: ${lastError}`);
-
-  for (let i = 0; i < 360; i += 1) {
-    await pump(node);
-    if (i % 6 === 5) {
-      // Queued: background provisioning must not overlap a running flow.
-      await withWallet(async () => {
-        try { await s.wallet.syncOnline(s.online); } catch (_e) { /* ignore */ }
-      });
     }
     const channels = JSON.parse(node.listChannelsJson());
     const channel = (channels || []).find(
@@ -369,14 +339,17 @@ window.__metevoDispatch = async (raw) => {
       case "status": {
         const channels = JSON.parse(node.listChannelsJson());
         const snap = await readWalletSnapshot(s.wallet, s.online);
-        // The LSP pushes the device's USDM to the remote side of the asset
-        // channel, so the channel row is authoritative once it exists.
+        // The LSP pushes the bootstrap USDM into the channel's responder
+        // side — this node — so RLN reports it as asset_local_amount here
+        // (openchannel_push_asset_amount integration test: responder local
+        // == push_asset_amount). The channel row is authoritative once it
+        // exists.
         const assetChannel = (channels || []).find((c) => c.asset_id != null) || null;
         reply({
           nodePubkey: unwrapPubkey(JSON.parse(node.nodePubkeyJson())),
           btcSpendableSat: snap.btcSpendableSat,
           balanceUsdmBaseUnits: assetChannel
-            ? Number(assetChannel.asset_remote_amount || 0)
+            ? Number(assetChannel.asset_local_amount || 0)
             : snap.usdm ? Number(snap.usdm.settled ?? 0) : null,
           channelReady: (channels || []).some((c) => c.is_usable === true || c.ready === true),
         });
