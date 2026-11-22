@@ -13,7 +13,60 @@ The LSP issues 20 USDM (2 000 000 000 base units, precision 8) into a blind RGB 
 
 ---
 
-## 2. Environment
+## 2. Project overview (for a reader with no context)
+
+**Product.** A self-custodial Bitcoin + RGB stablecoin wallet that runs entirely on an Android phone, plus a LAN "LSP" that gives the phone a working channel and demo dollars. Built for a hackathon on "Agentic Dollars on Bitcoin"; demo target: register with a fingerprint, get 20 USDM + Lightning sats, pay over Lightning, voice-agent UI on top.
+
+**Why the node is on the phone.** The RGB-Lightning node (RLN, a Rust/LDK fork) is compiled to WebAssembly and hosted in a hidden `react-native-webview` inside the app. The phone owns the seed (expo-secure-store) and the whole node state; nothing custodial is involved. A LAN helper and an LSP node exist only to give the demo liquidity — they never hold the user's keys.
+
+**Actors and components**
+
+| Component | Runs on | Role |
+|---|---|---|
+| `app.metevo.wallet` (Expo/RN) | phone | auth (register/connect/fingerprint login), seed custody, UI, voice agent |
+| WebView harness (`assets/wasm/harness.js` + `pkg/`) | phone (WebView) | constructs the WASM SDK node + BDK/rgb-lib wallet, exposes JSON-RPC-ish dispatch to RN |
+| BDK wallet + rgb-lib | phone (WASM) | on-chain sats, RGB assets, transfers, consignments, blind invoices |
+| RLN (LDK) | phone (WASM) | Lightning channels, payments, peer sessions |
+| `scripts/mobile_helper.py` | LAN host :3010 | the LSP-side adapter the phone calls: fund/mine, `/lsp/bootstrap`, `/lsp/refresh`, keysend, sendrgb |
+| `rgb-lightning-node` (RLN, native) | LAN host :3101 | the LSP node: asset inventory, colored UTXOs, channel opens, sendrgb |
+| Esplora :3002, RGB transport proxy :3005, block relay :3001 | LAN host | chain indexer, RGB consignment transport, LDK socket relay |
+| Go METEVO LSP (`utexo-lsp`) | LAN host :8080 | original provisioning service; **stopped** — its cron raced the helper and opened virtual channels |
+
+**Intended provisioning flow (current design).** The device creates a blind RGB invoice and POSTs `/lsp/bootstrap` with its node pubkey and the invoice's `recipient_id`; everything else is LSP-side: issue/ensure the USDM asset, ensure colored UTXOs, (attempt to) open an RGB channel carrying 20 USDM, and deliver the asset to the blind invoice via `/sendrgb`, then poll `/refreshtransfers` until settled. The phone refreshes its wallet and reads the asset balance. Full detail in §3.
+
+**Public repositories to analyze directly**
+
+- RLN (native LSP **and** the WASM SDK source): <https://github.com/UTEXO-Protocol/rgb-lightning-node>
+  - WASM SDK wallet/node bindings: `bindings/wasm-sdk/src/ln_node.rs` (wallet `refresh`, `get_asset_balance`, `list_transfers`, `list_unspents`, persistence hooks; also `apply_runtime_hook_payload` around line 6324 and `installAutoPeerManagerHooks` around line 1790)
+  - Native LSP channel/RGB logic: `src/ldk.rs` (channel funding, RGB info, 17-minute funding discard around line 3183)
+  - Reference channel tests (open/mine/ready loop): `src/test/payment.rs` → `open_channel_funded_raw`
+- Go METEVO LSP (upstream of the local checkout): <https://github.com/UTEXO-Protocol/utexo-lsp>
+  - `internal/lspapi/metevo.go` → `handleMetevoBootstrap`
+  - `internal/lspapi/api.go` → `reconcileChannels`, `openChannelRequest`
+- Reference end-to-end flows used as the source of truth for this work: <https://github.com/ABallarini/wdk-rgb-flow-testing>
+  - `wasm-flow-testing/e2e-test-wasm-wdk.js` (WASM + native + WDK; native opens, WASM funds, wait loop)
+  - `wasm-flow-testing/e2e-test-wasm.js` (WASM opens; the `skip_sync` warning we hit is at lines 571–575)
+  - `e2e-payment-flow-rgb.js` (native↔native RGB: `openRGBChannel`, `ensureColoredSpendable`, `refreshUntilTransferSettled`, flow4)
+- Upstream RGB wallet library behind `RlnWasmWallet` (transfer states, `refresh`, `get_asset_balance`, persistence): <https://github.com/RGB-Tools/rgb-lib>
+
+**Local checkouts (for exact reproduction)**
+
+- App: `Z:\home\aballarini\metevo-hack\metevo-app`, branch `feat/on-device-rln`, local commits only (HEAD `bbe0655`; not pushed).
+- Reference flows: `Z:\home\aballarini\Utexo\wdk-testing\`.
+- LSP node/datadir: `/home/aballarini/rgb-lightning-node/.e2e-regular-rln-datadir2/mobile`.
+- Go LSP checkout: `/home/aballarini/metevo-hack/utexo-lsp` (stopped during the demo).
+
+**Where to look first for this bug** (hypothesis → file)
+
+- H1 (wallet DB not durable) → `bindings/wasm-sdk/src/ln_node.rs` wallet construction/persistence (`data_dir`, `preloadPersistentRuntimeState`, `configureVssBackup`), plus rgb-lib SQLite handling.
+- H2 (`listTransfers` hides `ReceiveBlind`) → `bindings/wasm-sdk/src/ln_node.rs` `list_transfers` + rgb-lib `list_transfers` filter semantics.
+- H3 (`skip_sync:false` rescan evicts pending assignment) → rgb-lib `refresh`/`sync` internals; reference warning at `e2e-test-wasm.js:571-575`.
+- H4 (wrong colored keychain) → `rgbRestoreKeysValue`/`buildWalletData` in `harness.js` vs rgb-lib keychain derivation.
+- H5 (wallet chain-tip lag) → `bindings/wasm-sdk` chain-sync status and BDK sync wiring.
+
+---
+
+## 3. Environment
 
 | Piece | Detail |
 |---|---|
@@ -28,11 +81,11 @@ The LSP issues 20 USDM (2 000 000 000 base units, precision 8) into a blind RGB 
 | Asset | `rgb:DZgCsckL-wpY4~WV-NDRptzz-KtAy9r3-qwylBY9-cgLewQg` (NIA, ticker USDM, precision 8, supply 10 000 000 000 = 100 USDM) |
 | WASM SDK | `metevo-app/android/app/src/main/assets/wasm/pkg` (prebuilt `rln_wasm_sdk_bg.wasm`, 23 MB, from the utexo-lsp tree) |
 | Go LSP (:8080) | stopped — its cron raced and opened virtual channels |
-| Branch | `metevo-app` `feat/on-device-rln`, local commits only (HEAD `ac2b374` plus the doc commit) |
+| Branch | `metevo-app` `feat/on-device-rln`, local commits only (HEAD `bbe0655`; nothing pushed) |
 
 ---
 
-## 3. Intended flow (LSP-driven bootstrap)
+## 4. Intended flow (LSP-driven bootstrap)
 
 1. Phone registers/logs in; the node is seeded from the mnemonic in secure-store; wallet + LDK come up inside the WebView.
 2. Phone ensures a witness UTXO (helper `/fund`, 0.01 BTC-ish) and colorable UTXOs (`createUtxosBegin/End`), because rgb-lib needs an allocation to issue a blind invoice.
@@ -57,7 +110,7 @@ Code touchpoints:
 
 ---
 
-## 4. Evidence
+## 5. Evidence
 
 ### 4.1 Device status line (`[metevo] wasm ping ok`, latest)
 
@@ -148,7 +201,7 @@ seq8  peer_hook_error         "peer transport is disconnected"
 
 ---
 
-## 5. What is already ruled out
+## 6. What is already ruled out
 
 1. **Transport reachability.** Phone → proxy works; consignment fetched; ack posted (4.3). CORS on :3005 is `Access-Control-Allow-Origin: *` and OPTIONS returns 204.
 2. **LSP inventory / spendable.** `spendable: 4e9 ≥ 2e9`; the send did go through (`Send Settled`).
@@ -160,7 +213,7 @@ seq8  peer_hook_error         "peer transport is disconnected"
 
 ---
 
-## 6. Hypotheses (ranked) and how to test each
+## 7. Hypotheses (ranked) and how to test each
 
 ### H1 (most likely) — the rgb-lib wallet DB is not durable, so the receive record is lost
 
@@ -199,7 +252,7 @@ Earlier regtest runs issued other USDM assets. `localStorage` holds one id; `lis
 
 ---
 
-## 7. Diagnostics to add (drop-in code)
+## 8. Diagnostics to add (drop-in code)
 
 Inside `case "status"` (harness.js:396), after the existing `withWallet` snapshot:
 
@@ -239,7 +292,7 @@ case "diag": {
 
 ---
 
-## 8. Candidate fixes (in order of cost)
+## 9. Candidate fixes (in order of cost)
 
 1. **Make the status refresh non-destructive.** In `readWalletSnapshot`, use `refreshValue(online, assetId, [], /*skip_sync*/ true)` and keep exactly one `skip_sync:false` refresh right after the bootstrap reply. This follows the reference warning about Esplora re-sync during RGB transfers.
 2. **Persist the wallet.** Call `sdk.configureVssBackup(...)`/`wallet.configureVssBackup(...)` (or the local IndexedDB backup path the SDK exposes) so `data_dir` survives a WebView reload; otherwise every app restart loses the receive record.
@@ -250,7 +303,7 @@ case "diag": {
 
 ---
 
-## 9. Reproduction (exact)
+## 10. Reproduction (exact)
 
 ```bash
 # 1. stack
@@ -272,7 +325,7 @@ Expected (buggy) outcome: proxy shows `consignment.get` + `ack.post true`; LSP s
 
 ---
 
-## 10. Open questions for the analyst
+## 11. Open questions for the analyst
 
 1. Does `RlnWasmWallet.refreshValue(online, assetId, [], false)` re-scan the chain and treat a *pending-to-confirmed* assignment as evicted (reference warning at `e2e-test-wasm.js:571-575`)?
 2. Is the rgb-lib SQLite DB in `/tmp/rln_wasm_e2e_<rid>` persisted at all, or must the app call a backup/restore API? `sdk.preloadPersistentRuntimeState()` only restores the **LDK** runtime state (channels/keys), not the rgb-lib transfer DB.
@@ -282,11 +335,12 @@ Expected (buggy) outcome: proxy shows `consignment.get` + `ack.post true`; LSP s
 
 ---
 
-## 11. Raw artifacts kept
+## 12. Raw artifacts kept
 
 - Helper log: `/tmp/mobile_helper.out`
 - RLN LSP LDK log: `/home/aballarini/rgb-lightning-node/.e2e-regular-rln-datadir2/mobile/.ldk/logs/logs.txt`
 - Proxy log: `docker logs wasm-sdk-proxy-1`
 - Delivery cache: `/tmp/metevo_bootstrap_deliveries.json`
 - APK (current build with diagnostics): `metevo-app/android/app/build/outputs/apk/release/app-release.apk`
-- Commits: `4bab381`, `ec209cf`, `07ab923`, `d4a932f`, `4630e5b`, `ca84ce6`, `ac2b374` on `feat/on-device-rln` (local, not pushed)
+- Commits: `4bab381`, `ec209cf`, `07ab923`, `d4a932f`, `4630e5b`, `ca84ce6`, `ac2b374`, `bbe0655` on `feat/on-device-rln` (local, not pushed)
+- Public sources for deep analysis: <https://github.com/UTEXO-Protocol/rgb-lightning-node>, <https://github.com/UTEXO-Protocol/utexo-lsp>, <https://github.com/ABallarini/wdk-rgb-flow-testing>, <https://github.com/RGB-Tools/rgb-lib>
