@@ -215,6 +215,31 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception:  # noqa: BLE001
                         self._json(exc.code, {"raw": raw.decode("utf-8", "replace")[:400]})
                 return
+            if self.path.startswith("/lsp/openchannel"):
+                payload = json.dumps(
+                    {
+                        "peer_pubkey_and_opt_addr": body["peer_pubkey_and_opt_addr"],
+                        "capacity_sat": int(body.get("capacity_sat", 10000)),
+                        "push_msat": int(body.get("push_msat", 5000000)),
+                        "public": False,
+                        "with_anchors": True,
+                    }
+                ).encode()
+                req = urllib.request.Request(
+                    "http://127.0.0.1:3101/openchannel",
+                    data=payload,
+                    headers={"content-type": "application/json"},
+                )
+                try:
+                    with urllib.request.urlopen(req, timeout=30) as resp:
+                        self._json(200, json.loads(resp.read()))
+                except urllib.error.HTTPError as exc:
+                    raw = exc.read()
+                    try:
+                        self._json(exc.code, json.loads(raw))
+                    except Exception:  # noqa: BLE001
+                        self._json(exc.code, {"raw": raw.decode("utf-8", "replace")[:400]})
+                return
             if self.path.startswith("/lsp/openvirtual"):
                 payload = json.dumps(
                     {
