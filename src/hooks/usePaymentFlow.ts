@@ -80,6 +80,19 @@ async function resolveRecipientPubkey(recipient: string): Promise<string | null>
   return contact.nodePubkey;
 }
 
+/** Every path that learns a send settled journals it the same way; a
+ * journal write failure never changes what the screen shows. */
+function journalSettledSend(proposal: PaymentFlowProposal, hash: string, walletKey: string): void {
+  void recordSettledPayment({
+    paymentKey: `${ENV.EXPO_PUBLIC_WALLET_MODE}:${walletKey}:sent:${hash.toLowerCase()}`,
+    direction: 'sent',
+    amountUsdm: proposal.amount,
+    counterparty: proposal.recipient,
+    channel: 'remote',
+    demo: ENV.EXPO_PUBLIC_WALLET_MODE === 'mock',
+  });
+}
+
 export function usePaymentFlow() {
   const { submitPayment, checkPayment, wallet } = useWalletSession();
   const watcher = useTransferWatcher();
@@ -98,6 +111,8 @@ export function usePaymentFlow() {
   /** The submitted payment's hash: "Check status" asks about this payment
    * only, it never sends a new one. */
   const paymentHashRef = useRef<string | null>(null);
+  const checkingRef = useRef(false);
+  const paymentWalletRef = useRef('');
   /** Bumped by cancel: a request loop from an abandoned attempt stops and
    * never reopens an old proposal. */
   const requestRunRef = useRef(0);
@@ -306,18 +321,13 @@ export function usePaymentFlow() {
       enterStage('unknown');
       return;
     }
+    paymentWalletRef.current = walletRef.current?.nodePubkey ?? 'unavailable';
     paymentHashRef.current = submitted.paymentHash;
     contextRef.current = { ...contextRef.current, canCheckStatus: true };
     enterStage('watching');
     const result = await watcher.watchPayment(submitted.paymentHash);
     if (result.status === 'settled') {
-      void recordSettledPayment({
-        direction: 'sent',
-        amountUsdm: proposal.amount,
-        counterparty: proposal.recipient,
-        channel: 'remote',
-        demo: ENV.EXPO_PUBLIC_WALLET_MODE === 'mock',
-      });
+      journalSettledSend(proposal, submitted.paymentHash, paymentWalletRef.current);
       enterStage('settled');
     } else if (result.status === 'failed') {
       enterStage('failed');
@@ -329,21 +339,35 @@ export function usePaymentFlow() {
   /** Asks the node about the already-submitted payment; never resends. */
   const checkStatus = useCallback(async () => {
     const hash = paymentHashRef.current;
-    if (stageRef.current !== 'unknown' || hash === null) {
+    if (checkingRef.current || stageRef.current !== 'unknown' || hash === null) {
       return;
     }
+    checkingRef.current = true;
+    enterStage('watching');
     setNote(null);
     try {
       const status = await checkPayment(hash);
-      if (status === 'settled' || status === 'failed') {
-        enterStage(status);
+      if (status === 'settled') {
+        if (proposal !== null) {
+          journalSettledSend(proposal, hash, paymentWalletRef.current);
+        } else {
+          console.warn('[metevo][journal] missing-proposal');
+        }
+        enterStage('settled');
+        return;
+      }
+      if (status === 'failed') {
+        enterStage('failed');
         return;
       }
     } catch {
       // The node is unreachable: the outcome is still unknown.
+    } finally {
+      checkingRef.current = false;
     }
+    enterStage('unknown');
     setNote('Still not confirmed. Do not pay again. Check again in a minute.');
-  }, [checkPayment, enterStage]);
+  }, [checkPayment, enterStage, proposal]);
 
   const cancel = useCallback(() => {
     if (stageRef.current === 'watching' || stageRef.current === 'submitting') {

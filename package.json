@@ -44,6 +44,7 @@
     "@expo/ngrok": "^4.1.3",
     "@types/jest": "^30.0.0",
     "@types/react": "~19.2.4",
+    "@types/react-test-renderer": "^19.3.1",
     "@utexo/rgb-lightning-node-bare": "0.2.0-beta.4",
     "@utexo/rgb-lightning-node-bare-android-arm": "0.2.0-beta.4",
     "@utexo/rgb-lightning-node-bare-android-x64": "0.2.0-beta.4",
@@ -54,6 +55,7 @@
     "jest": "^30.5.2",
     "patch-package": "^8.0.1",
     "react-native-svg-transformer": "^1.5.3",
+    "react-test-renderer": "^19.2.3",
     "ts-jest": "^29.4.15",
     "typescript": "~6.0.3"
   },

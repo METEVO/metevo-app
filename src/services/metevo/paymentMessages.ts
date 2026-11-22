@@ -17,6 +17,13 @@ export interface PaymentMessage {
   spoken: string | null;
 }
 
+/** "1 dollar", "20 dollars", "15.5 dollars": cents are kept, never rounded away. */
+export function spokenDollars(amount: number): string {
+  const value = Number(amount.toFixed(2));
+  const text = value.toLocaleString('en-US', { useGrouping: false, maximumFractionDigits: 2 });
+  return `${text} ${value === 1 ? 'dollar' : 'dollars'}`;
+}
+
 /**
  * One wording per payment stage, shared by the card and the voice, so what
  * is written and what is heard never disagree. Sentences stay short for
@@ -26,7 +33,7 @@ export function paymentMessage(
   stage: PaymentFlowStage,
   { recipient, amount, canCheckStatus = false, balanceWarning = null }: PaymentMessageContext,
 ): PaymentMessage {
-  const money = `${amount} dollars`;
+  const money = spokenDollars(amount);
   switch (stage) {
     case 'requesting':
       return {

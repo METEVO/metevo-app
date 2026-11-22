@@ -11,6 +11,7 @@ export type PaymentChannel = 'remote' | 'in-person';
 
 export interface JournalEntry {
   id: string;
+  paymentKey?: string;
   direction: PaymentDirection;
   amountUsdm: number;
   counterparty: string | null;
@@ -64,10 +65,12 @@ function isJournalEntry(value: unknown): value is JournalEntry {
 export function parseJournal(raw: string): JournalEntry[] {
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
+    const entries = Array.isArray(parsed) ? parsed :
+      (typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>).entries : null);
+    if (!Array.isArray(entries)) {
       return [];
     }
-    return parsed
+    return entries
       .filter(isJournalEntry)
       .sort((a, b) => Date.parse(b.settledAt) - Date.parse(a.settledAt));
   } catch {
@@ -117,7 +120,7 @@ export async function listPayments(): Promise<JournalEntry[]> {
   } catch (cause) {
     console.warn(
       '[metevo][journal] read failed:',
-      cause instanceof Error ? cause.message : 'unknown',
+      cause instanceof Error ? cause.name : 'unknown',
     );
     return [];
   }
@@ -136,17 +139,30 @@ export function recordSettledPayment(
 ): Promise<void> {
   pendingWrite = pendingWrite.then(async () => {
     try {
-      const current = await listPayments();
+      const path = journalPath();
+      const info = await FileSystem.getInfoAsync(path);
+      const raw = info.exists ? await FileSystem.readAsStringAsync(path) : '[]';
+      // A failed read/parse must not overwrite durable deduplication keys.
+      const stored = JSON.parse(raw);
+      const current = parseJournal(raw);
+      const keys: string[] = Array.isArray(stored) ? [] : stored.paymentKeys;
+      if (!Array.isArray(keys) || keys.some((key) => typeof key !== 'string')) {
+        throw new Error('invalid journal keys');
+      }
+      if (entry.paymentKey !== undefined &&
+          (keys.includes(entry.paymentKey) || current.some((item) => item.paymentKey === entry.paymentKey))) return;
       const next = appendEntry(current, {
         ...entry,
-        id: `${now.getTime()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: entry.paymentKey ?? `${now.getTime()}-${Math.random().toString(36).slice(2, 8)}`,
         settledAt: now.toISOString(),
       });
-      await FileSystem.writeAsStringAsync(journalPath(), JSON.stringify(next));
+      if (entry.paymentKey !== undefined) keys.push(entry.paymentKey);
+      await FileSystem.writeAsStringAsync(`${path}.tmp`, JSON.stringify({ version: 2, entries: next, paymentKeys: keys }));
+      await FileSystem.moveAsync({ from: `${path}.tmp`, to: path });
     } catch (cause) {
       console.warn(
         '[metevo][journal] write failed:',
-        cause instanceof Error ? cause.message : 'unknown',
+        cause instanceof Error ? cause.name : 'unknown',
       );
     }
   });
