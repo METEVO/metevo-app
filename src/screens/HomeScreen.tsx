@@ -188,6 +188,20 @@ function HomeShell({ session }: { session: WalletSession }) {
             </Text>
           </View>
         </TaskPanel>
+      ) : session.wallet?.provisionError != null ? (
+        <TaskPanel variant="attention">
+          <View style={styles.statusPanel}>
+            <View style={styles.statusCopy}>
+              <Text style={styles.statusTitle}>{'The USDm channel did not come up'}</Text>
+              <Text style={styles.statusBody}>{session.wallet.provisionError}</Text>
+            </View>
+            <ActionButton
+              label="Try again"
+              variant="primary"
+              onPress={() => void session.openWallet()}
+            />
+          </View>
+        </TaskPanel>
       ) : channelProvisioning ? (
         <TaskPanel>
           <View style={styles.statusCopy}>

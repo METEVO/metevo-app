@@ -93,6 +93,7 @@ export function createWdkWalletSessionGateway(): WalletSessionGateway {
           btcSpendableSat: 0,
           balanceUsdmBaseUnits: null,
           channelReady: false,
+          provisionError: null,
         };
       }
       const { getMetevoWalletStatus } = loadWdkService();
@@ -102,6 +103,7 @@ export function createWdkWalletSessionGateway(): WalletSessionGateway {
         btcSpendableSat: status.btcSpendableSat,
         balanceUsdmBaseUnits: status.usdmBaseUnits,
         channelReady: status.usdmChannelReady,
+        provisionError: null,
       };
     },
     async submitPayment(proposal) {

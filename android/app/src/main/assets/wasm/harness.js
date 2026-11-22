@@ -19,8 +19,8 @@ import init, {
   rgbRestoreKeysValue,
 } from "./pkg/rln_wasm_sdk.js";
 
-const DEFAULT_INDEXER_URL = "http://192.168.178.20:3002";
-const DEFAULT_NODE_PROXY_URL = "ws://192.168.178.20:3001";
+const DEFAULT_INDEXER_URL = "http://192.168.1.147:3002";
+const DEFAULT_NODE_PROXY_URL = "ws://192.168.1.147:3001";
 
 function getQueryParam(name, fallback) {
   try {
@@ -118,6 +118,8 @@ async function readWalletSnapshot(wallet, online) {
 // One background provisioning run at a time; the LSP performs the whole RGB
 // bootstrap (asset, colorable UTXOs, channel open, asset push).
 let openProvisionPromise = null;
+// Last provisioning failure, surfaced in the status reply/Home attention card.
+let provisionError = null;
 
 // Safe helper call for the provisioning loop (never throws).
 async function callHelperSafe(path, body) {
@@ -148,6 +150,7 @@ async function blindRecipientId(s, node) {
 
 async function provisionChannel(s) {
   const node = s.node;
+  provisionError = null;
   const info = await (await helperFetch(`${MOBILE_HELPER}/lspinfo`)).json();
 
   await node.connectPeer("127.0.0.1:9802", info.pubkey).catch(() => {});
@@ -178,6 +181,16 @@ async function provisionChannel(s) {
   post({ step: "blind-invoice", recipientId });
 
   let assetId = localStorage.getItem("metevo.usdm_asset_id");
+  // Deliver the asset again only when this wallet has no settled USDM (fresh
+  // install or reset wallet DB); a retry with balance already present skips it.
+  let deliver = true;
+  if (assetId) {
+    try {
+      const raw = await withWallet(() => s.wallet.getAssetBalanceValue(assetId));
+      const cached = typeof raw === "string" ? JSON.parse(raw) : raw;
+      deliver = !(cached && Number(cached.settled || 0) > 0);
+    } catch (_e) { deliver = true; }
+  }
   try {
     setStatus("LSP bootstrap");
     const boot = await callHelperSafe("/lsp/bootstrap", {
@@ -185,6 +198,7 @@ async function provisionChannel(s) {
       recipient_id: recipientId,
       transport_endpoints: [RGB_PROXY],
       ticker: "USDM",
+      deliver,
     });
     if (boot && boot.ok !== false && boot.asset_id) {
       assetId = boot.asset_id;
@@ -209,7 +223,9 @@ async function provisionChannel(s) {
   const deadline = Date.now() + 10 * 60 * 1000;
   for (let i = 0; Date.now() < deadline; i += 1) {
     await pump(node);
-    try { await node.driveRgbFundingWork(); } catch (_e) { /* ignore */ }
+    await withWallet(async () => {
+      try { await node.driveRgbFundingWork(); } catch (_e) { /* ignore */ }
+    });
     if (i % 3 === 2) {
       try { await callHelperSafe("/mine", { blocks: 1 }); } catch (_e) { /* ignore */ }
     }
@@ -243,6 +259,7 @@ async function provisionChannel(s) {
     }
     const channel = peerChannels.find((c) => c.is_usable === true);
     if (channel) {
+      provisionError = null;
       post({ step: "channel-ready", channel, assetId });
       return;
     }
@@ -254,13 +271,15 @@ async function provisionChannel(s) {
       } catch (_e) { /* busy or not settled yet */ }
       // settled === 0 (or no balance yet) is a miss, keep polling.
       if (balance && Number(balance.settled || 0) > 0) {
+        provisionError = null;
         post({ step: "channel-ready", channel: null, assetId, balance });
         return;
       }
     }
     await new Promise((r) => setTimeout(r, 500));
   }
-  throw new Error("the LSP bootstrap never produced a usable channel");
+  provisionError = "the LSP bootstrap never produced a usable channel";
+  throw new Error(provisionError);
 }
 
 window.__metevoDispatch = async (raw) => {
@@ -281,43 +300,34 @@ window.__metevoDispatch = async (raw) => {
         reply({ ok: true, pubkey: JSON.parse(node.nodePubkeyJson()).pubkey });
         return;
       case "open": {
-        // Fast reply: node + wallet are online here. Channel provisioning
-        // runs in the background so the UI never blocks for minutes.
-        const quick = await withWallet(async () => {
-          const existing = JSON.parse(node.listChannelsJson());
-          const existingReady = (existing || []).find((c) => c.is_usable === true);
-          if (existingReady) {
-            // The persisted channel state can claim usable while the peer
-            // session died (app was stopped). Re-establish the LSP session.
-            try {
-              const info = await (await helperFetch(`${MOBILE_HELPER}/lspinfo`)).json();
-              void node.connectPeer("127.0.0.1:9802", info.pubkey).catch(() => {});
-            } catch (_e) { /* best effort */ }
-            return { ok: true, reused: true, channel: existingReady };
-          }
-          return { ok: true, channel: null, pendingChannel: true, channels: existing };
-        });
-        if (quick.pendingChannel && openProvisionPromise === null) {
+        // Provisioning always runs: a reset wallet DB must receive the asset
+        // again, and the bootstrap decides whether on-chain delivery is needed.
+        // The reply stays fast; provisioning continues in the background.
+        const existing = JSON.parse(node.listChannelsJson());
+        if (openProvisionPromise === null) {
           openProvisionPromise = provisionChannel(s)
             .catch((e) => {
-              post({ step: "error", error: String(e) });
-              setStatus(`provisioning failed: ${e}`);
+              provisionError = String(e);
+              post({ step: "error", error: provisionError });
+              setStatus(`provisioning failed: ${provisionError}`);
             })
             .finally(() => {
               openProvisionPromise = null;
             });
         }
-        reply(quick);
+        reply({ ok: true, channel: null, pendingChannel: true, channels: existing });
         return;
       }
       case "status": {
         const channels = JSON.parse(node.listChannelsJson());
-        const snap = await readWalletSnapshot(s.wallet, s.online);
+        const snap = await withWallet(() => readWalletSnapshot(s.wallet, s.online));
         // Drive the RGB funding work on every status tick — this is what
         // processes the inbound virtual-channel open/funding on the device
         // (reference e2e-test-wasm-wdk.js waitForChannelToBeUsable does
         // chainSyncTick + driveRgbFundingWork each tick).
-        try { await node.driveRgbFundingWork(); } catch (_e) { /* ignore */ }
+        await withWallet(async () => {
+          try { await node.driveRgbFundingWork(); } catch (_e) { /* ignore */ }
+        });
         try { node.processNativeRuntimeQueueValue(); } catch (_e) { /* ignore */ }
         // The LSP pushes the bootstrap USDM into the channel's responder
         // side — this node — so RLN reports it as asset_local_amount here
@@ -348,6 +358,7 @@ window.__metevoDispatch = async (raw) => {
             ? channelAssetAmount
             : snap.usdm ? Number(snap.usdm.settled ?? 0) : (assetChannel ? 0 : null),
           channelReady: (channels || []).some((c) => c.is_usable === true || c.ready === true),
+          provisionError,
           pendingFunding,
           runtimeEvents,
         });
@@ -443,6 +454,7 @@ window.__metevoDispatch = async (raw) => {
             recipient_id: recipientId,
             transport_endpoints: [RGB_PROXY],
             ticker: "USDM",
+            deliver: true,
           });
           if (boot && boot.error) throw new Error(`LSP bootstrap failed: ${boot.error}`);
           if (boot && boot.ok !== false && boot.asset_id) {
@@ -469,7 +481,9 @@ window.__metevoDispatch = async (raw) => {
         setStatus("waiting for USDm");
         let balance = null;
         for (let i = 0; i < 120; i += 1) {
-          try { await node.driveRgbFundingWork(); } catch (_e) { /* ignore */ }
+          await withWallet(async () => {
+            try { await node.driveRgbFundingWork(); } catch (_e) { /* ignore */ }
+          });
           try {
             balance = await withWallet(async () => {
               try { await s.wallet.refreshValue(s.online, null, [], false); } catch (_e) { /* not ready */ }

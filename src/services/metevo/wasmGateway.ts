@@ -15,6 +15,7 @@ type WasmStatus = {
   btcSpendableSat: number;
   balanceUsdmBaseUnits: number | null;
   channelReady: boolean;
+  provisionError?: string | null;
 };
 
 const WALLET_ID = 'wasm-1';
@@ -50,7 +51,7 @@ export function createWasmWalletSessionGateway(): WalletSessionGateway {
 
     async readStatus(): Promise<WalletSessionSnapshot> {
       const status = await wasmCall<WasmStatus>('status');
-      return status;
+      return { ...status, provisionError: status.provisionError ?? null };
     },
 
     async submitPayment(proposal: PaymentProposal): Promise<SubmittedPayment> {

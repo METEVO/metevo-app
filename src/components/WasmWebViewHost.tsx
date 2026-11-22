@@ -72,9 +72,9 @@ export function WasmWebViewHost({
     };
   }, []);
 
-  const helper = process.env.EXPO_PUBLIC_WASM_HELPER_URL || 'http://192.168.178.20:3010';
-  const indexer = process.env.EXPO_PUBLIC_WASM_INDEXER_URL || 'http://192.168.178.20:3002';
-  const nodeProxy = process.env.EXPO_PUBLIC_WASM_NODE_PROXY_URL || 'ws://192.168.178.20:3001';
+  const helper = process.env.EXPO_PUBLIC_WASM_HELPER_URL || 'http://192.168.1.147:3010';
+  const indexer = process.env.EXPO_PUBLIC_WASM_INDEXER_URL || 'http://192.168.1.147:3002';
+  const nodeProxy = process.env.EXPO_PUBLIC_WASM_NODE_PROXY_URL || 'ws://192.168.1.147:3001';
 
   return (
     <View style={styles.offscreen} pointerEvents="none">

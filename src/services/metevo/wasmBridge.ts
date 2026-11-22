@@ -14,11 +14,22 @@ let ready = false;
 let resolveReady: (() => void) | null = null;
 
 const HELPER_BASE =
-  process.env.EXPO_PUBLIC_WASM_HELPER_URL || 'http://192.168.178.20:3010';
+  process.env.EXPO_PUBLIC_WASM_HELPER_URL || 'http://192.168.1.147:3010';
 
-const readyPromise = new Promise<void>((resolve) => {
+/** The harness must post `ready` within this window after the page mounts. */
+const READY_TIMEOUT_MS = 180_000;
+
+const readyPromise = new Promise<void>((resolve, reject) => {
   resolveReady = resolve;
+  setTimeout(() => {
+    if (!ready) {
+      reject(new Error('the on-device node did not become ready within 180 s'));
+    }
+  }, READY_TIMEOUT_MS);
 });
+// Callers attach their own rejection handlers; this keeps an idle bridge from
+// logging an unhandled rejection when nothing is waiting for readiness.
+void readyPromise.catch(() => {});
 
 export function attachWasmWebView(ref: WebViewHandle | null): void {
   webview = ref;

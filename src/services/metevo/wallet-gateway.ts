@@ -32,6 +32,8 @@ export interface WalletSessionSnapshot {
   btcSpendableSat: number;
   balanceUsdmBaseUnits: number | null;
   channelReady: boolean;
+  /** Last background provisioning failure, if any (null when healthy). */
+  provisionError: string | null;
 }
 
 export type WalletProgressListener = (step: WalletSetupStep, message: string) => void;
@@ -173,6 +175,7 @@ function createMockWalletSessionGateway(): WalletSessionGateway {
         btcSpendableSat: 0,
         balanceUsdmBaseUnits: opened ? 0 : null,
         channelReady: opened,
+        provisionError: null,
       };
     },
     async submitPayment() {

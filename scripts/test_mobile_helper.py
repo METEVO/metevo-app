@@ -77,11 +77,13 @@ class ChannelReuseTest(unittest.TestCase):
         rows = [{"peer_pubkey": PEER.split("@")[0], "asset_id": None}]
         self.assertIsNone(helper._channel_for(rows, PEER.split("@")[0], ASSET))
 
-    def test_channel_reusable_any_status(self):
+    def test_channel_reusable_only_open_or_opening(self):
         self.assertFalse(helper.channel_reusable(None))
         self.assertFalse(helper.channel_reusable({}))
         self.assertTrue(helper.channel_reusable({"status": "Opened"}))
-        self.assertTrue(helper.channel_reusable({"status": "Closed"}))
+        self.assertTrue(helper.channel_reusable({"status": "Opening"}))
+        self.assertFalse(helper.channel_reusable({"status": "Closed"}))
+        self.assertFalse(helper.channel_reusable({"status": "Cancelled"}))
 
 
 class DeliveryKeyTest(unittest.TestCase):

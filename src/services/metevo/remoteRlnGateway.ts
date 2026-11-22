@@ -50,6 +50,7 @@ const EMPTY_SNAPSHOT: WalletSessionSnapshot = {
   btcSpendableSat: 0,
   balanceUsdmBaseUnits: null,
   channelReady: false,
+  provisionError: null,
 };
 
 export function createRemoteRlnWalletSessionGateway(
@@ -142,6 +143,7 @@ export function createRemoteRlnWalletSessionGateway(
         // allocation that funds the channel.
         balanceUsdmBaseUnits: usdm === null ? null : usdm.offchain_outbound,
         channelReady: hasUsableUsdmChannel(channels),
+        provisionError: null,
       };
     },
 

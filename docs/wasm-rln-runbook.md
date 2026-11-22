@@ -2,15 +2,15 @@
 
 Companion to `docs/wasm-on-device-rln-handoff.md`. LAN topology, ports and helper routes.
 
-## Processes on the LAN computer (192.168.178.20)
+## Processes on the LAN computer (192.168.1.147)
 
 | Port | Process | Notes |
 |---|---|---|
-| 3010 | `scripts/mobile_helper.py` (python3) | plain HTTP helper, started detached (`setsid`, log in `%TEMP%`) |
+| 3010 | `scripts/mobile_helper.py` (python3) | plain HTTP helper at `http://192.168.1.147:3010`, started detached (`setsid`, log in `/tmp/mobile_helper.out`) |
 | 3101 | LSP `rgb-lightning-node .e2e-regular-rln-datadir/mobile --daemon-listening-port 3101 --ldk-peer-listening-port 9802 --network regtest --disable-authentication` | LSP API on 3101, LDK peer port 9802. Must run **without** `DEFAULT_VIRTUAL_OPEN_MODE` — the RGB channel is a regular (non-virtual) channel |
-| 3001 | `wasm-proxy-gateway` | WebSocket→TCP for LDK + Esplora |
-| 3002 | Esplora | block data for BDK/rgb-lib |
-| 3005 | RGB proxy → container :3000 | JSON-RPC at `/json-rpc`, protocol 0.2 |
+| 3001 | `wasm-proxy-gateway` | WebSocket→TCP for LDK + Esplora at `ws://192.168.1.147:3001` |
+| 3002 | Esplora | block data for BDK/rgb-lib at `http://192.168.1.147:3002` |
+| 3005 | RGB proxy → container :3000 | JSON-RPC at `rpc://192.168.1.147:3005/json-rpc`, protocol 0.2 |
 | 19445 | bitcoind RPC | wallet `bdk-test` |
 
 ## Helper routes (mobile_helper.py, port 3010)
@@ -18,12 +18,26 @@ Companion to `docs/wasm-on-device-rln-handoff.md`. LAN topology, ports and helpe
 GET: `/lspinfo`, `/lsp/peers`, `/txstatus?txid=…`
 POST: `/fund` `{address, btc}`, `/mine` `{blocks}`,
 `/lsp/bootstrap` `{peer_pubkey_and_opt_addr, recipient_id?, transport_endpoints?, ticker?,
-capacity_sat?, asset_amount?, push_msat?}`,
+capacity_sat?, asset_amount?, push_msat?, deliver?}`,
 `/lsp/sendrgb` `{asset_id, amount, recipient_id, transport_endpoints}`,
 `/lsp/refresh` `{}`, `/lsp/keysend` `{dest_pubkey, amt_msat}`,
 `/lsp/invoice`, `/lsp/pay`.
 
-Start: `setsid python3 scripts/mobile_helper.py >/dev/null 2>&1 &` (check with `pgrep -af mobile_helper.py`, `curl -s http://127.0.0.1:3010/lspinfo`).
+Start: `setsid python3 scripts/mobile_helper.py >/tmp/mobile_helper.out 2>&1 &` (check with `pgrep -af mobile_helper.py`, `curl -s http://192.168.1.147:3010/lspinfo`).
+
+## Restart rules before the device demo
+
+1. **RLN 3101 without `DEFAULT_VIRTUAL_OPEN_MODE`.** Start it as in the demo
+   procedure (`env -u DEFAULT_VIRTUAL_OPEN_MODE …`). With that variable set,
+   RLN injects `virtual_open_mode` into every `/openchannel` and the bootstrap
+   opens a virtual channel instead of the regular RGB one.
+2. **Go LSP 8080 stopped.** `pkill -f utexo-lsp-data/application`.
+   `/home/aballarini/utexo-lsp-data/start.sh` can restart it when needed, but
+   it must not run during the device demo: its reconciler cron opens a
+   competing (virtual) channel for every new peer.
+3. **Helper 3010 restarted after every edit.** A running process keeps the old
+   module: `pkill -f scripts/mobile_helper.py; setsid python3
+   scripts/mobile_helper.py >/tmp/mobile_helper.out 2>&1 &`.
 
 ## Health check order
 
@@ -38,9 +52,14 @@ Start: `setsid python3 scripts/mobile_helper.py >/dev/null 2>&1 &` (check with `
 export PATH=/home/aballarini/.nvm/versions/node/v22.23.3/bin:/usr/local/bin:/usr/bin:/bin
 cd metevo-app/android
 export ANDROID_HOME=/home/aballarini/Android/Sdk
-EXPO_PUBLIC_WALLET_MODE=wasm EXPO_PUBLIC_WASM_PING=1 EXPO_PUBLIC_WASM_SELFTEST=1 \
+EXPO_PUBLIC_WALLET_MODE=wasm \
+EXPO_PUBLIC_WASM_HELPER_URL=http://192.168.1.147:3010 \
+EXPO_PUBLIC_WASM_INDEXER_URL=http://192.168.1.147:3002 \
+EXPO_PUBLIC_WASM_NODE_PROXY_URL=ws://192.168.1.147:3001 \
+EXPO_PUBLIC_WASM_PING=1 \
+EXPO_PUBLIC_WASM_SELFTEST=1 \
   sh ./gradlew :app:assembleRelease --no-daemon
-adb connect 192.168.178.21:<port>
+adb connect <phone-ip>:<port>
 adb install -r --no-streaming app/build/outputs/apk/release/app-release.apk
 ```
 
@@ -112,8 +131,8 @@ running returns HTTP 409.
    `I wrote it down` → "Preparing your wallet" → HomeScreen. The device node
    connects to the LSP, creates a blind RGB invoice and POSTs
    `/lsp/bootstrap`; the helper issues/ensures USDM, creates the colorable
-   UTXO and the regular 500 000 sat RGB channel (`push 250 000 msat`) and
-   delivers the asset to the blind invoice. Expect
+   UTXO and the regular 500 000 sat RGB channel (`push 250 000 000 msat` =
+   250 000 sat) and delivers the asset to the blind invoice. Expect
    `balanceUsdmBaseUnits: 2000000000` (20.00 USDm) in the `[metevo] wasm ping
    ok` logcat line within ~90 s, and the LSP-side channel row
    (`asset_local_amount: 2000000000`, `virtual_open_mode: null`). No on-chain
