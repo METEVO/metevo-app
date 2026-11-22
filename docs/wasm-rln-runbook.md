@@ -136,14 +136,19 @@ On the fresh node the 200's `issued` field reads `0` (the node reports
    next 30 s tick. Expect `balanceUsdmBaseUnits: 2000000000` (20.00 USDm) in
    the `[metevo] wasm ping ok` logcat line within ~90 s of the peer appearing,
    and the LSP-side channel row (`asset_local_amount: 2000000000`,
-   `push 250000000 msat`, `trusted_no_broadcast`). The sats card reads the
-   on-chain wallet only — it stays `0 sats` unless the old
-   `runChannelFlow` faucet path funds it.
+   `push 250000000 msat`, `trusted_no_broadcast`). First provisioning also
+   funds the device on-chain exactly once: when the vanilla balance is
+   under 100 000 sat the harness calls `/fund {address, btc: 0.01}` (the
+   helper mines 6 blocks) before connecting the peer, so the sats card
+   shows non-zero sats on a fresh wallet.
 3. Restart → login: force-stop + relaunch → `Login with fingerprint` → the
    biometric prompt (or auto-login when no fingerprint is enrolled) →
-   HomeScreen. Note: the wasm node's LDK state is MEMFS-resident, so a NEW app
-   process gets a fresh node pubkey; the LSP provisions a new channel for it
-   (the seed and the on-chain wallet stay seed-derived and stable).
+   HomeScreen. The node identity is now stable per seed: the harness flushes
+   the LDK runtime state to the persistent store immediately after node
+   setup (a force-stop never fires pagehide/beforeunload) and every boot
+   preloads it — same seed ⇒ same node pubkey, so the Go LSP cron does not
+   provision a second channel and the channel/balances survive a restart.
+   (Identity still rotates after `pm clear` — see pitfalls.)
 4. LN payments need the ~12 min channel-convergence window after an app
    restart: open the app ~15 min before showing a keysend. Balances appear
    immediately; the selftest (36 attempts / 18 min) covers the window.

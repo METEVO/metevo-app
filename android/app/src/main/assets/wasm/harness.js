@@ -122,6 +122,46 @@ let openProvisionPromise = null;
 async function provisionChannel(s) {
   const node = s.node;
   const info = await (await helperFetch(`${MOBILE_HELPER}/lspinfo`)).json();
+
+  // Bootstrap funding (once per wallet): the LSP's channel open wants an
+  // on-chain-funded counterparty and the sats card wants a non-zero balance.
+  // The balance read IS the guard — a funded wallet never re-funds, and the
+  // Go cron skips peers with an existing channel so provisioning itself
+  // never re-runs for a funded wallet.
+  await withWallet(async () => {
+    const spendable = (b) =>
+      Number((b && b.vanilla && (b.vanilla.spendable ?? b.vanilla.settled)) || 0);
+    let bal = null;
+    try {
+      bal = await s.wallet.getBtcBalanceValue();
+    } catch (_e) { /* busy or fresh: treat as unfunded */ }
+    if (spendable(bal) >= 100000) return;
+    let address = null;
+    for (let a = 0; a < 10 && !address; a += 1) {
+      try {
+        address = await s.wallet.getAddress();
+      } catch (_e) { /* busy: retry */ await new Promise((r) => setTimeout(r, 1000)); }
+    }
+    if (!address) throw new Error("could not get a funding address: wallet busy");
+    const fund = await helperFetch(`${MOBILE_HELPER}/fund`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ address, btc: 0.01 }),
+    });
+    if (!fund.ok) throw new Error(`fund failed: ${await fund.text()}`);
+    // The helper mines 6 confirmations after sending; sync until the wallet
+    // sees the sats. Provisioning continues even if this times out — the
+    // channel can converge first and the balance lands on a later sync.
+    for (let i = 0; i < 60; i += 1) {
+      try { await s.wallet.syncOnline(s.online); } catch (_e) { /* retry */ }
+      try {
+        bal = await s.wallet.getBtcBalanceValue();
+      } catch (_e) { /* retry */ }
+      if (spendable(bal) > 0) return;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  });
+
   await node.connectPeer("127.0.0.1:9802", info.pubkey).catch(() => {});
 
   const liveInfo = JSON.parse(node.nodePubkeyJson());
@@ -858,6 +898,12 @@ async function helperFetch(url, opts) {
     };
     window.addEventListener("pagehide", flushLdkState);
     window.addEventListener("beforeunload", flushLdkState);
+
+    // A force-stop never fires pagehide/beforeunload, so the freshly
+    // generated node keys must hit the persistent store now, not on page
+    // exit — otherwise the next boot preloads nothing and the pubkey
+    // rotates (preloadPersistentRuntimeState runs earlier, above).
+    flushLdkState();
 
     const pubkey = (JSON.parse(node.nodePubkeyJson()) || {}).pubkey || "?";
     setStatus(`ready · pubkey=${pubkey} · wallet=${walletAddress.slice(0, 18)}…`);
