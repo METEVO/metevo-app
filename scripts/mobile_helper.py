@@ -272,7 +272,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         pubkey = peer.split("@", 1)[0]
         ticker = str(body.get("ticker") or "USDM").strip() or "USDM"
-        capacity_sat = int(body.get("capacity_sat", 30050))
+        capacity_sat = int(body.get("capacity_sat", 500000))
         asset_amount = int(body.get("asset_amount", 2000000000))
         push_msat = int(body.get("push_msat", 250000000))
         recipient_id = str(body.get("recipient_id") or "").strip() or None

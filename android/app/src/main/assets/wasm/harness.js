@@ -253,119 +253,6 @@ async function provisionChannel(s) {
   throw new Error("the LSP bootstrap never produced a usable channel");
 }
 
-async function runChannelFlow() {
-  const s = window.__sdk;
-  const node = s.node;
-
-  setStatus("lsp info");
-  const info = await (await helperFetch(`${MOBILE_HELPER}/lspinfo`)).json();
-  post({ step: "lspinfo", pubkey: info.pubkey });
-
-  setStatus("fund wallet");
-  const fund = await helperFetch(`${MOBILE_HELPER}/fund`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ address: s.walletAddress, btc: 0.05 }),
-  });
-  if (!fund.ok) throw new Error(`fund failed: ${await fund.text()}`);
-  post({ step: "funded" });
-
-  for (let i = 0; i < 30; i += 1) {
-    await pump(node);
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-
-  setStatus("connect peer");
-  await node.connectPeer("127.0.0.1:9802", info.pubkey);
-  post({ step: "peer-connected" });
-
-  setStatus("open channel");
-  node.openChannelJson(info.pubkey, BigInt(500000), false, undefined, undefined);
-
-  let pending = null;
-  for (let i = 0; i < 240; i += 1) {
-    await pump(node);
-    const list = JSON.parse(node.listPendingFundingRequestsJson());
-    if (Array.isArray(list) && list.length > 0) { pending = list[0]; break; }
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  if (!pending) throw new Error("no pending funding request");
-  post({ step: "pending-funding", pending });
-
-  setStatus("build funding tx");
-  const raw = await s.wallet.buildLightningFundingTxJson(
-    s.online,
-    pending.output_script_hex,
-    BigInt(Number(pending.channel_value_satoshis)),
-    2n,
-  );
-  const funding = JSON.parse(raw);
-  node.submitFundingTransactionValue({
-    temporary_channel_id: pending.temporary_channel_id,
-    counterparty_node_id: pending.counterparty_node_id,
-    funding_tx_hex: funding.funding_tx_hex,
-  });
-  post({ step: "funding-submitted", txid: funding.txid });
-
-  setStatus("wait for mempool");
-  for (let i = 0; i < 90; i += 1) {
-    try {
-      const st = await (await helperFetch(`${MOBILE_HELPER}/txstatus?txid=${funding.txid}`)).json();
-      if (st.seen) break;
-    } catch (_e) {
-      /* retry */
-    }
-    await new Promise((r) => setTimeout(r, 1000));
-  }
-
-  setStatus("mine confirmations");
-  await helperFetch(`${MOBILE_HELPER}/mine`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ blocks: 12 }),
-  });
-
-  let channel = null;
-  for (let i = 0; i < 600; i += 1) {
-    await pump(node);
-    const list = JSON.parse(node.listChannelsJson());
-    channel = (list || []).find(
-      (c) => String(c.peer_pubkey || "").toLowerCase() === String(info.pubkey).toLowerCase(),
-    );
-    if (channel && (channel.ready === true || channel.is_usable === true || channel.status === "ready")) break;
-    if (i === 120) {
-      await helperFetch(`${MOBILE_HELPER}/mine`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ blocks: 6 }),
-      }).catch(() => {});
-    }
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  if (!channel || !(channel.ready === true || channel.is_usable === true || channel.status === "ready")) {
-    throw new Error(`channel not ready: ${JSON.stringify(channel)}`);
-  }
-  post({ step: "channel-ready", channel });
-
-  setStatus("pay keysend");
-  const payment = JSON.parse(node.keysendJson(info.pubkey, 3000000n, undefined, undefined));
-  let settled = null;
-  for (let i = 0; i < 300; i += 1) {
-    await pump(node);
-    const list = JSON.parse(node.listPaymentsJson());
-    settled = (list || []).find(
-      (p) => p.payment_hash === payment.payment_hash && p.status === "succeeded",
-    );
-    if (settled) break;
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  if (!settled) throw new Error(`payment not settled: ${JSON.stringify(payment)}`);
-
-  setStatus(`CHANNEL+PAY OK ${payment.payment_hash.slice(0, 16)}…`);
-  post({ step: "payment-succeeded", payment: settled });
-}
-
-
 window.__metevoDispatch = async (raw) => {
   const req = typeof raw === "string" ? JSON.parse(raw) : raw;
   const s = window.__sdk;
@@ -836,12 +723,6 @@ async function helperFetch(url, opts) {
     setStatus(`ready · pubkey=${pubkey} · wallet=${walletAddress.slice(0, 18)}…`);
     post({ step: "ready", pubkey });
 
-    if (getQueryParam("flow", "") === "channel") {
-      runChannelFlow().catch((e) => {
-        setStatus(`channel failed: ${e}`);
-        post({ step: "error", error: String(e) });
-      });
-    }
   } catch (err) {
     window.__sdk = { ready: false, error: String(err) };
     setStatus(`init failed: ${err}`);
