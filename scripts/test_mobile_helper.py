@@ -84,5 +84,42 @@ class ChannelReuseTest(unittest.TestCase):
         self.assertTrue(helper.channel_reusable({"status": "Closed"}))
 
 
+class DeliveryKeyTest(unittest.TestCase):
+    def test_deterministic(self):
+        one = helper.delivery_key(ASSET, "02AbC", "bcrt:utxob:xyz")
+        two = helper.delivery_key(ASSET, "02AbC", "bcrt:utxob:xyz")
+        self.assertEqual(one, two)
+
+    def test_order_independent_kwargs(self):
+        one = helper.delivery_key(
+            recipient_id="bcrt:utxob:xyz", asset_id=ASSET, peer_pubkey="02AbC"
+        )
+        two = helper.delivery_key(
+            peer_pubkey="02AbC", asset_id=ASSET, recipient_id="bcrt:utxob:xyz"
+        )
+        self.assertEqual(one, two)
+
+    def test_normalises_peer_case_and_whitespace(self):
+        self.assertEqual(
+            helper.delivery_key(ASSET, "02AbC", "bcrt:utxob:xyz"),
+            helper.delivery_key(f" {ASSET} ", " 02abc ", " bcrt:utxob:xyz "),
+        )
+
+    def test_different_recipients_differ(self):
+        self.assertNotEqual(
+            helper.delivery_key(ASSET, "02AbC", "bcrt:utxob:one"),
+            helper.delivery_key(ASSET, "02AbC", "bcrt:utxob:two"),
+        )
+
+
+class ReuseGateTest(unittest.TestCase):
+    def test_only_opened_channels_may_deliver(self):
+        self.assertFalse(helper.reuse_blocked({"status": "Opened"}))
+        self.assertTrue(helper.reuse_blocked({"status": "Opening"}))
+        self.assertTrue(helper.reuse_blocked({"status": "Closed"}))
+        self.assertTrue(helper.reuse_blocked({"status": None}))
+        self.assertTrue(helper.reuse_blocked(None))
+
+
 if __name__ == "__main__":
     unittest.main()

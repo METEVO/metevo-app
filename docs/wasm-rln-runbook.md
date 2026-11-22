@@ -19,7 +19,7 @@ GET: `/lspinfo`, `/lsp/peers`, `/txstatus?txid=…`
 POST: `/fund` `{address, btc}`, `/mine` `{blocks}`,
 `/lsp/bootstrap` `{peer_pubkey_and_opt_addr, recipient_id?, transport_endpoints?, ticker?,
 capacity_sat?, asset_amount?, push_msat?}`,
-`/lsp/issueusdm` `{}`, `/lsp/sendrgb` `{asset_id, amount, recipient_id, transport_endpoints}`,
+`/lsp/sendrgb` `{asset_id, amount, recipient_id, transport_endpoints}`,
 `/lsp/refresh` `{}`, `/lsp/keysend` `{dest_pubkey, amt_msat}`,
 `/lsp/invoice`, `/lsp/pay`.
 
@@ -76,9 +76,12 @@ Provisioning now lives entirely in `scripts/mobile_helper.py`:
 
 `push_msat` defaults to 250 000 000 and is clamped to `capacity_sat / 2`
 (RLN rejects a push above the capacity; the opener keeps sats for its asset
-HTLCs). One-time issuance is not needed: `POST :3010/lsp/issueusdm {}` and the
-bootstrap use the same `issue_usdm()` code path (cache
-`/tmp/metevo_usdm_asset.json`; delete it to force a new asset).
+HTLCs). One-time issuance is not needed: `/lsp/bootstrap` issues USDM through
+`issue_usdm()` when no ticker match has enough spendable (cache
+`/tmp/metevo_usdm_asset.json`; delete it to force a new asset). Deliveries are
+idempotent per (asset, peer, blind invoice), persisted in
+`/tmp/metevo_bootstrap_deliveries.json`. A second bootstrap call while one is
+running returns HTTP 409.
 
 `EXPO_PUBLIC_WASM_ISSUE` stays retired: the app never issues.
 

@@ -12,6 +12,7 @@ AUTH = base64.b64encode(b"admin:passw").decode()
 WALLET = "bdk-test"
 RLN = "http://127.0.0.1:3101"
 USDM_CACHE = "/tmp/metevo_usdm_asset.json"
+DELIVERIES = "/tmp/metevo_bootstrap_deliveries.json"
 ISSUE_LOCK = threading.Lock()
 BOOTSTRAP_LOCK = threading.Lock()
 MIN_CHANNEL_CAPACITY_SAT = 30050
@@ -254,6 +255,32 @@ def _send_rgb_error(result):
     return json.dumps(result)[:400]
 
 
+def delivery_key(asset_id, peer_pubkey, recipient_id):
+    """One on-chain delivery per (asset, peer, blind invoice)."""
+    return "|".join(
+        [
+            str(asset_id or "").strip(),
+            str(peer_pubkey or "").strip().lower(),
+            str(recipient_id or "").strip(),
+        ]
+    )
+
+
+def load_deliveries():
+    """Bootstrap deliveries persisted across helper restarts."""
+    try:
+        with open(DELIVERIES, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_deliveries(deliveries):
+    with open(DELIVERIES, "w", encoding="utf-8") as handle:
+        json.dump(deliveries, handle)
+
+
 def clamp_push_msat(capacity_sat, push_msat):
     """RLN rejects push > capacity; the opener also needs sats for asset HTLCs."""
     return min(push_msat, max(0, capacity_sat // 2) * 1000)
@@ -297,21 +324,27 @@ def channel_reusable(existing):
     return bool(existing)
 
 
-class Handler(BaseHTTPRequestHandler):
-    def _handle_issueusdm(self):
-        issued = issue_usdm()
-        self._json(200, issued)
+def reuse_blocked(channel):
+    """A reused channel can only deliver once it is Opened."""
+    return not channel or str(channel.get("status") or "") != "Opened"
 
+
+class Handler(BaseHTTPRequestHandler):
     def _handle_bootstrap(self, body):
-        # Serialised: two devices must never both open a channel (the second
-        # call would see the first channel only after it exists on RLN).
-        with BOOTSTRAP_LOCK:
+        # Never queue a second caller: a concurrent run means the first is
+        # still opening a channel and the second would race it.
+        if not BOOTSTRAP_LOCK.acquire(blocking=False):
+            self._json(409, {"error": "bootstrap already running"})
+            return
+        try:
             try:
                 self._run_bootstrap(body)
             except ValueError as exc:
                 self._json(400, {"error": str(exc)})
             except Exception as exc:  # noqa: BLE001
                 self._json(502, {"error": f"{type(exc).__name__}: {exc}"})
+        finally:
+            BOOTSTRAP_LOCK.release()
 
     def _run_bootstrap(self, body):
         peer = str(body.get("peer_pubkey_and_opt_addr") or "").strip()
@@ -338,6 +371,21 @@ class Handler(BaseHTTPRequestHandler):
         asset_id, source, _ = prepare_usdm_asset(asset_amount, ticker)
         steps.append({"step": "asset", "asset_id": asset_id, "source": source})
 
+        deliveries = load_deliveries()
+
+        def deliver():
+            """Delivery is idempotent per (asset, peer, blind invoice)."""
+            key = delivery_key(asset_id, pubkey, recipient_id)
+            stored = deliveries.get(key)
+            if stored:
+                steps.append({"step": "sendrgb-cached", "status": stored.get("status")})
+                return stored.get("status"), stored.get("body")
+            code, body = send_rgb(asset_id, asset_amount, recipient_id, transport_endpoints)
+            steps.append({"step": "sendrgb", "status": code})
+            deliveries[key] = {"status": code, "body": body}
+            save_deliveries(deliveries)
+            return code, body
+
         # Idempotent: one RGB channel per peer+asset, whatever its status. The
         # open/UTXO steps are skipped, but a supplied blind invoice is still
         # honoured by delivering the asset on-chain.
@@ -347,13 +395,12 @@ class Handler(BaseHTTPRequestHandler):
             temporary_id = existing.get("channel_id")
             send_rgb_result = None
             if recipient_id:
-                balance = rln("/assetbalance", {"asset_id": asset_id}, 30)
-                if _spendable(balance) < asset_amount:
+                if reuse_blocked(existing):
                     self._json(
                         502,
                         {
                             "ok": False,
-                            "error": f"insufficient asset balance: {_spendable(balance)} < {asset_amount} required",
+                            "error": f"channel {existing.get('status') or 'unknown'} not Opened yet",
                             "asset_id": asset_id,
                             "temporary_channel_id": temporary_id,
                             "channel": existing,
@@ -362,10 +409,27 @@ class Handler(BaseHTTPRequestHandler):
                         },
                     )
                     return
-                code, send_rgb_result = send_rgb(
-                    asset_id, asset_amount, recipient_id, transport_endpoints
-                )
-                steps.append({"step": "sendrgb", "status": code})
+                stored = deliveries.get(delivery_key(asset_id, pubkey, recipient_id))
+                if stored:
+                    steps.append({"step": "sendrgb-cached", "status": stored.get("status")})
+                    code, send_rgb_result = stored.get("status"), stored.get("body")
+                else:
+                    balance = rln("/assetbalance", {"asset_id": asset_id}, 30)
+                    if _spendable(balance) < asset_amount:
+                        self._json(
+                            502,
+                            {
+                                "ok": False,
+                                "error": f"insufficient asset balance: {_spendable(balance)} < {asset_amount} required",
+                                "asset_id": asset_id,
+                                "temporary_channel_id": temporary_id,
+                                "channel": existing,
+                                "send_rgb": None,
+                                "steps": steps,
+                            },
+                        )
+                        return
+                    code, send_rgb_result = deliver()
                 if code != 200:
                     self._json(
                         502,
@@ -449,10 +513,7 @@ class Handler(BaseHTTPRequestHandler):
 
         send_rgb_result = None
         if recipient_id:
-            code, send_rgb_result = send_rgb(
-                asset_id, asset_amount, recipient_id, transport_endpoints
-            )
-            steps.append({"step": "sendrgb", "status": code})
+            code, send_rgb_result = deliver()
             if code != 200:
                 self._json(
                     502,
@@ -531,9 +592,6 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if self.path.startswith("/lsp/bootstrap"):
                 self._handle_bootstrap(body)
-                return
-            if self.path.startswith("/lsp/issueusdm"):
-                self._handle_issueusdm()
                 return
             if self.path.startswith("/lsp/sendrgb"):
                 code, data = send_rgb(

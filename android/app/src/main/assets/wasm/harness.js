@@ -53,7 +53,7 @@ function buildWalletData(keys, runtimeId) {
 }
 
 
-const MOBILE_HELPER = getQueryParam("helper", "http://192.168.178.20:3010");
+const MOBILE_HELPER = getQueryParam("helper", "http://192.168.1.147:3010");
 
 function post(payload) {
   try {
@@ -186,7 +186,7 @@ async function provisionChannel(s) {
       transport_endpoints: [RGB_PROXY],
       ticker: "USDM",
     });
-    if (boot && boot.asset_id) {
+    if (boot && boot.ok !== false && boot.asset_id) {
       assetId = boot.asset_id;
       localStorage.setItem("metevo.usdm_asset_id", assetId);
     }
@@ -234,18 +234,17 @@ async function provisionChannel(s) {
     const peerChannels = (channels || []).filter(
       (c) => String(c.peer_pubkey || "").toLowerCase() === String(info.pubkey || "").toLowerCase(),
     );
+    // Prefer the channel row's asset id whenever it differs: the local id can
+    // be missing (bridge timeout) or stale from another regtest chain.
+    const assetRow = peerChannels.find((c) => c.asset_id);
+    if (assetRow && assetRow.asset_id !== assetId) {
+      assetId = assetRow.asset_id;
+      localStorage.setItem("metevo.usdm_asset_id", assetId);
+    }
     const channel = peerChannels.find((c) => c.is_usable === true);
     if (channel) {
       post({ step: "channel-ready", channel, assetId });
       return;
-    }
-    // A missing or stale asset id must not stop the poll: adopt the channel's.
-    if (!assetId) {
-      const row = peerChannels.find((c) => c.asset_id);
-      if (row) {
-        assetId = row.asset_id;
-        localStorage.setItem("metevo.usdm_asset_id", assetId);
-      }
     }
     if (assetId) {
       let balance = null;
@@ -253,13 +252,8 @@ async function provisionChannel(s) {
         const raw = await withWallet(() => s.wallet.getAssetBalanceValue(assetId));
         balance = typeof raw === "string" ? JSON.parse(raw) : raw;
       } catch (_e) { /* busy or not settled yet */ }
-      if (!balance) {
-        const row = peerChannels.find((c) => c.asset_id && c.asset_id !== assetId);
-        if (row) {
-          assetId = row.asset_id;
-          localStorage.setItem("metevo.usdm_asset_id", assetId);
-        }
-      } else if (Number(balance.settled || 0) > 0) {
+      // settled === 0 (or no balance yet) is a miss, keep polling.
+      if (balance && Number(balance.settled || 0) > 0) {
         post({ step: "channel-ready", channel: null, assetId, balance });
         return;
       }
@@ -451,7 +445,7 @@ window.__metevoDispatch = async (raw) => {
             ticker: "USDM",
           });
           if (boot && boot.error) throw new Error(`LSP bootstrap failed: ${boot.error}`);
-          if (boot && boot.asset_id) {
+          if (boot && boot.ok !== false && boot.asset_id) {
             assetId = boot.asset_id;
             localStorage.setItem("metevo.usdm_asset_id", assetId);
           }
