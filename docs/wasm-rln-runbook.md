@@ -7,7 +7,7 @@ Companion to `docs/wasm-on-device-rln-handoff.md`. LAN topology, ports and helpe
 | Port | Process | Notes |
 |---|---|---|
 | 3010 | `scripts/mobile_helper.py` (python3) | plain HTTP helper at `http://192.168.1.147:3010`, started detached (`setsid`, log in `/tmp/mobile_helper.out`) |
-| 3101 | LSP `rgb-lightning-node .e2e-regular-rln-datadir/mobile --daemon-listening-port 3101 --ldk-peer-listening-port 9802 --network regtest --disable-authentication` | LSP API on 3101, LDK peer port 9802. Must run **without** `DEFAULT_VIRTUAL_OPEN_MODE` — the RGB channel is a regular (non-virtual) channel |
+| 3101 | LSP `rgb-lightning-node .e2e-regular-rln-datadir2/mobile --daemon-listening-port 3101 --ldk-peer-listening-port 9802 --network regtest --disable-authentication` | LSP API on 3101, LDK peer port 9802. Must run **without** `DEFAULT_VIRTUAL_OPEN_MODE` — the RGB channel is a regular (non-virtual) channel |
 | 3001 | `wasm-proxy-gateway` | WebSocket→TCP for LDK + Esplora at `ws://192.168.1.147:3001` |
 | 3002 | Esplora | block data for BDK/rgb-lib at `http://192.168.1.147:3002` |
 | 3005 | RGB proxy → container :3000 | JSON-RPC at `rpc://192.168.1.147:3005/json-rpc`, protocol 0.2 |
@@ -114,7 +114,7 @@ running returns HTTP 409.
    cd /home/aballarini/rgb-lightning-node
    # no DEFAULT_VIRTUAL_OPEN_MODE: /lsp/bootstrap must open a regular RGB channel
    env -u DEFAULT_VIRTUAL_OPEN_MODE \
-     setsid ./target/release/rgb-lightning-node .e2e-regular-rln-datadir/mobile \
+     setsid ./target/release/rgb-lightning-node .e2e-regular-rln-datadir2/mobile \
      --daemon-listening-port 3101 --ldk-peer-listening-port 9802 \
      --network regtest --disable-authentication > /tmp/rln.log 2>&1 &
    curl -sS -X POST http://127.0.0.1:3101/unlock -H 'content-type: application/json' \
