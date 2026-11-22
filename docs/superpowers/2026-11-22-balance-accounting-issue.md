@@ -188,7 +188,37 @@ GET :3002/blocks/tip/height -> 2746
 
 Witness tx confirmed ≈310 blocks before tip. Confirmation depth is not the problem.
 
-### 4.5 Peer transport instability (same status `runtimeEvents`)
+### 4.5 Asset churn on the LSP — **new root cause found**
+
+`GET :3101/listassets` shows **four** NIA USDM assets, all with `supply 10 000 000 000`, created by successive bootstrap attempts:
+
+```
+rgb:DZgCsckL-wpY4~WV-NDRptzz-KtAy9r3-qwylBY9-cgLewQg  settled 4e9 future 2e9 spendable 0
+rgb:p0H6HKB0-~Y9tsip-bGvV_3c-yuo54V4-OehHhNG-epsc3qI  settled 10e9 future 8e9 spendable 0
+rgb:m6v6s4gZ-kIy1T84-V6QJeMT-98bBhG6-5gULunb-pDt~Zpo  settled 10e9 future 8e9 spendable 0
+rgb:STuvhyWP-Uu_11HK-9O74awB-PMNJ39l-q24d97s-5KKv~Ag  settled 10e9 future 8e9 spendable 0
+```
+
+`prepare_usdm_asset` re-issued a brand-new USDM whenever the previous asset's `spendable` fell below the requirement — which happens every time a send locks the supply (`future`). Each attempt therefore created a new asset id, and the phone's `localStorage["metevo.usdm_asset_id"]` (and the app's balance query) pointed at yet another id. Example: a fresh status showed
+
+```
+assets = [{"id":"rgb:STuvhyWP-Uu_","ticker":"USDM","supply":10000000000}]
+```
+
+while the delivery cache still holds successful sends for `DZgCsckL…` and `p0H6HKB0…`.
+
+Refreshing the **original** asset frees its allocation:
+
+```
+before: {"settled":4000000000,"future":2000000000,"spendable":0, ...}
+after:  {"settled":2000000000,"future":2000000000,"spendable":2000000000, ...}
+```
+
+So the supply is not lost; the helper was picking the wrong asset and issuing new ones. Fix applied in `scripts/mobile_helper.py::prepare_usdm_asset`: never issue a second asset for the same ticker; if a ticker match is short, `/refreshtransfers` it once and pick the candidate with the most spendable, otherwise fail with a clear "no spendable USDM" error instead of issuing.
+
+This is independent of, and additive to, the wallet-side accounting bug: the phone still reports 0 for an asset it fetched and acked.
+
+### 4.6 Peer transport instability (same status `runtimeEvents`)
 
 ```
 seq5  peer_hook_disconnected  "peer manager socket disconnected"
@@ -248,6 +278,12 @@ Test: add `node.chainSyncStatusValue()` to the status reply (the SDK exposes it)
 
 ### H6 — two asset records (old chain) with the same prefix
 
+### H7 (confirmed) — asset churn: the LSP re-issued USDM instead of refreshing
+
+Confirmed in §4.5. Four NIA USDM assets exist; the device's `localStorage` asset id and the app's balance query drifted across them. The wallet may hold a *different* asset id than the one the status reads. Fix applied on the helper side (no re-issue, refresh + pick by spendable). The device side still needs: adopt the asset id it actually holds (e.g. from `listAssetsValue`) instead of trusting `localStorage`, or pin one canonical id from the helper response and never overwrite it silently.
+
+Test: compare full `listAssetsValue` ids against `localStorage["metevo.usdm_asset_id"]` in the status reply, and query `getAssetBalanceValue` for every listed USDM asset, not only the stored one.
+
 Earlier regtest runs issued other USDM assets. `localStorage` holds one id; `listAssets` shows one id. Compare the full strings (the `~` character matters), not the 16-char prefix we log.
 
 ---
@@ -300,6 +336,7 @@ case "diag": {
 4. **Use the transfer list as the settlement signal.** `wallet.listTransfersValue(assetId)` — wait for a `Receive`/`ReceiveBlind` entry with `status: "Settled"` before showing the balance.
 5. **Avoid re-using the same blind invoice across retries.** Delivery caching by `(asset, peer, recipient)` plus the helper retry path re-posts to a consumed recipient (`Cannot change uploaded file`). Generate a fresh invoice on the self-heal path, or skip delivery when the cached key already succeeded (success is cached; the retries are for failures only — verify the 200 path is not re-entering `sendrgb`).
 6. **Keep the channel path separate.** The inbound `OpenChannel` never reaches device LDK (`channels: []`, `peer transport is disconnected`). This is independent; the balance fix must not depend on the channel.
+7. **Asset id drift (applied on the helper, device pending).** Never issue a second asset for the same ticker; refresh and pick by spendable (done in `prepare_usdm_asset`). On the device, adopt the asset id from `listAssetsValue` when it differs from `localStorage`, and read the balance for every listed USDM asset until one is non-zero.
 
 ---
 

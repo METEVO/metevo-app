@@ -107,20 +107,53 @@ def prepare_usdm_asset(asset_amount, ticker="USDM", existing_asset_ids=()):
 
     An existing peer+asset channel only needs one asset_amount (the channel is
     already funded); a fresh open needs two (channel allocation + delivery).
+
+    Never issue a second asset for the same ticker: each issue needed its own
+    colorable UTXO and the demo ended up with four USDM assets, each partly
+    locked in pending transfers. When a ticker match is short, refresh the
+    transfers once and pick the asset with the most spendable balance.
     """
     existing = {str(asset_id) for asset_id in existing_asset_ids}
     ticker = (ticker or "USDM").strip() or "USDM"
     listed = list_assets()
-    for schema in ("nia", "uda", "cfa", "ifa"):
-        for asset in listed.get(schema) or []:
-            if str(asset.get("ticker") or "").upper() != ticker.upper():
-                continue
-            asset_id = asset["asset_id"]
-            needed = asset_amount if asset_id in existing else asset_amount * 2
+
+    def matches():
+        for schema in ("nia", "uda", "cfa", "ifa"):
+            for asset in listed.get(schema) or []:
+                if str(asset.get("ticker") or "").upper() == ticker.upper():
+                    yield asset["asset_id"]
+
+    candidates = []
+    for asset_id in matches():
+        needed = asset_amount if asset_id in existing else asset_amount * 2
+        balance = rln("/assetbalance", {"asset_id": asset_id}, 30)
+        if _spendable(balance) >= needed:
+            return asset_id, "listed", balance
+        candidates.append(asset_id)
+
+    if candidates:
+        best_id, best_balance = None, None
+        for asset_id in candidates:
+            try:
+                rln(
+                    "/refreshtransfers",
+                    {"asset_id": asset_id, "filter": [], "skip_sync": False},
+                    60,
+                )
+            except RuntimeError:
+                pass
             balance = rln("/assetbalance", {"asset_id": asset_id}, 30)
+            needed = asset_amount if asset_id in existing else asset_amount * 2
             if _spendable(balance) >= needed:
-                return asset_id, "listed", balance
-    # No (or only a short) ticker match: a fresh issue is the only way forward.
+                return asset_id, "refreshed", balance
+            if best_balance is None or _spendable(balance) > _spendable(best_balance):
+                best_id, best_balance = asset_id, balance
+        raise RuntimeError(
+            f"no spendable {ticker}: best asset {best_id} has "
+            f"{_spendable(best_balance)} < {asset_amount if best_id in existing else asset_amount * 2} required"
+        )
+
+    # No ticker match at all: a fresh issue is the only way forward.
     try:
         os.remove(USDM_CACHE)  # issue_usdm would otherwise return the short asset
     except OSError:
