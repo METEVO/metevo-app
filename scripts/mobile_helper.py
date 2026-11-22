@@ -102,11 +102,14 @@ def list_assets():
     )
 
 
-def prepare_usdm_asset(asset_amount, ticker="USDM", existing_asset_ids=()):
+def prepare_usdm_asset(asset_amount, ticker="USDM", existing_asset_ids=(), preferred_asset_id=None):
     """Return (asset_id, source, balance) with enough spendable USDM.
 
     An existing peer+asset channel only needs one asset_amount (the channel is
     already funded); a fresh open needs two (channel allocation + delivery).
+
+    A `preferred_asset_id` from the device wins when it has enough spendable
+    after a refresh: the phone can only account for the asset id it holds.
 
     Never issue a second asset for the same ticker: each issue needed its own
     colorable UTXO and the demo ended up with four USDM assets, each partly
@@ -115,7 +118,31 @@ def prepare_usdm_asset(asset_amount, ticker="USDM", existing_asset_ids=()):
     """
     existing = {str(asset_id) for asset_id in existing_asset_ids}
     ticker = (ticker or "USDM").strip() or "USDM"
+    preferred = str(preferred_asset_id or "").strip()
     listed = list_assets()
+
+    def matches():
+        for schema in ("nia", "uda", "cfa", "ifa"):
+            for asset in listed.get(schema) or []:
+                if str(asset.get("ticker") or "").upper() == ticker.upper():
+                    yield asset["asset_id"]
+
+    if preferred:
+        needed = asset_amount if preferred in existing else asset_amount
+        balance = rln("/assetbalance", {"asset_id": preferred}, 30)
+        if _spendable(balance) >= needed:
+            return preferred, "preferred", balance
+        try:
+            rln(
+                "/refreshtransfers",
+                {"asset_id": preferred, "filter": [], "skip_sync": False},
+                60,
+            )
+        except RuntimeError:
+            pass
+        balance = rln("/assetbalance", {"asset_id": preferred}, 30)
+        if _spendable(balance) >= needed:
+            return preferred, "preferred-refreshed", balance
 
     def matches():
         for schema in ("nia", "uda", "cfa", "ifa"):
@@ -478,7 +505,10 @@ class Handler(BaseHTTPRequestHandler):
             if channel.get("asset_id")
             and str(channel.get("status") or "") in ("Opened", "Opening")
         }
-        asset_id, source, _ = prepare_usdm_asset(asset_amount, ticker, peer_asset_ids)
+        preferred_asset = str(body.get("asset_id") or "").strip() or None
+        asset_id, source, _ = prepare_usdm_asset(
+            asset_amount, ticker, peer_asset_ids, preferred_asset
+        )
         steps.append({"step": "asset", "asset_id": asset_id, "source": source})
 
         deliveries = load_deliveries()

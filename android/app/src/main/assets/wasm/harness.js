@@ -260,6 +260,7 @@ async function provisionChannel(s) {
       // blind invoice) so the USDm balance lands.
       channel: false,
       ticker: "USDM",
+      asset_id: assetId || null,
       deliver,
     });
     if (boot && boot.ok !== false && boot.asset_id) {
@@ -317,11 +318,8 @@ async function provisionChannel(s) {
           recipient_id: recipientId,
           transport_endpoints: [RGB_PROXY],
           channel: false,
-      // The LSP opens the RGB channel too, but the phone cannot yet complete
-      // an inbound channel handshake; deliver on-chain now (same asset, same
-      // blind invoice) so the USDm balance lands.
-      channel: false,
           ticker: "USDM",
+          asset_id: assetId || null,
           deliver: true,
         });
       } catch (_e) { /* next tick */ }
@@ -418,12 +416,34 @@ window.__metevoDispatch = async (raw) => {
         // Diagnostic: what the device's rgb-lib actually holds (assets and
         // transfer states), so a missing delivery is visible off-device.
         let assets = null;
+        let assetRows = [];
         let transfers = null;
         try {
           const rawAssets = await withWallet(() => s.wallet.listAssetsValue(["Nia", "Ifa"]));
           const parsed = typeof rawAssets === "string" ? JSON.parse(rawAssets) : rawAssets;
-          const rows = [...((parsed && parsed.nia) || []), ...((parsed && parsed.ifa) || [])];
-          assets = rows.map((a) => ({ id: String(a.asset_id || "").slice(0, 16), ticker: a.ticker, supply: a.issued_supply }));
+          assetRows = [...((parsed && parsed.nia) || []), ...((parsed && parsed.ifa) || [])];
+          assets = assetRows.map((a) => ({ id: String(a.asset_id || "").slice(0, 16), ticker: a.ticker, supply: a.issued_supply }));
+        } catch (_e) { /* busy */ }
+        // Asset-id drift: the LSP issued several USDM assets over successive
+        // attempts, so localStorage can point at an id this wallet no longer
+        // holds. Query every listed USDM asset and adopt the one with a balance.
+        let usdmBalance = null;
+        try {
+          for (const row of assetRows) {
+            if (String(row.ticker || "").toUpperCase() !== "USDM") continue;
+            const id = String(row.asset_id || "");
+            if (!id) continue;
+            let bal = null;
+            try { bal = await withWallet(() => s.wallet.getAssetBalanceValue(id)); } catch (_e) { continue; }
+            if (bal && Number(bal.settled || 0) > 0) {
+              usdmBalance = bal;
+              if (localStorage.getItem("metevo.usdm_asset_id") !== id) {
+                localStorage.setItem("metevo.usdm_asset_id", id);
+                post({ step: "asset-adopted", assetId: id, settled: bal.settled });
+              }
+              break;
+            }
+          }
         } catch (_e) { /* busy */ }
         try {
           const rawTransfers = await withWallet(() => s.wallet.listTransfersValue(null));
@@ -482,7 +502,8 @@ window.__metevoDispatch = async (raw) => {
           btcSpendableSat: snap.btcSpendableSat,
           balanceUsdmBaseUnits: channelAssetAmount > 0
             ? channelAssetAmount
-            : snap.usdm ? Number(snap.usdm.settled ?? 0) : (assetChannel ? 0 : null),
+            : usdmBalance ? Number(usdmBalance.settled ?? 0)
+              : snap.usdm ? Number(snap.usdm.settled ?? 0) : (assetChannel ? 0 : null),
           channelReady: (channels || []).some((c) => c.is_usable === true || c.ready === true),
           provisionError,
           pendingFunding,
@@ -590,12 +611,8 @@ window.__metevoDispatch = async (raw) => {
             recipient_id: recipientId,
             transport_endpoints: [RGB_PROXY],
             channel: false,
-          channel: false,
-      // The LSP opens the RGB channel too, but the phone cannot yet complete
-      // an inbound channel handshake; deliver on-chain now (same asset, same
-      // blind invoice) so the USDm balance lands.
-      channel: false,
             ticker: "USDM",
+            asset_id: localStorage.getItem("metevo.usdm_asset_id"),
             deliver: true,
           });
           if (boot && boot.error) throw new Error(`LSP bootstrap failed: ${boot.error}`);
