@@ -129,7 +129,8 @@ async function callHelperSafe(path, body) {
   return r.json();
 }
 
-const RGB_PROXY = "rpc://192.168.1.147:3005/json-rpc";
+// RGB consignment transport: same LAN host as the helper, proxy port 3005.
+const RGB_PROXY = `rpc://${new URL(MOBILE_HELPER).hostname}:3005/json-rpc`;
 
 // Device side of reference flow4: one blind RGB invoice, then POST
 // /lsp/bootstrap. The LSP issues/funds/opens and delivers the asset.
@@ -230,12 +231,21 @@ async function provisionChannel(s) {
       } catch (_e) { /* retry */ }
     }
     const channels = JSON.parse(node.listChannelsJson());
-    const channel = (channels || []).find(
-      (c) => c.is_usable === true && c.peer_pubkey.toLowerCase() === info.pubkey.toLowerCase(),
+    const peerChannels = (channels || []).filter(
+      (c) => String(c.peer_pubkey || "").toLowerCase() === String(info.pubkey || "").toLowerCase(),
     );
+    const channel = peerChannels.find((c) => c.is_usable === true);
     if (channel) {
       post({ step: "channel-ready", channel, assetId });
       return;
+    }
+    // A missing or stale asset id must not stop the poll: adopt the channel's.
+    if (!assetId) {
+      const row = peerChannels.find((c) => c.asset_id);
+      if (row) {
+        assetId = row.asset_id;
+        localStorage.setItem("metevo.usdm_asset_id", assetId);
+      }
     }
     if (assetId) {
       let balance = null;
@@ -243,7 +253,13 @@ async function provisionChannel(s) {
         const raw = await withWallet(() => s.wallet.getAssetBalanceValue(assetId));
         balance = typeof raw === "string" ? JSON.parse(raw) : raw;
       } catch (_e) { /* busy or not settled yet */ }
-      if (balance && Number(balance.settled || 0) > 0) {
+      if (!balance) {
+        const row = peerChannels.find((c) => c.asset_id && c.asset_id !== assetId);
+        if (row) {
+          assetId = row.asset_id;
+          localStorage.setItem("metevo.usdm_asset_id", assetId);
+        }
+      } else if (Number(balance.settled || 0) > 0) {
         post({ step: "channel-ready", channel: null, assetId, balance });
         return;
       }
@@ -288,9 +304,14 @@ window.__metevoDispatch = async (raw) => {
           return { ok: true, channel: null, pendingChannel: true, channels: existing };
         });
         if (quick.pendingChannel && openProvisionPromise === null) {
-          openProvisionPromise = provisionChannel(s).finally(() => {
-            openProvisionPromise = null;
-          });
+          openProvisionPromise = provisionChannel(s)
+            .catch((e) => {
+              post({ step: "error", error: String(e) });
+              setStatus(`provisioning failed: ${e}`);
+            })
+            .finally(() => {
+              openProvisionPromise = null;
+            });
         }
         reply(quick);
         return;
@@ -420,17 +441,36 @@ window.__metevoDispatch = async (raw) => {
 
         const recipientId = await blindRecipientId(s, node);
 
-        setStatus("LSP bootstrap");
-        const boot = await callHelperSafe("/lsp/bootstrap", {
-          peer_pubkey_and_opt_addr: `${livePubkey}@127.0.0.1:9802`,
-          recipient_id: recipientId,
-          transport_endpoints: [RGB_PROXY],
-          ticker: "USDM",
-        });
-        if (boot && boot.error) throw new Error(`LSP bootstrap failed: ${boot.error}`);
-        const assetId = boot && boot.asset_id;
-        if (!assetId) throw new Error(`LSP bootstrap returned no asset: ${JSON.stringify(boot).slice(0, 240)}`);
-        localStorage.setItem("metevo.usdm_asset_id", assetId);
+        let assetId = localStorage.getItem("metevo.usdm_asset_id");
+        try {
+          setStatus("LSP bootstrap");
+          const boot = await callHelperSafe("/lsp/bootstrap", {
+            peer_pubkey_and_opt_addr: `${livePubkey}@127.0.0.1:9802`,
+            recipient_id: recipientId,
+            transport_endpoints: [RGB_PROXY],
+            ticker: "USDM",
+          });
+          if (boot && boot.error) throw new Error(`LSP bootstrap failed: ${boot.error}`);
+          if (boot && boot.asset_id) {
+            assetId = boot.asset_id;
+            localStorage.setItem("metevo.usdm_asset_id", assetId);
+          }
+        } catch (e) {
+          // A 60 s bridge timeout (or a 502 while RLN finishes) must not end
+          // the flow: the balance poll below is the real result.
+          post({ step: "bootstrap-pending", error: String(e) });
+        }
+        if (!assetId) {
+          const rows = JSON.parse(node.listChannelsJson()) || [];
+          const row = rows.find(
+            (c) => c.asset_id && String(c.peer_pubkey || "").toLowerCase() === String(info.pubkey || "").toLowerCase(),
+          );
+          if (row) {
+            assetId = row.asset_id;
+            localStorage.setItem("metevo.usdm_asset_id", assetId);
+          }
+        }
+        if (!assetId) throw new Error("LSP bootstrap returned no asset id");
 
         setStatus("waiting for USDm");
         let balance = null;

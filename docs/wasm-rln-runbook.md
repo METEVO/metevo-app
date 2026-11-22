@@ -7,7 +7,7 @@ Companion to `docs/wasm-on-device-rln-handoff.md`. LAN topology, ports and helpe
 | Port | Process | Notes |
 |---|---|---|
 | 3010 | `scripts/mobile_helper.py` (python3) | plain HTTP helper, started detached (`setsid`, log in `%TEMP%`) |
-| 3101 | LSP `rgb-lightning-node .e2e-regular-rln-datadir/mobile --daemon-listening-port 3101 --ldk-peer-listening-port 9802 --network regtest --disable-authentication --enable-virtual-channels-v0` | LSP API on 3101, LDK peer port 9802 |
+| 3101 | LSP `rgb-lightning-node .e2e-regular-rln-datadir/mobile --daemon-listening-port 3101 --ldk-peer-listening-port 9802 --network regtest --disable-authentication` | LSP API on 3101, LDK peer port 9802. Must run **without** `DEFAULT_VIRTUAL_OPEN_MODE` — the RGB channel is a regular (non-virtual) channel |
 | 3001 | `wasm-proxy-gateway` | WebSocket→TCP for LDK + Esplora |
 | 3002 | Esplora | block data for BDK/rgb-lib |
 | 3005 | RGB proxy → container :3000 | JSON-RPC at `/json-rpc`, protocol 0.2 |
@@ -17,7 +17,8 @@ Companion to `docs/wasm-on-device-rln-handoff.md`. LAN topology, ports and helpe
 
 GET: `/lspinfo`, `/lsp/peers`, `/txstatus?txid=…`
 POST: `/fund` `{address, btc}`, `/mine` `{blocks}`,
-`/lsp/openvirtual` `{peer_pubkey, capacity_sat, push_msat}`,
+`/lsp/bootstrap` `{peer_pubkey_and_opt_addr, recipient_id?, transport_endpoints?, ticker?,
+capacity_sat?, asset_amount?, push_msat?}`,
 `/lsp/issueusdm` `{}`, `/lsp/sendrgb` `{asset_id, amount, recipient_id, transport_endpoints}`,
 `/lsp/refresh` `{}`, `/lsp/keysend` `{dest_pubkey, amt_msat}`,
 `/lsp/invoice`, `/lsp/pay`.
@@ -43,71 +44,43 @@ adb connect 192.168.178.21:<port>
 adb install -r --no-streaming app/build/outputs/apk/release/app-release.apk
 ```
 
-`EXPO_PUBLIC_WASM_ISSUE` is retired (the app never issues; the Go LSP owns
-provisioning). Every rebuild that changes `EXPO_PUBLIC_*` env must first delete
+`EXPO_PUBLIC_WASM_ISSUE` is retired (the app never issues; the helper's
+`/lsp/bootstrap` owns provisioning). Every rebuild that changes
+`EXPO_PUBLIC_*` env must first delete
 `app/build/generated/assets/react/release/index.android.bundle` and
 `app/build/intermediates/{assets,compressed_assets}` — gradle keeps the stale
 bundle UP-TO-DATE otherwise.
 
-## METEVO LSP service (utexo-lsp, port 8080)
+## Go METEVO LSP (utexo-lsp, port 8080) — must be STOPPED
 
-Go service built from `/home/aballarini/metevo-hack/utexo-lsp`:
-
-```bash
-cd /home/aballarini/metevo-hack/utexo-lsp
-CGO_ENABLED=1 go build -o /home/aballarini/utexo-lsp-data/application ./main.go
-```
-
-Start (detached; live process must run with the second form, asset pinned and
-channel amounts set):
+The Go service's reconciler cron opens its own (virtual) channel for every new
+peer and races the helper's bootstrap. Do not run it while the wasm demo uses
+`/lsp/bootstrap`:
 
 ```bash
-cd /home/aballarini/metevo-hack/utexo-lsp && \
-LSP_BASE_URL=http://127.0.0.1:3101 \
-RGB_NODE_BASE_URL=http://127.0.0.1:3101 \
-APAY_BEARER_TOKEN=my-shared-secret-token \
-DATABASE_DRIVER=sqlite \
-DATABASE_URL=/home/aballarini/utexo-lsp-data/utexo_lsp.db \
-LIGHTNING_ADDRESS_DOMAIN_URL=http://127.0.0.1:8080 \
-SUPPORTED_ASSET_IDS=rgb:G_UMjqXO-WDfjO0Z-K~ik1W2-7mhdFbx-yyv2LGo-hZZHkwo \
-DEFAULT_CHANNEL_CAPACITY_SAT=500000 \
-DEFAULT_CHANNEL_PUSH_MSAT=250000000 \
-DEFAULT_CHANNEL_ASSET_AMOUNT=4000000000 \
-METEVO_CHANNEL_PUSH_ASSET_AMOUNT=2000000000 \
-DEFAULT_VIRTUAL_OPEN_MODE=trusted_no_broadcast \
-setsid /home/aballarini/utexo-lsp-data/application \
-  > /home/aballarini/utexo-lsp-data/lsp.log 2>&1 &
+pkill -f utexo-lsp-data/application
 ```
 
-The channel env is required: RLN rejects `push_asset_amount` higher than
-`asset_amount` (the cron's opens 400 with `InvalidAmount` otherwise; the code
-default of `DEFAULT_CHANNEL_ASSET_AMOUNT` is 1). 4e9 asset_amount covers the
-2e9 push and keeps `asset_local_amount: 2000000000` on the LSP side of the
-channel row (evidence number), while the device receives the 2e9 push on its
-`asset_local_amount` side.
+Provisioning now lives entirely in `scripts/mobile_helper.py`:
 
-Health: `curl -s http://127.0.0.1:8080/health` → `{"ok":true}`; process check
-`pgrep -f utexo-lsp-data/application`. Stop: `pkill -f utexo-lsp-data/application`.
+1. the device creates a blind RGB invoice (`blindReceiveValue`) and POSTs
+   `/lsp/bootstrap` with its pubkey and the `recipient_id`;
+2. the helper ensures the USDM asset (issues a fresh NIA when no ticker match
+   has `2 × asset_amount` spendable), ensures colorable UTXOs
+   (`ensureColoredSpendable`), creates the channel UTXO and calls
+   `/openchannel` with `{capacity_sat, push_msat, asset_id, asset_amount,
+   public: false, with_anchors: true}` and **no** `virtual_open_mode` — a
+   regular RGB channel;
+3. it polls `listchannels` until `status: "Opened"` and, when a `recipient_id`
+   was supplied, delivers the asset to that blind invoice with `/sendrgb`.
 
-One-time bootstrap (first bring-up on a fresh node only — issues the IFA USDM
-asset, 1,000,000,000,000 base units, precision 8):
+`push_msat` defaults to 250 000 000 and is clamped to `capacity_sat / 2`
+(RLN rejects a push above the capacity; the opener keeps sats for its asset
+HTLCs). One-time issuance is not needed: `POST :3010/lsp/issueusdm {}` and the
+bootstrap use the same `issue_usdm()` code path (cache
+`/tmp/metevo_usdm_asset.json`; delete it to force a new asset).
 
-```bash
-curl -s -X POST http://127.0.0.1:8080/metevo/bootstrap \
-  -H "Authorization: Bearer my-shared-secret-token" \
-  -H "Content-Type: application/json" -d '{}'
-```
-
-- `200` → `{asset_id, ticker: "USDM", name, precision: 8, issued, config}`.
-  Save the JSON to `/home/aballarini/utexo-lsp-data/bootstrap.json` and restart
-  the service with `SUPPORTED_ASSET_IDS=<asset_id>` as above.
-- `409` → an asset with ticker `USDM` already exists on the node (once-only
-  issuance): the body names the existing `asset_id`; do NOT re-issue, just
-  ensure the running process has `SUPPORTED_ASSET_IDS` set to it.
-
-On the fresh node the 200's `issued` field reads `0` (the node reports
-`issued_supply: null` for a just-issued IFA); the real supply is verified with
-`POST :3101/assetbalance {"asset_id": …}` → `settled: 1000000000000`.
+`EXPO_PUBLIC_WASM_ISSUE` stays retired: the app never issues.
 
 ## Demo procedure (register / connect / login)
 
@@ -117,48 +90,49 @@ On the fresh node the 200's `issued` field reads `0` (the node reports
 
    ```bash
    cd /home/aballarini/rgb-lightning-node
-   setsid ./target/release/rgb-lightning-node .e2e-regular-rln-datadir/mobile \
+   # no DEFAULT_VIRTUAL_OPEN_MODE: /lsp/bootstrap must open a regular RGB channel
+   env -u DEFAULT_VIRTUAL_OPEN_MODE \
+     setsid ./target/release/rgb-lightning-node .e2e-regular-rln-datadir/mobile \
      --daemon-listening-port 3101 --ldk-peer-listening-port 9802 \
-     --network regtest --disable-authentication \
-     --enable-virtual-channels-v0 > /tmp/rln.log 2>&1 &
+     --network regtest --disable-authentication > /tmp/rln.log 2>&1 &
    curl -sS -X POST http://127.0.0.1:3101/unlock -H 'content-type: application/json' \
      -d '{"password":"rln-password","indexer_url":"http://127.0.0.1:3002",
           "proxy_endpoint":"rpc://127.0.0.1:3005/json-rpc","announce_addresses":[]}'
    ```
 
-   Then the helper (3010), the gateway (3001, env from the process table) and
-   the Go METEVO LSP (8080, start command above). The RLN node locks after
-   every restart — the unlock call is mandatory.
+   Then the helper (3010) and the gateway (3001, env from the process table).
+   The RLN node locks after every restart — the unlock call is mandatory. The
+   Go METEVO LSP on 8080 must NOT be running (its cron would open a competing
+   virtual channel).
 1. Build + install the APK (build block above; delete the stale bundle first).
 2. Register: launch the app → `Register new wallet` → the 12-word seed screen →
    `I wrote it down` → "Preparing your wallet" → HomeScreen. The device node
-   connects to the LSP and the Go LSP cron opens the virtual channel on its
-   next 30 s tick. Expect `balanceUsdmBaseUnits: 2000000000` (20.00 USDm) in
-   the `[metevo] wasm ping ok` logcat line within ~90 s of the peer appearing,
-   and the LSP-side channel row (`asset_local_amount: 2000000000`,
-   `push 250000000 msat`, `trusted_no_broadcast`). First provisioning also
-   funds the device on-chain exactly once: when the vanilla balance is
-   under 100 000 sat the harness calls `/fund {address, btc: 0.01}` (the
-   helper mines 6 blocks) before connecting the peer, so the sats card
-   shows non-zero sats on a fresh wallet.
+   connects to the LSP, creates a blind RGB invoice and POSTs
+   `/lsp/bootstrap`; the helper issues/ensures USDM, creates the colorable
+   UTXO and the regular 500 000 sat RGB channel (`push 250 000 msat`) and
+   delivers the asset to the blind invoice. Expect
+   `balanceUsdmBaseUnits: 2000000000` (20.00 USDm) in the `[metevo] wasm ping
+   ok` logcat line within ~90 s, and the LSP-side channel row
+   (`asset_local_amount: 2000000000`, `virtual_open_mode: null`). No on-chain
+   `/fund` is needed: the LSP pushes the sats into the channel.
 3. Restart → login: force-stop + relaunch → `Login with fingerprint` → the
    biometric prompt (or auto-login when no fingerprint is enrolled) →
    HomeScreen. The node identity is now stable per seed: the harness flushes
    the LDK runtime state to the persistent store immediately after node
    setup (a force-stop never fires pagehide/beforeunload) and every boot
-   preloads it — same seed ⇒ same node pubkey, so the Go LSP cron does not
-   provision a second channel and the channel/balances survive a restart.
-   (Identity still rotates after `pm clear` — see pitfalls.)
+   preloads it — same seed ⇒ same node pubkey, so `/lsp/bootstrap` finds the
+   existing peer+asset channel and does not open a second one. (Identity
+   still rotates after `pm clear` — see pitfalls.)
 4. LN payments need the ~12 min channel-convergence window after an app
    restart: open the app ~15 min before showing a keysend. Balances appear
    immediately; the selftest (36 attempts / 18 min) covers the window.
 
 ## Known pitfalls (all hit on 21–22 Nov)
 
-- **One virtual channel session per peer pair.** The harness must never
-  self-open via `/lsp/openvirtual` (fixed in commit `b59a385`): a sats-only
-  self-open blocks the cron's asset channel with `virtual channel session
-  already exists for this peer pair`.
+- **A regular RGB channel, not a virtual one.** The helper's `/openchannel`
+  sends no `virtual_open_mode`; RLN 3101 must also run without
+  `DEFAULT_VIRTUAL_OPEN_MODE` set, otherwise RLN injects it and the channel
+  row comes back with a non-null `virtual_open_mode`.
 - **Asset channel opens need on-chain sats.** RLN requires
   `capacity_sat ≤ colored spendable` before opening an asset channel. After a
   reboot/refill: `POST :3010/fund {address, btc: 10}` (address from

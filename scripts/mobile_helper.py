@@ -13,6 +13,9 @@ WALLET = "bdk-test"
 RLN = "http://127.0.0.1:3101"
 USDM_CACHE = "/tmp/metevo_usdm_asset.json"
 ISSUE_LOCK = threading.Lock()
+BOOTSTRAP_LOCK = threading.Lock()
+MIN_CHANNEL_CAPACITY_SAT = 30050
+MAX_CHANNEL_CAPACITY_SAT = 10000000
 
 
 def rpc(method, params):
@@ -99,7 +102,12 @@ def list_assets():
 
 
 def prepare_usdm_asset(asset_amount, ticker="USDM"):
-    """Return (asset_id, source, balance) with spendable >= asset_amount."""
+    """Return (asset_id, source, balance) with spendable >= 2 * asset_amount.
+
+    The channel locks one asset_amount and the optional on-chain delivery
+    spends another, so both must fit at once.
+    """
+    needed = asset_amount * 2
     ticker = (ticker or "USDM").strip() or "USDM"
     listed = list_assets()
     for schema in ("nia", "uda", "cfa", "ifa"):
@@ -108,45 +116,26 @@ def prepare_usdm_asset(asset_amount, ticker="USDM"):
                 continue
             asset_id = asset["asset_id"]
             balance = rln("/assetbalance", {"asset_id": asset_id}, 30)
-            if _spendable(balance) < asset_amount:
-                raise RuntimeError(
-                    f"insufficient asset balance: {_spendable(balance)} < {asset_amount} required"
-                )
-            return asset_id, "listed", balance
-
-    asset_id = None
-    if os.path.exists(USDM_CACHE):
-        try:
-            with open(USDM_CACHE, encoding="utf-8") as handle:
-                cached_id = json.load(handle).get("asset_id")
-            known = {
-                a.get("asset_id")
-                for schema in ("nia", "uda", "cfa", "ifa")
-                for a in listed.get(schema) or []
-            }
-            if cached_id in known:
-                asset_id = cached_id
-            else:
-                os.remove(USDM_CACHE)  # stale id from another regtest chain
-        except Exception:  # noqa: BLE001
-            asset_id = None
-
-    source = "cached"
-    if not asset_id:
-        asset_id = issue_usdm(ticker)["asset"]["asset_id"]
-        source = "issued"
+            if _spendable(balance) >= needed:
+                return asset_id, "listed", balance
+    # No (or only a short) ticker match: a fresh issue is the only way forward.
+    try:
+        os.remove(USDM_CACHE)  # issue_usdm would otherwise return the short asset
+    except OSError:
+        pass
+    asset_id = issue_usdm(ticker)["asset"]["asset_id"]
     mine_blocks(2)
 
     deadline = time.time() + 60
     balance = {}
     while time.time() < deadline:
         balance = rln("/assetbalance", {"asset_id": asset_id}, 30)
-        if _spendable(balance) >= asset_amount:
-            return asset_id, source, balance
+        if _spendable(balance) >= needed:
+            return asset_id, "issued", balance
         mine_blocks(1)
         time.sleep(1)
     raise RuntimeError(
-        f"insufficient asset balance: {_spendable(balance)} < {asset_amount} required"
+        f"insufficient asset balance: {_spendable(balance)} < {needed} required"
     )
 
 
@@ -180,7 +169,12 @@ def ensure_colored_spendable(capacity_sat, steps):
 
 
 def create_channel_utxo(capacity_sat):
-    """Reference createColorableUtxosForChannel; 403 AlreadyAvailable is success."""
+    """Reference createColorableUtxosForChannel.
+
+    AllocationsAlreadyAvailable and NoAvailableUtxos both mean the wallet
+    already has (or cannot add) a colorable UTXO; openchannel retries handle
+    the latter, so neither is fatal here.
+    """
     try:
         rln(
             "/createutxos",
@@ -188,7 +182,8 @@ def create_channel_utxo(capacity_sat):
             120,
         )
     except RuntimeError as exc:
-        if "AllocationsAlreadyAvailable" not in str(exc):
+        text = str(exc)
+        if "AllocationsAlreadyAvailable" not in text and "NoAvailableUtxos" not in text:
             raise
     mine_blocks(2)
 
@@ -250,6 +245,43 @@ def send_rgb(asset_id, amount, recipient_id, transport_endpoints):
             return 502, {"raw": f"{type(retry_exc).__name__}: {retry_exc}"[:400]}
 
 
+def _send_rgb_error(result):
+    if isinstance(result, dict):
+        if result.get("error"):
+            return str(result["error"])
+        if result.get("raw"):
+            return str(result["raw"])
+    return json.dumps(result)[:400]
+
+
+def clamp_push_msat(capacity_sat, push_msat):
+    """RLN rejects push > capacity; the opener also needs sats for asset HTLCs."""
+    return min(push_msat, max(0, capacity_sat // 2) * 1000)
+
+
+def build_openchannel_payload(peer, capacity_sat, asset_id, asset_amount, push_msat):
+    """Exact reference flow4 RGB openchannel body (regular channel, no virtual mode)."""
+    if not (MIN_CHANNEL_CAPACITY_SAT <= capacity_sat <= MAX_CHANNEL_CAPACITY_SAT):
+        raise ValueError(
+            f"capacity_sat must be between {MIN_CHANNEL_CAPACITY_SAT} and {MAX_CHANNEL_CAPACITY_SAT}"
+        )
+    if asset_amount <= 0:
+        raise ValueError("asset_amount must be positive")
+    if push_msat < 0:
+        raise ValueError("push_msat must be >= 0")
+    if push_msat >= capacity_sat * 1000:
+        raise ValueError("push_msat must be lower than capacity_sat * 1000")
+    return {
+        "peer_pubkey_and_opt_addr": peer,
+        "capacity_sat": capacity_sat,
+        "push_msat": clamp_push_msat(capacity_sat, push_msat),
+        "asset_id": asset_id,
+        "asset_amount": asset_amount,
+        "public": False,
+        "with_anchors": True,
+    }
+
+
 def _channel_for(channels, pubkey, asset_id):
     for channel in channels:
         if str(channel.get("peer_pubkey") or "").lower() != pubkey.lower():
@@ -260,51 +292,103 @@ def _channel_for(channels, pubkey, asset_id):
     return None
 
 
+def channel_reusable(existing):
+    """A peer+asset channel already exists, in any status: reuse, never reopen."""
+    return bool(existing)
+
+
 class Handler(BaseHTTPRequestHandler):
     def _handle_issueusdm(self):
         issued = issue_usdm()
         self._json(200, issued)
 
     def _handle_bootstrap(self, body):
+        # Serialised: two devices must never both open a channel (the second
+        # call would see the first channel only after it exists on RLN).
+        with BOOTSTRAP_LOCK:
+            try:
+                self._run_bootstrap(body)
+            except ValueError as exc:
+                self._json(400, {"error": str(exc)})
+            except Exception as exc:  # noqa: BLE001
+                self._json(502, {"error": f"{type(exc).__name__}: {exc}"})
+
+    def _run_bootstrap(self, body):
         peer = str(body.get("peer_pubkey_and_opt_addr") or "").strip()
         if "@" not in peer:
-            self._json(400, {"error": "peer_pubkey_and_opt_addr must be pubkey@host:port"})
-            return
+            raise ValueError("peer_pubkey_and_opt_addr must be pubkey@host:port")
         pubkey = peer.split("@", 1)[0]
         ticker = str(body.get("ticker") or "USDM").strip() or "USDM"
-        capacity_sat = int(body.get("capacity_sat", 500000))
-        asset_amount = int(body.get("asset_amount", 2000000000))
-        push_msat = int(body.get("push_msat", 250000000))
+        try:
+            capacity_sat = int(body.get("capacity_sat", 500000))
+            asset_amount = int(body.get("asset_amount", 2000000000))
+            push_msat = int(body.get("push_msat", 250000000))
+        except (TypeError, ValueError):
+            raise ValueError(
+                "capacity_sat, asset_amount and push_msat must be integers"
+            ) from None
         recipient_id = str(body.get("recipient_id") or "").strip() or None
         transport_endpoints = body.get("transport_endpoints") or []
         steps = []
 
-        # RLN rejects a push larger than the channel capacity ("Channel push
-        # amount cannot be higher than the capacity"), and the opener needs to
-        # keep sats for the asset HTLCs it sends. Split the capacity instead.
-        max_push_msat = max(0, capacity_sat // 2) * 1000
-        if push_msat > max_push_msat:
-            steps.append(
-                {"step": "push_msat-clamped", "requested": push_msat, "used": max_push_msat}
-            )
-            push_msat = max_push_msat
+        # Validate the numbers before any state change (capacity range, positive
+        # asset amount, push below the capacity).
+        build_openchannel_payload(peer, capacity_sat, "validate", asset_amount, push_msat)
 
         asset_id, source, _ = prepare_usdm_asset(asset_amount, ticker)
         steps.append({"step": "asset", "asset_id": asset_id, "source": source})
 
-        # Idempotent: one RGB channel per peer+asset, whatever its status.
+        # Idempotent: one RGB channel per peer+asset, whatever its status. The
+        # open/UTXO steps are skipped, but a supplied blind invoice is still
+        # honoured by delivering the asset on-chain.
         existing = _channel_for(rln_get("/listchannels").get("channels") or [], pubkey, asset_id)
-        if existing:
+        if channel_reusable(existing):
             steps.append({"step": "channel-exists", "status": existing.get("status")})
+            temporary_id = existing.get("channel_id")
+            send_rgb_result = None
+            if recipient_id:
+                balance = rln("/assetbalance", {"asset_id": asset_id}, 30)
+                if _spendable(balance) < asset_amount:
+                    self._json(
+                        502,
+                        {
+                            "ok": False,
+                            "error": f"insufficient asset balance: {_spendable(balance)} < {asset_amount} required",
+                            "asset_id": asset_id,
+                            "temporary_channel_id": temporary_id,
+                            "channel": existing,
+                            "send_rgb": None,
+                            "steps": steps,
+                        },
+                    )
+                    return
+                code, send_rgb_result = send_rgb(
+                    asset_id, asset_amount, recipient_id, transport_endpoints
+                )
+                steps.append({"step": "sendrgb", "status": code})
+                if code != 200:
+                    self._json(
+                        502,
+                        {
+                            "ok": False,
+                            "error": _send_rgb_error(send_rgb_result),
+                            "asset_id": asset_id,
+                            "temporary_channel_id": temporary_id,
+                            "channel": existing,
+                            "send_rgb": send_rgb_result,
+                            "steps": steps,
+                        },
+                    )
+                    return
             self._json(
                 200,
                 {
                     "ok": True,
                     "reused": True,
                     "asset_id": asset_id,
-                    "temporary_channel_id": existing.get("channel_id"),
+                    "temporary_channel_id": temporary_id,
                     "channel": existing,
-                    "send_rgb": None,
+                    "send_rgb": send_rgb_result,
                     "steps": steps,
                 },
             )
@@ -312,22 +396,18 @@ class Handler(BaseHTTPRequestHandler):
 
         ensure_colored_spendable(capacity_sat, steps)
 
-        balance = rln("/assetbalance", {"asset_id": asset_id}, 30)
-        if _spendable(balance) < asset_amount:
-            raise RuntimeError(
-                f"insufficient asset balance: {_spendable(balance)} < {asset_amount} required"
-            )
-
         create_channel_utxo(capacity_sat)
-        payload = {
-            "peer_pubkey_and_opt_addr": peer,
-            "capacity_sat": capacity_sat,
-            "push_msat": push_msat,
-            "asset_id": asset_id,
-            "asset_amount": asset_amount,
-            "public": False,
-            "with_anchors": True,
-        }
+        payload = build_openchannel_payload(
+            peer, capacity_sat, asset_id, asset_amount, push_msat
+        )
+        if payload["push_msat"] != push_msat:
+            steps.append(
+                {
+                    "step": "push_msat-clamped",
+                    "requested": push_msat,
+                    "used": payload["push_msat"],
+                }
+            )
         try:
             opened = rln("/openchannel", payload, 60)
         except RuntimeError as exc:
@@ -349,8 +429,23 @@ class Handler(BaseHTTPRequestHandler):
                 break
             mine_blocks(1)
             time.sleep(1)
-        if channel:
-            steps.append({"step": "channel-status", "status": channel.get("status")})
+        steps.append(
+            {"step": "channel-status", "status": channel.get("status") if channel else None}
+        )
+        if not channel or channel.get("status") != "Opened":
+            self._json(
+                502,
+                {
+                    "ok": False,
+                    "error": f"channel with {pubkey} for asset {asset_id} is not Opened after the poll",
+                    "asset_id": asset_id,
+                    "temporary_channel_id": temporary_id,
+                    "channel": channel,
+                    "send_rgb": None,
+                    "steps": steps,
+                },
+            )
+            return
 
         send_rgb_result = None
         if recipient_id:
@@ -358,6 +453,20 @@ class Handler(BaseHTTPRequestHandler):
                 asset_id, asset_amount, recipient_id, transport_endpoints
             )
             steps.append({"step": "sendrgb", "status": code})
+            if code != 200:
+                self._json(
+                    502,
+                    {
+                        "ok": False,
+                        "error": _send_rgb_error(send_rgb_result),
+                        "asset_id": asset_id,
+                        "temporary_channel_id": temporary_id,
+                        "channel": channel,
+                        "send_rgb": send_rgb_result,
+                        "steps": steps,
+                    },
+                )
+                return
 
         self._json(
             200,
@@ -473,63 +582,6 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception:  # noqa: BLE001
                         self._json(exc.code, {"raw": raw.decode("utf-8", "replace")[:400]})
                 return
-            if self.path.startswith("/lsp/openchannel"):
-                payload = json.dumps(
-                    {
-                        "peer_pubkey_and_opt_addr": body["peer_pubkey_and_opt_addr"],
-                        "capacity_sat": int(body.get("capacity_sat", 10000)),
-                        "push_msat": int(body.get("push_msat", 5000000)),
-                        "public": False,
-                        "with_anchors": True,
-                    }
-                ).encode()
-                req = urllib.request.Request(
-                    "http://127.0.0.1:3101/openchannel",
-                    data=payload,
-                    headers={"content-type": "application/json"},
-                )
-                try:
-                    with urllib.request.urlopen(req, timeout=30) as resp:
-                        self._json(200, json.loads(resp.read()))
-                except urllib.error.HTTPError as exc:
-                    raw = exc.read()
-                    try:
-                        self._json(exc.code, json.loads(raw))
-                    except Exception:  # noqa: BLE001
-                        self._json(exc.code, {"raw": raw.decode("utf-8", "replace")[:400]})
-                return
-            if self.path.startswith("/lsp/openvirtual"):
-                payload = json.dumps(
-                    {
-                        "peer_pubkey_and_opt_addr": f"{body['peer_pubkey']}@127.0.0.1:9735",
-                        "capacity_sat": int(body.get("capacity_sat", 500000)),
-                        "push_msat": int(body.get("push_msat", 250000000)),
-                        "asset_id": None,
-                        "asset_amount": None,
-                        "push_asset_amount": None,
-                        "public": False,
-                        "with_anchors": False,
-                        "fee_base_msat": None,
-                        "fee_proportional_millionths": None,
-                        "temporary_channel_id": None,
-                        "virtual_open_mode": "trusted_no_broadcast",
-                    }
-                ).encode()
-                req = urllib.request.Request(
-                    "http://127.0.0.1:3101/openchannel",
-                    data=payload,
-                    headers={"content-type": "application/json"},
-                )
-                try:
-                    with urllib.request.urlopen(req, timeout=30) as resp:
-                        self._json(200, json.loads(resp.read()))
-                except urllib.error.HTTPError as exc:
-                    raw = exc.read()
-                    try:
-                        self._json(exc.code, json.loads(raw))
-                    except Exception:  # noqa: BLE001
-                        self._json(exc.code, {"raw": raw.decode("utf-8", "replace")[:400]})
-                return
             if self.path.startswith("/lsp/invoice"):
                 amt = int(body.get("amt_msat", 3000000))
                 payload = json.dumps({"amt_msat": amt, "expiry_sec": 3600}).encode()
@@ -571,4 +623,5 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {"error": "not found"})
 
 
-ThreadingHTTPServer(("0.0.0.0", 3010), Handler).serve_forever()
+if __name__ == "__main__":
+    ThreadingHTTPServer(("0.0.0.0", 3010), Handler).serve_forever()

@@ -96,9 +96,10 @@ const baseAppEnvSchema = z.object({
   EXPO_PUBLIC_WALLET_MODE: z.enum(['mock', 'wdk', 'remote', 'wasm']).default('mock'),
   /** Bitcoin network for the embedded wallet node. */
   EXPO_PUBLIC_WALLET_NETWORK: z.enum(['regtest', 'testnet', 'signet', 'mainnet']).default('regtest'),
-  /** How long the wallet setup waits for the LSP to provision the USDm
-   * channel before continuing without one (the LSP provisions on a cron;
-   * readiness is reported through the wallet status afterwards). */
+  /** How long the wallet setup waits for the RGB channel bootstrap
+   * (`POST /lsp/bootstrap`: the LSP guarantees the USDm asset, colorable
+   * UTXOs, a regular RGB channel and the asset delivery) before continuing
+   * without one; readiness is reported through the wallet status afterwards. */
   EXPO_PUBLIC_CHANNEL_PROVISION_TIMEOUT_MS: intFromEnv(120_000, 5_000, 600_000),
   /** How the real wallet node is hosted in wdk mode: "inprocess" drives the
    * WDK module from the app's JS runtime (Node tooling/scripts); "bare"
