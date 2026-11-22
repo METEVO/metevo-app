@@ -191,6 +191,32 @@ def create_channel_utxo(capacity_sat):
     mine_blocks(2)
 
 
+def refresh_until_settled(asset_id, timeout_seconds=90):
+    """Reference refreshUntilTransferSettled: the LSP keeps refreshing (and the
+    regtest miner keeps producing) until a transfer for this asset settles."""
+    deadline = time.time() + timeout_seconds
+    last = None
+    while time.time() < deadline:
+        try:
+            rln(
+                "/refreshtransfers",
+                {"asset_id": asset_id, "filter": [], "skip_sync": False},
+                60,
+            )
+            mine_blocks(1)
+            listed = rln("/listtransfers", {"asset_id": asset_id}, 30)
+        except RuntimeError as exc:
+            last = str(exc)
+            time.sleep(2)
+            continue
+        transfers = listed.get("transfers") or []
+        if any(str(t.get("status") or "") == "Settled" for t in transfers):
+            return True, None
+        last = ", ".join(str(t.get("status")) for t in transfers)[:200]
+        time.sleep(2)
+    return False, last
+
+
 def send_rgb(asset_id, amount, recipient_id, transport_endpoints):
     """Existing on-chain delivery path: returns (status_code, body)."""
     payload = json.dumps(
@@ -388,6 +414,10 @@ class Handler(BaseHTTPRequestHandler):
         # deliver=false: open/reuse the channel only, skip the on-chain send.
         deliver_asset = body.get("deliver")
         deliver_asset = True if deliver_asset is None else bool(deliver_asset)
+        # channel=false: on-chain delivery only, no channel open (fallback when
+        # the peer cannot complete an inbound channel open).
+        open_channel = body.get("channel")
+        open_channel = True if open_channel is None else bool(open_channel)
         steps = []
 
         # Clamp first, then validate: RLN cannot carry a push above capacity, and
@@ -432,7 +462,41 @@ class Handler(BaseHTTPRequestHandler):
             if code == 200:
                 deliveries[key] = {"status": code, "body": body}
                 save_deliveries(deliveries)
+                settled, detail = refresh_until_settled(asset_id)
+                steps.append({"step": "transfer-settled" if settled else "transfer-pending", "detail": detail})
             return code, body
+
+        if not open_channel:
+            steps.append({"step": "channel-skipped"})
+            send_rgb_result = None
+            if recipient_id and deliver_asset:
+                code, send_rgb_result = deliver()
+                if code != 200:
+                    self._json(
+                        502,
+                        {
+                            "ok": False,
+                            "error": _send_rgb_error(send_rgb_result),
+                            "asset_id": asset_id,
+                            "channel": None,
+                            "send_rgb": send_rgb_result,
+                            "steps": steps,
+                        },
+                    )
+                    return
+            self._json(
+                200,
+                {
+                    "ok": True,
+                    "asset_id": asset_id,
+                    "temporary_channel_id": None,
+                    "channel": None,
+                    "delivered": send_rgb_result is not None,
+                    "send_rgb": send_rgb_result,
+                    "steps": steps,
+                },
+            )
+            return
 
         # Idempotent: one RGB channel per peer+asset while it is Opened/Opening.
         # Closed/Cancelled fall through and open a fresh channel.
@@ -463,20 +527,9 @@ class Handler(BaseHTTPRequestHandler):
                 )
             send_rgb_result = None
             if recipient_id:
-                if reuse_blocked(channel):
-                    self._json(
-                        502,
-                        {
-                            "ok": False,
-                            "error": f"channel {channel.get('status') or 'unknown'} not Opened yet",
-                            "asset_id": asset_id,
-                            "temporary_channel_id": temporary_id,
-                            "channel": channel,
-                            "send_rgb": None,
-                            "steps": steps,
-                        },
-                    )
-                    return
+                # On-chain delivery does not depend on the channel being Opened:
+                # the peer may still be converging, so deliver now and let the
+                # channel finish in the background.
                 stored = deliveries.get(delivery_key(asset_id, pubkey, recipient_id))
                 if stored:
                     steps.append({"step": "sendrgb-cached", "status": stored.get("status")})
@@ -545,7 +598,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # Reference poll: wait for status "Opened". Mining here is the regtest
         # stand-in for the external miner the reference environment runs.
-        deadline = time.time() + 45
+        deadline = time.time() + 120
         channel = None
         while time.time() < deadline:
             channels = rln_get("/listchannels").get("channels") or []
@@ -557,20 +610,9 @@ class Handler(BaseHTTPRequestHandler):
         steps.append(
             {"step": "channel-status", "status": channel.get("status") if channel else None}
         )
-        if not channel or channel.get("status") != "Opened":
-            self._json(
-                502,
-                {
-                    "ok": False,
-                    "error": f"channel with {pubkey} for asset {asset_id} is not Opened after the poll",
-                    "asset_id": asset_id,
-                    "temporary_channel_id": temporary_id,
-                    "channel": channel,
-                    "send_rgb": None,
-                    "steps": steps,
-                },
-            )
-            return
+        # The channel may still be Opening (the peer has not completed the
+        # handshake). The on-chain delivery is independent of it, so deliver
+        # anyway and report the channel state with the result.
 
         send_rgb_result = None
         if recipient_id and deliver_asset:

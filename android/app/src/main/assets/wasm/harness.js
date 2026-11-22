@@ -138,13 +138,66 @@ const RGB_PROXY = `rpc://${new URL(MOBILE_HELPER).hostname}:3005/json-rpc`;
 // /lsp/bootstrap. The LSP issues/funds/opens and delivers the asset.
 async function blindRecipientId(s, node) {
   try { await node.connectPeer("127.0.0.1:9802", (await (await helperFetch(`${MOBILE_HELPER}/lspinfo`)).json()).pubkey); } catch (_e) { /* already connected */ }
+  // rgb-lib needs one on-chain UTXO to witness a blind receive invoice; a
+  // freshly registered wallet has none, and the LSP provisions the channel,
+  // not the device wallet, so ask the helper for the seed UTXO.
+  await withWallet(async () => {
+    const spendable = (b) => Number((b && b.vanilla && (b.vanilla.spendable ?? b.vanilla.settled)) || 0);
+    let bal = null;
+    try { bal = await s.wallet.getBtcBalanceValue(); } catch (_e) { /* fresh: unfunded */ }
+    if (spendable(bal) >= 20000) return;
+    let address = null;
+    for (let a = 0; a < 10 && !address; a += 1) {
+      try { address = await s.wallet.getAddress(); } catch (_e) { await new Promise((r) => setTimeout(r, 1000)); }
+    }
+    if (!address) throw new Error("could not get a funding address: wallet busy");
+    setStatus("witness UTXO");
+    const fund = await helperFetch(`${MOBILE_HELPER}/fund`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ address, btc: 0.0005 }),
+    });
+    if (!fund.ok) throw new Error(`fund failed: ${await fund.text()}`);
+    for (let i = 0; i < 90; i += 1) {
+      try { await s.wallet.syncOnline(s.online); } catch (_e) { /* retry */ }
+      try { bal = await s.wallet.getBtcBalanceValue(); } catch (_e) { /* retry */ }
+      if (spendable(bal) >= 20000) return;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    throw new Error("the witness UTXO never appeared on the device wallet");
+  });
   return withWallet(async () => {
     setStatus("blind RGB invoice");
-    const inv = await s.wallet.blindReceiveValue(null, "Any", null, [RGB_PROXY], 1);
-    const data = typeof inv === "string" ? JSON.parse(inv) : inv;
-    const recipientId = data.recipient_id || data.recipientId || (data.invoice && data.invoice.recipient_id);
-    if (!recipientId) throw new Error(`no recipient id: ${JSON.stringify(data).slice(0, 240)}`);
-    return recipientId;
+    const makeInvoice = async () => {
+      const inv = await s.wallet.blindReceiveValue(null, "Any", null, [RGB_PROXY], 1);
+      const data = typeof inv === "string" ? JSON.parse(inv) : inv;
+      const recipientId = data.recipient_id || data.recipientId || (data.invoice && data.invoice.recipient_id);
+      if (!recipientId) throw new Error(`no recipient id: ${JSON.stringify(data).slice(0, 240)}`);
+      return recipientId;
+    };
+    try {
+      return await makeInvoice();
+    } catch (e) {
+      // rgb-lib wants a colorable UTXO (an allocation) to witness the
+      // invoice; the funded seed UTXO is not allocated until we ask.
+      if (!/allocation/i.test(String(e))) throw e;
+      setStatus("colorable UTXO");
+      const begin = await s.wallet.createUtxosBegin(s.online, false, 1, 20000, 1n, false);
+      const signed = s.wallet.signPsbtValue(begin);
+      await s.wallet.createUtxosEnd(s.online, signed, false);
+      try {
+        await helperFetch(`${MOBILE_HELPER}/mine`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ blocks: 2 }),
+        });
+      } catch (_e) { /* retry sync below */ }
+      for (let i = 0; i < 30; i += 1) {
+        try { await s.wallet.syncOnline(s.online); } catch (_e) { /* retry */ }
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      return makeInvoice();
+    }
   });
 }
 
@@ -197,6 +250,10 @@ async function provisionChannel(s) {
       peer_pubkey_and_opt_addr: `${livePubkey}@127.0.0.1:9802`,
       recipient_id: recipientId,
       transport_endpoints: [RGB_PROXY],
+      // The LSP opens the RGB channel too, but the phone cannot yet complete
+      // an inbound channel handshake; deliver on-chain now (same asset, same
+      // blind invoice) so the USDm balance lands.
+      channel: false,
       ticker: "USDM",
       deliver,
     });
@@ -245,6 +302,24 @@ async function provisionChannel(s) {
           void node.connectPeer("127.0.0.1:9802", info.pubkey).catch(() => {});
         }
       } catch (_e) { /* retry */ }
+    }
+    // Self-heal a bootstrap that returned 502 (channel still Opening): the
+    // helper's reuse path opens nothing new and delivers once it is Opened.
+    if (i > 0 && i % 60 === 0) {
+      try {
+        await callHelperSafe("/lsp/bootstrap", {
+          peer_pubkey_and_opt_addr: `${livePubkey}@127.0.0.1:9802`,
+          recipient_id: recipientId,
+          transport_endpoints: [RGB_PROXY],
+          channel: false,
+      // The LSP opens the RGB channel too, but the phone cannot yet complete
+      // an inbound channel handshake; deliver on-chain now (same asset, same
+      // blind invoice) so the USDm balance lands.
+      channel: false,
+          ticker: "USDM",
+          deliver: true,
+        });
+      } catch (_e) { /* next tick */ }
     }
     const channels = JSON.parse(node.listChannelsJson());
     const peerChannels = (channels || []).filter(
@@ -335,6 +410,25 @@ window.__metevoDispatch = async (raw) => {
         // == push_asset_amount). The channel row is authoritative once it
         // exists.
         const assetChannel = (channels || []).find((c) => c.asset_id != null) || null;
+        // Diagnostic: what the device's rgb-lib actually holds (assets and
+        // transfer states), so a missing delivery is visible off-device.
+        let assets = null;
+        let transfers = null;
+        try {
+          const rawAssets = await withWallet(() => s.wallet.listAssetsValue(["Nia", "Ifa"]));
+          const parsed = typeof rawAssets === "string" ? JSON.parse(rawAssets) : rawAssets;
+          const rows = [...((parsed && parsed.nia) || []), ...((parsed && parsed.ifa) || [])];
+          assets = rows.map((a) => ({ id: String(a.asset_id || "").slice(0, 16), ticker: a.ticker, supply: a.issued_supply }));
+        } catch (_e) { /* busy */ }
+        try {
+          const rawTransfers = await withWallet(() => s.wallet.listTransfersValue(null));
+          const parsed = typeof rawTransfers === "string" ? JSON.parse(rawTransfers) : rawTransfers;
+          const rows = (parsed && parsed.transfers) || parsed || [];
+          transfers = rows.slice(-6).map((t) => ({
+            idx: t.idx, kind: t.kind, status: t.status,
+            value: t.requested_assignment && t.requested_assignment.value,
+          }));
+        } catch (_e) { /* busy */ }
         // The LSP now funds the channel (push_msat) and holds the asset side;
         // there is no device-side pending funding request any more.
         const pendingFunding = [];
@@ -360,6 +454,16 @@ window.__metevoDispatch = async (raw) => {
           channelReady: (channels || []).some((c) => c.is_usable === true || c.ready === true),
           provisionError,
           pendingFunding,
+          channels: (channels || []).map((c) => ({
+            id: String(c.channel_id || "").slice(0, 12),
+            peer: String(c.peer_pubkey || "").slice(0, 12),
+            status: c.status || null,
+            asset: c.asset_id ? String(c.asset_id).slice(0, 16) : null,
+            local: c.asset_local_amount ?? null,
+            usable: c.is_usable === true,
+          })),
+          assets,
+          transfers,
           runtimeEvents,
         });
         return;
@@ -453,6 +557,12 @@ window.__metevoDispatch = async (raw) => {
             peer_pubkey_and_opt_addr: `${livePubkey}@127.0.0.1:9802`,
             recipient_id: recipientId,
             transport_endpoints: [RGB_PROXY],
+            channel: false,
+          channel: false,
+      // The LSP opens the RGB channel too, but the phone cannot yet complete
+      // an inbound channel handshake; deliver on-chain now (same asset, same
+      // blind invoice) so the USDm balance lands.
+      channel: false,
             ticker: "USDM",
             deliver: true,
           });
@@ -684,7 +794,9 @@ async function helperFetch(url, opts) {
     const nodeProxyUrl = baseProxyUrl.split("#runtime:")[0];
 
     const node = RlnWasmNode.newWithNodeRuntimeId(nodeProxyUrl, rid, "Regtest");
-    node.installAutoPeerManagerHooks();
+    // No installAutoPeerManagerHooks(): the reference flows never install it,
+    // and it intercepts inbound peer payloads before LDK sees channel messages
+    // (the device never answered the LSP's OpenChannel with it installed).
     node.chainSyncStartValue(indexerUrl, 5000);
     try {
       node.reconnectManagerStartValue();
@@ -702,7 +814,6 @@ async function helperFetch(url, opts) {
     } catch (_e) {
       /* older SDK */
     }
-
     if (typeof node.attachWallet === "function") {
       try { node.attachWallet(wallet); } catch (_e) { /* optional */ }
     }
