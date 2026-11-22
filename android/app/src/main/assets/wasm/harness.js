@@ -307,7 +307,7 @@ window.__metevoDispatch = async (raw) => {
         if (openProvisionPromise === null) {
           openProvisionPromise = provisionChannel(s)
             .catch((e) => {
-              provisionError = String(e);
+              provisionError = e && e.message ? e.message : String(e);
               post({ step: "error", error: provisionError });
               setStatus(`provisioning failed: ${provisionError}`);
             })
@@ -403,7 +403,7 @@ window.__metevoDispatch = async (raw) => {
         // Debug: dump the device rgb-lib transfer states (handoff R5).
         let list = null;
         try {
-          const raw = await s.wallet.listTransfersValue(req.params && req.params.assetId ? req.params.assetId : null);
+          const raw = await withWallet(() => s.wallet.listTransfersValue(req.params && req.params.assetId ? req.params.assetId : null));
           list = typeof raw === "string" ? JSON.parse(raw) : raw;
         } catch (_e) {
           list = `error: ${String(_e)}`;

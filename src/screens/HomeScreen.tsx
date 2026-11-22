@@ -188,7 +188,7 @@ function HomeShell({ session }: { session: WalletSession }) {
             </Text>
           </View>
         </TaskPanel>
-      ) : session.wallet?.provisionError != null ? (
+      ) : session.wallet?.provisionError != null && !session.wallet.channelReady ? (
         <TaskPanel variant="attention">
           <View style={styles.statusPanel}>
             <View style={styles.statusCopy}>

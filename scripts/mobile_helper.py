@@ -429,8 +429,9 @@ class Handler(BaseHTTPRequestHandler):
                 return stored.get("status"), stored.get("body")
             code, body = send_rgb(asset_id, asset_amount, recipient_id, transport_endpoints)
             steps.append({"step": "sendrgb", "status": code})
-            deliveries[key] = {"status": code, "body": body}
-            save_deliveries(deliveries)
+            if code == 200:
+                deliveries[key] = {"status": code, "body": body}
+                save_deliveries(deliveries)
             return code, body
 
         # Idempotent: one RGB channel per peer+asset while it is Opened/Opening.
@@ -572,7 +573,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         send_rgb_result = None
-        if recipient_id:
+        if recipient_id and deliver_asset:
             code, send_rgb_result = deliver()
             if code != 200:
                 self._json(
@@ -653,6 +654,9 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length) or b"{}")
         except ValueError:
             self._json(400, {"error": "invalid json"})
+            return
+        if not isinstance(body, dict):
+            self._json(400, {"error": "body must be a JSON object"})
             return
         try:
             if self.path.startswith("/lsp/bootstrap"):

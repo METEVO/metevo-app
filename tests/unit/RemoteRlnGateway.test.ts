@@ -126,6 +126,7 @@ describe('remote RLN wallet gateway', () => {
       btcSpendableSat: 0,
       balanceUsdmBaseUnits: null,
       channelReady: false,
+      provisionError: null,
     });
   });
 
