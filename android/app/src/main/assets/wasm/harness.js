@@ -119,6 +119,16 @@ async function readWalletSnapshot(wallet, online) {
 // channel (the LSP rejects a second session for a peer pair and never prunes).
 let openProvisionPromise = null;
 
+// Safe helper call for the provisioning loop (never throws).
+async function callHelperSafe(path, body) {
+  const r = await helperFetch(`${MOBILE_HELPER}${path}`, body ? {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  } : undefined);
+  return r.json();
+}
+
 async function provisionChannel(s) {
   const node = s.node;
   const info = await (await helperFetch(`${MOBILE_HELPER}/lspinfo`)).json();
@@ -190,11 +200,19 @@ async function provisionChannel(s) {
   // per peer pair, and a sats-only self-open blocks the asset channel forever.
   for (let i = 0; i < 360; i += 1) {
     await pump(node);
+    // Reference e2e-test-wasm-wdk.js waitForChannelToBeUsable:
+    // driveRgbFundingWork on every tick; sync + mine every 3rd tick.
+    try { await node.driveRgbFundingWork(); } catch (_e) { /* ignore */ }
+    if (i % 3 === 2) {
+      try { await callHelperSafe("/mine", { blocks: 1 }); } catch (_e) { /* ignore */ }
+    }
     if (i % 6 === 5) {
       // Queued: background provisioning must not overlap a running flow.
+      // Reference also syncs the LSP management API (/sync) each tick.
       await withWallet(async () => {
         try { await s.wallet.syncOnline(s.online); } catch (_e) { /* ignore */ }
       });
+      try { await callHelperSafe("/lsp/refresh", {}); } catch (_e) { /* ignore */ }
     }
     if (i % 20 === 19) {
       // Keepalive: re-establish the peer session if the relay dropped it.
@@ -379,12 +397,33 @@ window.__metevoDispatch = async (raw) => {
       case "status": {
         const channels = JSON.parse(node.listChannelsJson());
         const snap = await readWalletSnapshot(s.wallet, s.online);
+        // Drive the RGB funding work on every status tick — this is what
+        // processes the inbound virtual-channel open/funding on the device
+        // (reference e2e-test-wasm-wdk.js waitForChannelToBeUsable does
+        // chainSyncTick + driveRgbFundingWork each tick).
+        try { await node.driveRgbFundingWork(); } catch (_e) { /* ignore */ }
+        try { node.processNativeRuntimeQueueValue(); } catch (_e) { /* ignore */ }
         // The LSP pushes the bootstrap USDM into the channel's responder
         // side — this node — so RLN reports it as asset_local_amount here
         // (openchannel_push_asset_amount integration test: responder local
         // == push_asset_amount). The channel row is authoritative once it
         // exists.
         const assetChannel = (channels || []).find((c) => c.asset_id != null) || null;
+        // Virtual-channel funding requests: when the LSP opens a channel to us,
+        // the device gets a pending funding request it must act on (the old
+        // runChannelFlow called submitFundingTransactionValue for this).
+        let pendingFunding = null;
+        try {
+          pendingFunding = JSON.parse(node.listPendingFundingRequestsJson());
+        } catch (_e) { /* ignore */ }
+        let runtimeEvents = null;
+        try {
+          runtimeEvents = JSON.parse(node.listRuntimeEventsJson());
+          if (runtimeEvents && runtimeEvents.events) {
+            runtimeEvents = runtimeEvents.events.slice(-6).map((e) => ({
+              kind: e.event_kind, status: e.status, applied: e.applied, err: e.error }));
+          }
+        } catch (_e) { /* ignore */ }
         reply({
           nodePubkey: unwrapPubkey(JSON.parse(node.nodePubkeyJson())),
           btcSpendableSat: snap.btcSpendableSat,
@@ -392,6 +431,8 @@ window.__metevoDispatch = async (raw) => {
             ? Number(assetChannel.asset_local_amount || 0)
             : snap.usdm ? Number(snap.usdm.settled ?? 0) : null,
           channelReady: (channels || []).some((c) => c.is_usable === true || c.ready === true),
+          pendingFunding,
+          runtimeEvents,
         });
         return;
       }
@@ -904,6 +945,10 @@ async function helperFetch(url, opts) {
     // exit — otherwise the next boot preloads nothing and the pubkey
     // rotates (preloadPersistentRuntimeState runs earlier, above).
     flushLdkState();
+    // The keys are generated lazily once chain sync starts, so the boot
+    // flush can still be too early; keep flushing until the state sticks.
+    const flushTimer = setInterval(flushLdkState, 15000);
+    window.addEventListener("pagehide", () => clearInterval(flushTimer));
 
     const pubkey = (JSON.parse(node.nodePubkeyJson()) || {}).pubkey || "?";
     setStatus(`ready · pubkey=${pubkey} · wallet=${walletAddress.slice(0, 18)}…`);
