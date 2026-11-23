@@ -278,7 +278,7 @@ def refresh_until_settled(asset_id, timeout_seconds=90):
 
 
 def send_rgb(asset_id, amount, recipient_id, transport_endpoints):
-    """Existing on-chain delivery path: returns (status_code, body)."""
+    """One on-chain send attempt: returns (status_code, body). No blind retry."""
     payload = json.dumps(
         {
             "donation": False,
@@ -298,40 +298,20 @@ def send_rgb(asset_id, amount, recipient_id, transport_endpoints):
         }
     ).encode()
 
-    def attempt():
-        req = urllib.request.Request(
-            f"{RLN}/sendrgb",
-            data=payload,
-            headers={"content-type": "application/json"},
-        )
+    req = urllib.request.Request(
+        f"{RLN}/sendrgb",
+        data=payload,
+        headers={"content-type": "application/json"},
+    )
+    try:
         with urllib.request.urlopen(req, timeout=60) as resp:
             return 200, json.loads(resp.read())
-
-    try:
-        return attempt()
     except urllib.error.HTTPError as exc:
         raw = exc.read().decode("utf-8", "replace")
-        if "Not enough assets" not in raw:
-            try:
-                return exc.code, json.loads(raw)
-            except Exception:  # noqa: BLE001
-                return exc.code, {"raw": raw[:400]}
-        mine_blocks(1)
         try:
-            rln(
-                "/refreshtransfers",
-                {"asset_id": asset_id, "filter": [], "skip_sync": False},
-                60,
-            )
-            return attempt()
-        except urllib.error.HTTPError as retry_exc:
-            raw = retry_exc.read().decode("utf-8", "replace")
-            try:
-                return retry_exc.code, json.loads(raw)
-            except Exception:  # noqa: BLE001
-                return retry_exc.code, {"raw": raw[:400]}
-        except Exception as retry_exc:  # noqa: BLE001
-            return 502, {"raw": f"{type(retry_exc).__name__}: {retry_exc}"[:400]}
+            return exc.code, json.loads(raw)
+        except ValueError:
+            return exc.code, {"raw": raw[:400]}
 
 
 def _send_rgb_error(result):
@@ -372,6 +352,122 @@ def save_deliveries(deliveries):
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(tmp, DELIVERIES)
+
+
+def make_step(name, recipient_id=None, asset_id=None, http_status=None, error=None, **extra):
+    """One structured step: every entry carries the same six fields."""
+    entry = {
+        "ts": int(time.time()),
+        "step": name,
+        "recipient_id": recipient_id,
+        "asset_id": asset_id,
+        "http_status": http_status,
+        "error": error,
+    }
+    entry.update(extra)
+    return entry
+
+
+def list_transfers(asset_id):
+    return rln("/listtransfers", {"asset_id": asset_id}, 30)
+
+
+def matching_transfers(transfers, recipient_id):
+    """Sender-side Send transfers for one blind invoice, newest first."""
+    wanted = str(recipient_id or "").strip()
+    rows = [
+        transfer
+        for transfer in transfers
+        if str(transfer.get("recipient_id") or "").strip() == wanted
+        and str(transfer.get("kind") or "") in ("", "Send")
+    ]
+    rows.sort(key=lambda transfer: int(transfer.get("idx") or 0), reverse=True)
+    return rows
+
+
+def adopt_transfer(asset_id, recipient_id):
+    """A non-Failed transfer already exists for this invoice: never resend."""
+    for transfer in matching_transfers(
+        list_transfers(asset_id).get("transfers") or [], recipient_id
+    ):
+        if str(transfer.get("status") or "") != "Failed":
+            return transfer
+    return None
+
+
+_DELIVERY_LOCKS = {}
+_DELIVERY_LOCKS_LOCK = threading.Lock()
+
+
+def _delivery_lock(asset_id, recipient_id):
+    """Serialise deliveries for one invoice; other invoices run concurrently."""
+    key = (str(asset_id or ""), str(recipient_id or ""))
+    with _DELIVERY_LOCKS_LOCK:
+        return _DELIVERY_LOCKS.setdefault(key, threading.Lock())
+
+
+def _transfer_body(transfer):
+    return {
+        "txid": transfer.get("txid"),
+        "transfer_idx": transfer.get("idx"),
+        "status": transfer.get("status"),
+        "adopted": True,
+    }
+
+
+def deliver_asset(asset_id, amount, recipient_id, transport_endpoints, steps=None):
+    """Exactly one /sendrgb per (asset, recipient_id).
+
+    Adopt an existing non-Failed transfer first, send at most once, and adopt
+    again if the send raised but RLN created the transfer anyway.
+    """
+    steps = steps if steps is not None else []
+    with _delivery_lock(asset_id, recipient_id):
+        adopted = adopt_transfer(asset_id, recipient_id)
+        if adopted:
+            steps.append(
+                make_step(
+                    "sendrgb-adopted",
+                    recipient_id=recipient_id,
+                    asset_id=asset_id,
+                    http_status=200,
+                    transfer_idx=adopted.get("idx"),
+                    status=adopted.get("status"),
+                )
+            )
+            return 200, _transfer_body(adopted), adopted
+
+        try:
+            code, body = send_rgb(asset_id, amount, recipient_id, transport_endpoints)
+        except Exception as exc:  # noqa: BLE001
+            code, body = 502, {"raw": f"{type(exc).__name__}: {exc}"[:400]}
+
+        if code != 200:
+            adopted = adopt_transfer(asset_id, recipient_id)
+            if adopted:
+                steps.append(
+                    make_step(
+                        "sendrgb-adopted",
+                        recipient_id=recipient_id,
+                        asset_id=asset_id,
+                        http_status=200,
+                        transfer_idx=adopted.get("idx"),
+                        status=adopted.get("status"),
+                        recovered=True,
+                    )
+                )
+                return 200, _transfer_body(adopted), adopted
+
+        steps.append(
+            make_step(
+                "sendrgb",
+                recipient_id=recipient_id,
+                asset_id=asset_id,
+                http_status=code,
+                error=None if code == 200 else _send_rgb_error(body),
+            )
+        )
+        return code, body, None
 
 
 def clamp_push_msat(capacity_sat, push_msat):
@@ -472,8 +568,8 @@ class Handler(BaseHTTPRequestHandler):
         recipient_id = str(body.get("recipient_id") or "").strip() or None
         transport_endpoints = body.get("transport_endpoints") or []
         # deliver=false: open/reuse the channel only, skip the on-chain send.
-        deliver_asset = body.get("deliver")
-        deliver_asset = True if deliver_asset is None else bool(deliver_asset)
+        deliver_wanted = body.get("deliver")
+        deliver_wanted = True if deliver_wanted is None else bool(deliver_wanted)
         # channel=false: on-chain delivery only, no channel open (fallback when
         # the peer cannot complete an inbound channel open).
         open_channel = body.get("channel")
@@ -514,25 +610,31 @@ class Handler(BaseHTTPRequestHandler):
         deliveries = load_deliveries()
 
         def deliver():
-            """Delivery is idempotent per (asset, peer, blind invoice)."""
-            key = delivery_key(asset_id, pubkey, recipient_id)
-            stored = deliveries.get(key)
-            if stored:
-                steps.append({"step": "sendrgb-cached", "status": stored.get("status")})
-                return stored.get("status"), stored.get("body")
-            code, body = send_rgb(asset_id, asset_amount, recipient_id, transport_endpoints)
-            steps.append({"step": "sendrgb", "status": code})
+            """Exactly one send per (asset, peer, blind invoice)."""
+            send_steps = []
+            code, body, transfer = deliver_asset(
+                asset_id,
+                asset_amount,
+                recipient_id,
+                transport_endpoints,
+                steps=send_steps,
+            )
+            steps.extend(send_steps)
             if code == 200:
-                deliveries[key] = {"status": code, "body": body}
+                deliveries[delivery_key(asset_id, pubkey, recipient_id)] = {
+                    "status": code,
+                    "body": body,
+                }
                 save_deliveries(deliveries)
-                settled, detail = refresh_until_settled(asset_id)
-                steps.append({"step": "transfer-settled" if settled else "transfer-pending", "detail": detail})
+                if str((transfer or {}).get("status") or "") != "Settled":
+                    settled, detail = refresh_until_settled(asset_id)
+                    steps.append({"step": "transfer-settled" if settled else "transfer-pending", "detail": detail})
             return code, body
 
         if not open_channel:
             steps.append({"step": "channel-skipped"})
             send_rgb_result = None
-            if recipient_id and deliver_asset:
+            if recipient_id and deliver_wanted:
                 code, send_rgb_result = deliver()
                 if code != 200:
                     self._json(
@@ -567,7 +669,7 @@ class Handler(BaseHTTPRequestHandler):
         if channel_reusable(existing):
             steps.append({"step": "channel-exists", "status": existing.get("status")})
             temporary_id = existing.get("channel_id")
-            if recipient_id and not deliver_asset:
+            if recipient_id and not deliver_wanted:
                 self._json(
                     200,
                     {
@@ -593,27 +695,22 @@ class Handler(BaseHTTPRequestHandler):
                 # On-chain delivery does not depend on the channel being Opened:
                 # the peer may still be converging, so deliver now and let the
                 # channel finish in the background.
-                stored = deliveries.get(delivery_key(asset_id, pubkey, recipient_id))
-                if stored:
-                    steps.append({"step": "sendrgb-cached", "status": stored.get("status")})
-                    code, send_rgb_result = stored.get("status"), stored.get("body")
-                else:
-                    balance = rln("/assetbalance", {"asset_id": asset_id}, 30)
-                    if _spendable(balance) < asset_amount:
-                        self._json(
-                            502,
-                            {
-                                "ok": False,
-                                "error": f"insufficient asset balance: {_spendable(balance)} < {asset_amount} required",
-                                "asset_id": asset_id,
-                                "temporary_channel_id": temporary_id,
-                                "channel": channel,
-                                "send_rgb": None,
-                                "steps": steps,
-                            },
-                        )
-                        return
-                    code, send_rgb_result = deliver()
+                balance = rln("/assetbalance", {"asset_id": asset_id}, 30)
+                if _spendable(balance) < asset_amount:
+                    self._json(
+                        502,
+                        {
+                            "ok": False,
+                            "error": f"insufficient asset balance: {_spendable(balance)} < {asset_amount} required",
+                            "asset_id": asset_id,
+                            "temporary_channel_id": temporary_id,
+                            "channel": channel,
+                            "send_rgb": None,
+                            "steps": steps,
+                        },
+                    )
+                    return
+                code, send_rgb_result = deliver()
                 if code != 200:
                     self._json(
                         502,
@@ -678,7 +775,7 @@ class Handler(BaseHTTPRequestHandler):
         # anyway and report the channel state with the result.
 
         send_rgb_result = None
-        if recipient_id and deliver_asset:
+        if recipient_id and deliver_wanted:
             code, send_rgb_result = deliver()
             if code != 200:
                 self._json(
@@ -768,7 +865,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._handle_bootstrap(body)
                 return
             if self.path.startswith("/lsp/sendrgb"):
-                code, data = send_rgb(
+                code, data, _ = deliver_asset(
                     body["asset_id"],
                     int(body["amount"]),
                     body["recipient_id"],

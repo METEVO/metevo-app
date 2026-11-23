@@ -1,5 +1,7 @@
 import os
 import sys
+import threading
+import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -8,6 +10,7 @@ import mobile_helper as helper  # noqa: E402
 
 PEER = "02e1c0ffee@127.0.0.1:9802"
 ASSET = "rgb:DZgCsckL-wpY4~WV-NDRptzz-KtAy9r3-qwylBY9-cgLewQg"
+RECIPIENT = "bcrt:utxob:one"
 
 
 class BuildOpenChannelPayloadTest(unittest.TestCase):
@@ -121,6 +124,171 @@ class ReuseGateTest(unittest.TestCase):
         self.assertTrue(helper.reuse_blocked({"status": "Closed"}))
         self.assertTrue(helper.reuse_blocked({"status": None}))
         self.assertTrue(helper.reuse_blocked(None))
+
+
+class StubMixin(unittest.TestCase):
+    """Restore patched module globals and registry state after every test."""
+
+    PATCHED = ("rln", "send_rgb", "mine_blocks", "bootstrap_work")
+    ENV = ("METEVO_PINNED_ASSET_ID", "REGTEST_AUTOMINE")
+
+    def setUp(self):
+        self._saved = {
+            name: getattr(helper, name)
+            for name in self.PATCHED
+            if hasattr(helper, name)
+        }
+        self._env = {name: os.environ.get(name) for name in self.ENV}
+        for name in ("JOBS", "ACTIVE_JOBS", "JOB_KEY_LOCKS"):
+            registry = getattr(helper, name, None)
+            if registry is not None:
+                registry.clear()
+
+    def tearDown(self):
+        for name, value in self._saved.items():
+            setattr(helper, name, value)
+        for name, value in self._env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        for name in ("JOBS", "ACTIVE_JOBS", "JOB_KEY_LOCKS"):
+            registry = getattr(helper, name, None)
+            if registry is not None:
+                registry.clear()
+
+
+class FakeTransfers:
+    """Stub for rln(): /listtransfers reflects a shared transfer list."""
+
+    def __init__(self, transfers):
+        self.transfers = transfers
+        self.calls = []
+
+    def __call__(self, path, payload=None, timeout=60, tolerate_allocation=False):
+        self.calls.append((path, payload))
+        if path == "/listtransfers":
+            return {"transfers": [dict(row) for row in self.transfers]}
+        if path == "/refreshtransfers":
+            return {}
+        raise AssertionError(f"unexpected rln call: {path}")
+
+
+class DeliveryConcurrencyTest(StubMixin):
+    def test_five_concurrent_sends_for_same_recipient_call_sendrgb_once(self):
+        transfers = []
+        calls = []
+        helper.rln = FakeTransfers(transfers)
+
+        def fake_send(asset_id, amount, recipient_id, transport_endpoints):
+            time.sleep(0.02)
+            calls.append(recipient_id)
+            row = {
+                "idx": len(calls),
+                "status": "WaitingCounterparty",
+                "recipient_id": recipient_id,
+                "kind": "Send",
+                "txid": f"tx{len(calls)}",
+            }
+            transfers.append(row)
+            return 200, {"txid": row["txid"]}
+
+        helper.send_rgb = fake_send
+        results = []
+        results_lock = threading.Lock()
+
+        def worker():
+            code, _body, _transfer = helper.deliver_asset(
+                ASSET, 10, RECIPIENT, []
+            )
+            with results_lock:
+                results.append(code)
+
+        threads = [threading.Thread(target=worker) for _ in range(5)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(5)
+
+        self.assertEqual(len(calls), 1, "sendrgb must run exactly once")
+        self.assertEqual(results, [200] * 5)
+        self.assertNotIn(502, results)
+
+    def test_existing_transfer_is_adopted_without_send(self):
+        transfers = [
+            {
+                "idx": 7,
+                "status": "WaitingConfirmations",
+                "recipient_id": RECIPIENT,
+                "kind": "Send",
+                "txid": "already",
+            }
+        ]
+        helper.rln = FakeTransfers(transfers)
+        helper.send_rgb = lambda *args, **kwargs: self.fail("sendrgb must not run")
+
+        code, body, transfer = helper.deliver_asset(ASSET, 10, RECIPIENT, [])
+
+        self.assertEqual(code, 200)
+        self.assertTrue(body["adopted"])
+        self.assertEqual(transfer["txid"], "already")
+
+    def test_failed_transfer_is_not_adopted(self):
+        transfers = [
+            {
+                "idx": 7,
+                "status": "Failed",
+                "recipient_id": RECIPIENT,
+                "kind": "Send",
+                "txid": "failed",
+            }
+        ]
+        helper.rln = FakeTransfers(transfers)
+        sent = []
+
+        def fake_send(*_args):
+            sent.append(1)
+            row = {
+                "idx": 8,
+                "status": "WaitingCounterparty",
+                "recipient_id": RECIPIENT,
+                "kind": "Send",
+                "txid": "fresh",
+            }
+            transfers.append(row)
+            return 200, {"txid": "fresh"}
+
+        helper.send_rgb = fake_send
+        code, body, transfer = helper.deliver_asset(ASSET, 10, RECIPIENT, [])
+
+        self.assertEqual(code, 200)
+        self.assertEqual(len(sent), 1)
+        self.assertNotEqual(code, 502)
+        self.assertIsNone(transfer)
+        self.assertEqual(body["txid"], "fresh")
+
+    def test_send_raises_but_transfer_exists_is_success(self):
+        transfers = []
+        helper.rln = FakeTransfers(transfers)
+
+        def exploding_send(asset_id, amount, recipient_id, transport_endpoints):
+            transfers.append(
+                {
+                    "idx": 9,
+                    "status": "WaitingCounterparty",
+                    "recipient_id": recipient_id,
+                    "kind": "Send",
+                    "txid": "created",
+                }
+            )
+            raise RuntimeError("transport exploded")
+
+        helper.send_rgb = exploding_send
+        code, body, transfer = helper.deliver_asset(ASSET, 10, RECIPIENT, [])
+
+        self.assertEqual(code, 200)
+        self.assertEqual(transfer["txid"], "created")
+        self.assertTrue(body["adopted"])
 
 
 if __name__ == "__main__":
