@@ -83,6 +83,13 @@ export function handleWasmMessage(raw: string): void {
     return;
   }
 
+  if (message.step === 'diag') {
+    // One logcat entry per harness diagnostic line: the WebView console is
+    // dropped in a release build, so this is the only path to logcat.
+    console.log(String(message.line));
+    return;
+  }
+
   const id = message.id;
   if (typeof id !== 'number') {
     return;

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef } from 'react';
-import { ActivityIndicator, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 
 import { BalancesCard } from '../components/BalancesCard';
 import { AttentionSignalProvider, useAttentionActive } from '../components/AttentionSignal';
@@ -17,6 +17,7 @@ import { InvoiceInboxProvider, useInvoiceInbox } from '../hooks/useInvoiceInbox'
 import { useIntents } from '../hooks/useIntents';
 import { useVoiceAssistant } from '../hooks/useVoiceAssistant';
 import { WalletSession, useWalletSession } from '../hooks/useWalletSession';
+import { wasmCall } from '../services/metevo/wasmBridge';
 import { archiveRecording } from '../utils/recordingArchive';
 
 /**
@@ -143,11 +144,20 @@ function HomeShell({ session }: { session: WalletSession }) {
   return (
     <View style={styles.shell}>
       <StatusHeader connection={connection} onOpenProfile={() => simulateIntent('profile')} />
-      <BalancesCard
-        label={attention ? 'Last known balance' : 'Available balance'}
-        usdm={formatUsdmBalance(session.wallet?.balanceUsdmBaseUnits ?? null)}
-        sats={formatSats(session.wallet?.btcSpendableSat ?? null)}
-      />
+      <Pressable
+        onLongPress={() => {
+          // Diagnostics only: one-shot wallet dump on the balance card.
+          if (ENV.EXPO_PUBLIC_WALLET_MODE === 'wasm') {
+            void wasmCall('diagFull').catch(() => {});
+          }
+        }}
+      >
+        <BalancesCard
+          label={attention ? 'Last known balance' : 'Available balance'}
+          usdm={formatUsdmBalance(session.wallet?.balanceUsdmBaseUnits ?? null)}
+          sats={formatSats(session.wallet?.btcSpendableSat ?? null)}
+        />
+      </Pressable>
 
       {nodeOffline ? (
         <TaskPanel variant="attention">
