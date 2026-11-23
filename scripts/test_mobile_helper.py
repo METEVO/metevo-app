@@ -291,5 +291,97 @@ class DeliveryConcurrencyTest(StubMixin):
         self.assertTrue(body["adopted"])
 
 
+class BootstrapJobTest(StubMixin):
+    def _body(self, recipient=RECIPIENT):
+        return {
+            "peer_pubkey_and_opt_addr": PEER,
+            "recipient_id": recipient,
+            "transport_endpoints": ["http://127.0.0.1:3005/json-rpc"],
+            "ticker": "USDM",
+            "asset_id": ASSET,
+            "channel": False,
+            "deliver": False,
+        }
+
+    def _wait(self, job_id, timeout=3):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            job = helper.get_job(job_id)
+            if job and job.get("state") != "running":
+                return job
+            time.sleep(0.01)
+        self.fail(f"job {job_id} did not finish")
+
+    def test_returns_202_with_job_record(self):
+        helper.bootstrap_work = lambda body, record: {"ok": True, "asset_id": ASSET}
+        status, payload = helper.start_bootstrap_job(self._body())
+
+        self.assertEqual(status, 202)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["accepted"])
+        self.assertEqual(payload["state"], "running")
+        self.assertEqual(payload["recipient_id"], RECIPIENT)
+        self.assertEqual(payload["asset_id"], ASSET)
+        self.assertIn("job_id", payload)
+
+        job = self._wait(payload["job_id"])
+        self.assertEqual(job["state"], "done")
+        self.assertEqual(job["http_status"], 200)
+        self.assertIsNone(job["error"])
+        for field in ("job_id", "recipient_id", "asset_id", "started_at", "updated_at", "steps"):
+            self.assertIn(field, job)
+
+    def test_identical_concurrent_requests_conflict_only_same_recipient(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def blocking_work(body, record):
+            record("blocked")
+            entered.set()
+            release.wait(5)
+            return {"ok": True}
+
+        helper.bootstrap_work = blocking_work
+        status, first = helper.start_bootstrap_job(self._body())
+        self.assertEqual(status, 202)
+        self.assertTrue(entered.wait(2))
+        try:
+            status_same, body_same = helper.start_bootstrap_job(self._body())
+            self.assertEqual(status_same, 409)
+            self.assertEqual(body_same["job_id"], first["job_id"])
+
+            status_other, other = helper.start_bootstrap_job(
+                self._body("bcrt:utxob:two")
+            )
+            self.assertEqual(status_other, 202)
+            self.assertNotEqual(other["job_id"], first["job_id"])
+        finally:
+            release.set()
+            self._wait(first["job_id"])
+
+    def test_failure_stores_step_and_rln_detail(self):
+        def failing_work(body, record):
+            record("sendrgb")
+            raise helper.BootstrapFailure("sendrgb", "boom", 500, '{"error":"boom"}')
+
+        helper.bootstrap_work = failing_work
+        _status, payload = helper.start_bootstrap_job(self._body())
+        job = self._wait(payload["job_id"])
+
+        self.assertEqual(job["state"], "failed")
+        self.assertEqual(job["http_status"], 502)
+        self.assertEqual(
+            set(job["error"]),
+            {"step", "reason", "rln_status", "rln_body"},
+        )
+        self.assertEqual(job["error"]["step"], "sendrgb")
+        self.assertEqual(job["error"]["rln_status"], 500)
+        self.assertEqual(job["steps"][0]["step"], "sendrgb")
+        self.assertEqual(job["steps"][0]["recipient_id"], RECIPIENT)
+
+    def test_unknown_job_is_none(self):
+        self.assertIsNone(helper.get_job("missing"))
+
+
 if __name__ == "__main__":
     unittest.main()

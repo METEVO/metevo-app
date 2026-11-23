@@ -2,9 +2,14 @@ import base64
 import json
 import math
 import os
+import re
 import threading
 import time
+import traceback
+import urllib.error
 import urllib.request
+import uuid
+from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 RPC = "http://127.0.0.1:19445"
@@ -14,9 +19,18 @@ RLN = "http://127.0.0.1:3101"
 USDM_CACHE = "/tmp/metevo_usdm_asset.json"
 DELIVERIES = "/tmp/metevo_bootstrap_deliveries.json"
 ISSUE_LOCK = threading.Lock()
-BOOTSTRAP_LOCK = threading.Lock()
 MIN_CHANNEL_CAPACITY_SAT = 30050
 MAX_CHANNEL_CAPACITY_SAT = 10000000
+# RGB needs the receiver's ack, then a broadcast, then min_confirmations=1.
+# Poll every 2.5 s and never give up before 10 minutes.
+SETTLE_TIMEOUT_SECONDS = 600
+SETTLE_POLL_SECONDS = 2.5
+JOBS_MAX = 64
+JOBS = OrderedDict()
+JOBS_LOCK = threading.Lock()
+ACTIVE_JOBS = {}
+JOB_KEY_LOCKS = {}
+JOB_KEY_LOCKS_LOCK = threading.Lock()
 
 
 def rpc(method, params):
@@ -63,6 +77,48 @@ def rln_get(path, timeout=30):
 
 def _spendable(value):
     return int((value or {}).get("spendable") or 0)
+
+
+class BootstrapFailure(Exception):
+    """Failure carrying the step and RLN HTTP detail for the job record."""
+
+    def __init__(self, step, reason, rln_status=None, rln_body=None):
+        super().__init__(reason)
+        self.step = step
+        self.reason = reason
+        self.rln_status = rln_status
+        self.rln_body = rln_body
+
+
+def _rln_error(exc):
+    """Split `rln`'s `<path> <code>: <body>` message into (status, body)."""
+    match = re.match(r"^\S+ (\d{3}): (.*)$", str(exc), re.S)
+    if match:
+        return int(match.group(1)), match.group(2)
+    return None, str(exc)
+
+
+def pinned_asset_id(request_asset_id=None):
+    """Request pin wins over METEVO_PINNED_ASSET_ID; empty means unpinned."""
+    return (
+        str(request_asset_id or "").strip()
+        or str(os.environ.get("METEVO_PINNED_ASSET_ID") or "").strip()
+        or None
+    )
+
+
+def make_step(name, recipient_id=None, asset_id=None, http_status=None, error=None, **extra):
+    """One structured step: every entry carries the same six fields."""
+    entry = {
+        "ts": int(time.time()),
+        "step": name,
+        "recipient_id": recipient_id,
+        "asset_id": asset_id,
+        "http_status": http_status,
+        "error": error,
+    }
+    entry.update(extra)
+    return entry
 
 
 def issue_usdm(ticker="USDM"):
@@ -202,11 +258,11 @@ def prepare_usdm_asset(asset_amount, ticker="USDM", existing_asset_ids=(), prefe
     )
 
 
-def ensure_colored_spendable(capacity_sat, steps):
+def ensure_colored_spendable(capacity_sat, record):
     """Reference ensureColoredSpendable: colorable BTC >= capacity_sat."""
     balance = rln("/btcbalance", {"skip_sync": False}, 120)
     spendable = _spendable(balance.get("colored"))
-    steps.append({"step": "btcbalance", "colored_spendable": spendable})
+    record("btcbalance", colored_spendable=spendable)
     if spendable >= capacity_sat:
         return balance
 
@@ -217,7 +273,7 @@ def ensure_colored_spendable(capacity_sat, steps):
         {"up_to": False, "num": num, "size": size, "fee_rate": 1, "skip_sync": False},
         120,
     )
-    steps.append({"step": "createutxos-colorable", "num": num, "size": size})
+    record("createutxos-colorable", num=num, size=size)
     mine_blocks(2)
 
     deadline = time.time() + 60
@@ -225,7 +281,7 @@ def ensure_colored_spendable(capacity_sat, steps):
         balance = rln("/btcbalance", {"skip_sync": False}, 120)
         spendable = _spendable(balance.get("colored"))
         if spendable >= capacity_sat:
-            steps.append({"step": "btcbalance", "colored_spendable": spendable})
+            record("btcbalance", colored_spendable=spendable)
             return balance
         time.sleep(2)
     raise RuntimeError(f"colored spendable {spendable} < {capacity_sat}")
@@ -249,6 +305,33 @@ def create_channel_utxo(capacity_sat):
         if "AllocationsAlreadyAvailable" not in text and "NoAvailableUtxos" not in text:
             raise
     mine_blocks(2)
+
+
+def list_transfers(asset_id):
+    return rln("/listtransfers", {"asset_id": asset_id}, 30)
+
+
+def matching_transfers(transfers, recipient_id):
+    """Sender-side Send transfers for one blind invoice, newest first."""
+    wanted = str(recipient_id or "").strip()
+    rows = [
+        transfer
+        for transfer in transfers
+        if str(transfer.get("recipient_id") or "").strip() == wanted
+        and str(transfer.get("kind") or "") in ("", "Send")
+    ]
+    rows.sort(key=lambda transfer: int(transfer.get("idx") or 0), reverse=True)
+    return rows
+
+
+def adopt_transfer(asset_id, recipient_id):
+    """A non-Failed transfer already exists for this invoice: never resend."""
+    for transfer in matching_transfers(
+        list_transfers(asset_id).get("transfers") or [], recipient_id
+    ):
+        if str(transfer.get("status") or "") != "Failed":
+            return transfer
+    return None
 
 
 def refresh_until_settled(asset_id, timeout_seconds=90):
@@ -354,47 +437,6 @@ def save_deliveries(deliveries):
     os.replace(tmp, DELIVERIES)
 
 
-def make_step(name, recipient_id=None, asset_id=None, http_status=None, error=None, **extra):
-    """One structured step: every entry carries the same six fields."""
-    entry = {
-        "ts": int(time.time()),
-        "step": name,
-        "recipient_id": recipient_id,
-        "asset_id": asset_id,
-        "http_status": http_status,
-        "error": error,
-    }
-    entry.update(extra)
-    return entry
-
-
-def list_transfers(asset_id):
-    return rln("/listtransfers", {"asset_id": asset_id}, 30)
-
-
-def matching_transfers(transfers, recipient_id):
-    """Sender-side Send transfers for one blind invoice, newest first."""
-    wanted = str(recipient_id or "").strip()
-    rows = [
-        transfer
-        for transfer in transfers
-        if str(transfer.get("recipient_id") or "").strip() == wanted
-        and str(transfer.get("kind") or "") in ("", "Send")
-    ]
-    rows.sort(key=lambda transfer: int(transfer.get("idx") or 0), reverse=True)
-    return rows
-
-
-def adopt_transfer(asset_id, recipient_id):
-    """A non-Failed transfer already exists for this invoice: never resend."""
-    for transfer in matching_transfers(
-        list_transfers(asset_id).get("transfers") or [], recipient_id
-    ):
-        if str(transfer.get("status") or "") != "Failed":
-            return transfer
-    return None
-
-
 _DELIVERY_LOCKS = {}
 _DELIVERY_LOCKS_LOCK = threading.Lock()
 
@@ -413,6 +455,19 @@ def _transfer_body(transfer):
         "status": transfer.get("status"),
         "adopted": True,
     }
+
+
+def remember_delivery(asset_id, peer_pubkey, recipient_id, transfer):
+    """Audit cache only; /listtransfers is the source of truth."""
+    try:
+        deliveries = load_deliveries()
+        deliveries[delivery_key(asset_id, peer_pubkey, recipient_id)] = {
+            "status": 200,
+            "body": _transfer_body(transfer),
+        }
+        save_deliveries(deliveries)
+    except OSError:
+        pass
 
 
 def deliver_asset(asset_id, amount, recipient_id, transport_endpoints, steps=None):
@@ -534,276 +589,382 @@ def reuse_blocked(channel):
     return not channel or str(channel.get("status") or "") != "Opened"
 
 
-class Handler(BaseHTTPRequestHandler):
-    def _handle_bootstrap(self, body):
-        # Never queue a second caller: a concurrent run means the first is
-        # still opening a channel and the second would race it.
-        if not BOOTSTRAP_LOCK.acquire(blocking=False):
-            self._json(409, {"error": "bootstrap already running"})
+def _job_key(parsed):
+    """One running job per (asset pin, recipient); peers may run in parallel."""
+    return (
+        pinned_asset_id(parsed.get("asset_id")) or "",
+        str(parsed.get("recipient_id") or parsed.get("peer") or "").strip().lower(),
+    )
+
+
+def _job_key_lock(key):
+    with JOB_KEY_LOCKS_LOCK:
+        return JOB_KEY_LOCKS.setdefault(key, threading.Lock())
+
+
+def _prune_jobs_locked():
+    while len(JOBS) >= JOBS_MAX:
+        victim = next(
+            (job_id for job_id, job in JOBS.items() if job.get("state") != "running"),
+            None,
+        )
+        if victim is None:
             return
-        try:
-            try:
-                self._run_bootstrap(body)
-            except ValueError as exc:
-                self._json(400, {"error": str(exc)})
-            except Exception as exc:  # noqa: BLE001
-                self._json(502, {"error": f"{type(exc).__name__}: {exc}"})
-        finally:
-            BOOTSTRAP_LOCK.release()
+        JOBS.pop(victim, None)
 
-    def _run_bootstrap(self, body):
-        peer = str(body.get("peer_pubkey_and_opt_addr") or "").strip()
-        if "@" not in peer:
-            raise ValueError("peer_pubkey_and_opt_addr must be pubkey@host:port")
-        pubkey = peer.split("@", 1)[0]
-        ticker = str(body.get("ticker") or "USDM").strip() or "USDM"
-        try:
-            capacity_sat = int(body.get("capacity_sat", 500000))
-            asset_amount = int(body.get("asset_amount", 2000000000))
-            push_msat = int(body.get("push_msat", 250000000))
-        except (TypeError, ValueError):
-            raise ValueError(
-                "capacity_sat, asset_amount and push_msat must be integers"
-            ) from None
-        recipient_id = str(body.get("recipient_id") or "").strip() or None
-        transport_endpoints = body.get("transport_endpoints") or []
-        # deliver=false: open/reuse the channel only, skip the on-chain send.
-        deliver_wanted = body.get("deliver")
-        deliver_wanted = True if deliver_wanted is None else bool(deliver_wanted)
-        # channel=false: on-chain delivery only, no channel open (fallback when
-        # the peer cannot complete an inbound channel open).
-        open_channel = body.get("channel")
-        open_channel = True if open_channel is None else bool(open_channel)
-        steps = []
 
-        # Clamp first, then validate: RLN cannot carry a push above capacity, and
-        # the opener keeps sats for the asset HTLCs it sends.
-        requested_push_msat = push_msat
-        push_msat = clamp_push_msat(capacity_sat, push_msat)
-        build_openchannel_payload(peer, capacity_sat, "validate", asset_amount, push_msat)
-        if push_msat != requested_push_msat:
-            steps.append(
-                {
-                    "step": "push_msat-clamped",
-                    "requested": requested_push_msat,
-                    "used": push_msat,
-                }
-            )
+def _parse_bootstrap(body):
+    peer = str(body.get("peer_pubkey_and_opt_addr") or "").strip()
+    if "@" not in peer:
+        raise ValueError("peer_pubkey_and_opt_addr must be pubkey@host:port")
+    try:
+        capacity_sat = int(body.get("capacity_sat", 500000))
+        asset_amount = int(body.get("asset_amount", 2000000000))
+        push_msat = int(body.get("push_msat", 250000000))
+    except (TypeError, ValueError):
+        raise ValueError(
+            "capacity_sat, asset_amount and push_msat must be integers"
+        ) from None
+    deliver = body.get("deliver")
+    channel = body.get("channel")
+    return {
+        "peer": peer,
+        "capacity_sat": capacity_sat,
+        "asset_amount": asset_amount,
+        "push_msat": push_msat,
+        "recipient_id": str(body.get("recipient_id") or "").strip() or None,
+        "asset_id": pinned_asset_id(body.get("asset_id")),
+        "deliver": True if deliver is None else bool(deliver),
+        "channel": True if channel is None else bool(channel),
+    }
 
-        peer_channels = [
-            channel
-            for channel in rln_get("/listchannels").get("channels") or []
-            if str(channel.get("peer_pubkey") or "").lower() == pubkey.lower()
-        ]
+
+def _job_record(job_id, name, **fields):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if job is None:
+            return
+        fields.setdefault("recipient_id", job.get("recipient_id"))
+        fields.setdefault("asset_id", job.get("asset_id"))
+        job["steps"].append(make_step(name, **fields))
+        job["updated_at"] = time.time()
+        job["current_step"] = name
+        if fields.get("asset_id"):
+            job["asset_id"] = fields["asset_id"]
+
+
+def start_bootstrap_job(body, run=True):
+    """Create the job and answer 202 immediately; the work runs in a thread."""
+    parsed = _parse_bootstrap(body)
+    key = _job_key(parsed)
+    with JOBS_LOCK:
+        running_id = ACTIVE_JOBS.get(key)
+        running = JOBS.get(running_id) if running_id else None
+        if running and running.get("state") == "running":
+            return 409, {
+                "ok": False,
+                "error": "bootstrap already running",
+                "job_id": running_id,
+                "recipient_id": parsed["recipient_id"],
+                "asset_id": running.get("asset_id") or parsed["asset_id"],
+                "state": "running",
+            }
+        _prune_jobs_locked()
+        job_id = uuid.uuid4().hex[:12]
+        JOBS[job_id] = {
+            "job_id": job_id,
+            "state": "running",
+            "steps": [],
+            "error": None,
+            "result": None,
+            "recipient_id": parsed["recipient_id"],
+            "asset_id": parsed["asset_id"],
+            "http_status": 202,
+            "current_step": None,
+            "started_at": time.time(),
+            "updated_at": time.time(),
+        }
+        ACTIVE_JOBS[key] = job_id
+    if run:
+        threading.Thread(
+            target=_run_bootstrap_job, args=(job_id, body, key), daemon=True
+        ).start()
+    return 202, {
+        "ok": True,
+        "accepted": True,
+        "job_id": job_id,
+        "recipient_id": parsed["recipient_id"],
+        "asset_id": parsed["asset_id"],
+        "state": "running",
+    }
+
+
+def get_job(job_id):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if job is None:
+            return None
+        snapshot = dict(job)
+        snapshot["steps"] = [dict(entry) for entry in job["steps"]]
+        snapshot["error"] = dict(job["error"]) if job.get("error") else None
+        return snapshot
+
+
+def _run_bootstrap_job(job_id, body, key):
+    recipient_id = str(body.get("recipient_id") or "").strip()
+
+    def record(name, **fields):
+        _job_record(job_id, name, **fields)
+
+    try:
+        with _job_key_lock(key):
+            result = bootstrap_work(body, record)
+        with JOBS_LOCK:
+            job = JOBS.get(job_id)
+            if job:
+                job.update(
+                    state="done",
+                    result=result,
+                    http_status=200,
+                    current_step="done",
+                    updated_at=time.time(),
+                )
+    except BootstrapFailure as exc:
+        traceback.print_exc()
+        print(
+            f"bootstrap {job_id} failed for recipient {recipient_id}: "
+            f"{exc.step}: {exc.reason}",
+            flush=True,
+        )
+        with JOBS_LOCK:
+            job = JOBS.get(job_id)
+            if job:
+                job.update(
+                    state="failed",
+                    http_status=502,
+                    error={
+                        "step": exc.step,
+                        "reason": exc.reason,
+                        "rln_status": exc.rln_status,
+                        "rln_body": exc.rln_body,
+                    },
+                    current_step=exc.step,
+                    updated_at=time.time(),
+                )
+    except Exception as exc:  # noqa: BLE001
+        traceback.print_exc()
+        print(
+            f"bootstrap {job_id} failed for recipient {recipient_id}: "
+            f"{type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        status, detail = _rln_error(exc) if isinstance(exc, RuntimeError) else (None, str(exc))
+        with JOBS_LOCK:
+            job = JOBS.get(job_id)
+            if job:
+                job.update(
+                    state="failed",
+                    http_status=502,
+                    error={
+                        "step": job.get("current_step") or "bootstrap",
+                        "reason": str(exc),
+                        "rln_status": status,
+                        "rln_body": detail,
+                    },
+                    updated_at=time.time(),
+                )
+    finally:
+        with JOBS_LOCK:
+            if ACTIVE_JOBS.get(key) == job_id:
+                ACTIVE_JOBS.pop(key, None)
+
+
+def bootstrap_work(body, record):
+    """Runs one bootstrap; raises BootstrapFailure/AssetBusy on failure."""
+    peer = str(body.get("peer_pubkey_and_opt_addr") or "").strip()
+    if "@" not in peer:
+        raise ValueError("peer_pubkey_and_opt_addr must be pubkey@host:port")
+    pubkey = peer.split("@", 1)[0]
+    ticker = str(body.get("ticker") or "USDM").strip() or "USDM"
+    try:
+        capacity_sat = int(body.get("capacity_sat", 500000))
+        asset_amount = int(body.get("asset_amount", 2000000000))
+        push_msat = int(body.get("push_msat", 250000000))
+    except (TypeError, ValueError):
+        raise ValueError(
+            "capacity_sat, asset_amount and push_msat must be integers"
+        ) from None
+    recipient_id = str(body.get("recipient_id") or "").strip() or None
+    transport_endpoints = body.get("transport_endpoints") or []
+    deliver_wanted = body.get("deliver")
+    deliver_wanted = True if deliver_wanted is None else bool(deliver_wanted)
+    open_channel = body.get("channel")
+    open_channel = True if open_channel is None else bool(open_channel)
+    pin = pinned_asset_id(body.get("asset_id"))
+
+    requested_push_msat = push_msat
+    push_msat = clamp_push_msat(capacity_sat, push_msat)
+    build_openchannel_payload(peer, capacity_sat, "validate", asset_amount, push_msat)
+    if push_msat != requested_push_msat:
+        record("push_msat-clamped", requested=requested_push_msat, used=push_msat)
+    record("start", asset_id=pin)
+
+    def resolve_asset(peer_channels):
         peer_asset_ids = {
             str(channel["asset_id"])
             for channel in peer_channels
             if channel.get("asset_id")
             and str(channel.get("status") or "") in ("Opened", "Opening")
         }
-        preferred_asset = str(body.get("asset_id") or "").strip() or None
-        asset_id, source, _ = prepare_usdm_asset(
-            asset_amount, ticker, peer_asset_ids, preferred_asset
+        asset_id, source, balance = prepare_usdm_asset(
+            asset_amount,
+            ticker,
+            peer_asset_ids,
+            pin,
         )
-        steps.append({"step": "asset", "asset_id": asset_id, "source": source})
+        record("asset", asset_id=asset_id, source=source, spendable=_spendable(balance))
+        return asset_id
 
-        deliveries = load_deliveries()
-
-        def deliver():
-            """Exactly one send per (asset, peer, blind invoice)."""
-            send_steps = []
-            code, body, transfer = deliver_asset(
-                asset_id,
-                asset_amount,
-                recipient_id,
-                transport_endpoints,
-                steps=send_steps,
-            )
-            steps.extend(send_steps)
-            if code == 200:
-                deliveries[delivery_key(asset_id, pubkey, recipient_id)] = {
-                    "status": code,
-                    "body": body,
-                }
-                save_deliveries(deliveries)
-                if str((transfer or {}).get("status") or "") != "Settled":
-                    settled, detail = refresh_until_settled(asset_id)
-                    steps.append({"step": "transfer-settled" if settled else "transfer-pending", "detail": detail})
-            return code, body
-
-        if not open_channel:
-            steps.append({"step": "channel-skipped"})
-            send_rgb_result = None
-            if recipient_id and deliver_wanted:
-                code, send_rgb_result = deliver()
-                if code != 200:
-                    self._json(
-                        502,
-                        {
-                            "ok": False,
-                            "error": _send_rgb_error(send_rgb_result),
-                            "asset_id": asset_id,
-                            "channel": None,
-                            "send_rgb": send_rgb_result,
-                            "steps": steps,
-                        },
-                    )
-                    return
-            self._json(
-                200,
-                {
-                    "ok": True,
-                    "asset_id": asset_id,
-                    "temporary_channel_id": None,
-                    "channel": None,
-                    "delivered": send_rgb_result is not None,
-                    "send_rgb": send_rgb_result,
-                    "steps": steps,
-                },
-            )
-            return
-
-        # Idempotent: one RGB channel per peer+asset while it is Opened/Opening.
-        # Closed/Cancelled fall through and open a fresh channel.
-        existing = _channel_for(peer_channels, pubkey, asset_id)
-        if channel_reusable(existing):
-            steps.append({"step": "channel-exists", "status": existing.get("status")})
-            temporary_id = existing.get("channel_id")
-            if recipient_id and not deliver_wanted:
-                self._json(
-                    200,
-                    {
-                        "ok": True,
-                        "reused": True,
-                        "delivered": False,
-                        "asset_id": asset_id,
-                        "temporary_channel_id": temporary_id,
-                        "channel": existing,
-                        "send_rgb": None,
-                        "steps": steps,
-                    },
-                )
-                return
-            channel = existing
-            if str(channel.get("status") or "") != "Opened":
-                channel = wait_for_opened(pubkey, asset_id, channel)
-                steps.append(
-                    {"step": "channel-status", "status": channel.get("status") if channel else None}
-                )
-            send_rgb_result = None
-            if recipient_id:
-                # On-chain delivery does not depend on the channel being Opened:
-                # the peer may still be converging, so deliver now and let the
-                # channel finish in the background.
-                balance = rln("/assetbalance", {"asset_id": asset_id}, 30)
-                if _spendable(balance) < asset_amount:
-                    self._json(
-                        502,
-                        {
-                            "ok": False,
-                            "error": f"insufficient asset balance: {_spendable(balance)} < {asset_amount} required",
-                            "asset_id": asset_id,
-                            "temporary_channel_id": temporary_id,
-                            "channel": channel,
-                            "send_rgb": None,
-                            "steps": steps,
-                        },
-                    )
-                    return
-                code, send_rgb_result = deliver()
-                if code != 200:
-                    self._json(
-                        502,
-                        {
-                            "ok": False,
-                            "error": _send_rgb_error(send_rgb_result),
-                            "asset_id": asset_id,
-                            "temporary_channel_id": temporary_id,
-                            "channel": channel,
-                            "send_rgb": send_rgb_result,
-                            "steps": steps,
-                        },
-                    )
-                    return
-            self._json(
-                200,
-                {
-                    "ok": True,
-                    "reused": True,
-                    "delivered": bool(recipient_id and send_rgb_result is not None),
-                    "asset_id": asset_id,
-                    "temporary_channel_id": temporary_id,
-                    "channel": channel,
-                    "send_rgb": send_rgb_result,
-                    "steps": steps,
-                },
-            )
-            return
-
-        ensure_colored_spendable(capacity_sat, steps)
-
-        create_channel_utxo(capacity_sat)
-        payload = build_openchannel_payload(
-            peer, capacity_sat, asset_id, asset_amount, push_msat
+    def deliver(asset_id):
+        send_steps = []
+        code, send_body, transfer = deliver_asset(
+            asset_id,
+            asset_amount,
+            recipient_id,
+            transport_endpoints,
+            steps=send_steps,
         )
-        try:
-            opened = rln("/openchannel", payload, 60)
-        except RuntimeError as exc:
-            if "NoAvailableUtxos" not in str(exc):
-                raise
-            create_channel_utxo(capacity_sat)
-            opened = rln("/openchannel", payload, 60)
-        temporary_id = opened.get("temporary_channel_id")
-        steps.append({"step": "openchannel", "temporary_channel_id": temporary_id})
+        for entry in send_steps:
+            fields = dict(entry)
+            name = fields.pop("step")
+            fields.pop("ts", None)
+            record(name, **fields)
+        if code != 200:
+            raise BootstrapFailure(
+                "sendrgb", _send_rgb_error(send_body), code, send_body
+            )
+        if transfer is not None:
+            remember_delivery(asset_id, pubkey, recipient_id, transfer)
+        if str((transfer or {}).get("status") or "") != "Settled":
+            settled, detail = refresh_until_settled(asset_id)
+            record("transfer-settled" if settled else "transfer-pending", detail=detail)
+        return send_body
 
-        # Reference poll: wait for status "Opened". Mining here is the regtest
-        # stand-in for the external miner the reference environment runs.
-        deadline = time.time() + 120
-        channel = None
-        while time.time() < deadline:
-            channels = rln_get("/listchannels").get("channels") or []
-            channel = _channel_for(channels, pubkey, asset_id)
-            if channel and channel.get("status") == "Opened":
-                break
-            mine_blocks(1)
-            time.sleep(1)
-        steps.append(
-            {"step": "channel-status", "status": channel.get("status") if channel else None}
-        )
-        # The channel may still be Opening (the peer has not completed the
-        # handshake). The on-chain delivery is independent of it, so deliver
-        # anyway and report the channel state with the result.
-
-        send_rgb_result = None
+    asset_id = pin
+    if not open_channel:
+        record("channel-skipped", asset_id=asset_id)
+        send_body = None
         if recipient_id and deliver_wanted:
-            code, send_rgb_result = deliver()
-            if code != 200:
-                self._json(
-                    502,
-                    {
-                        "ok": False,
-                        "error": _send_rgb_error(send_rgb_result),
-                        "asset_id": asset_id,
-                        "temporary_channel_id": temporary_id,
-                        "channel": channel,
-                        "send_rgb": send_rgb_result,
-                        "steps": steps,
-                    },
-                )
-                return
+            asset_id = resolve_asset([])
+            send_body = deliver(asset_id)
+        return {
+            "ok": True,
+            "asset_id": asset_id,
+            "temporary_channel_id": None,
+            "channel": None,
+            "delivered": send_body is not None,
+            "send_rgb": send_body,
+        }
 
-        self._json(
-            200,
-            {
+    peer_channels = [
+        channel
+        for channel in rln_get("/listchannels").get("channels") or []
+        if str(channel.get("peer_pubkey") or "").lower() == pubkey.lower()
+    ]
+    asset_id = resolve_asset(peer_channels)
+
+    # Idempotent: one RGB channel per peer+asset while it is Opened/Opening.
+    # Closed/Cancelled fall through and open a fresh channel.
+    existing = _channel_for(peer_channels, pubkey, asset_id)
+    if channel_reusable(existing):
+        record("channel-exists", status=existing.get("status"))
+        temporary_id = existing.get("channel_id")
+        if recipient_id and not deliver_wanted:
+            return {
                 "ok": True,
-                "delivered": bool(recipient_id and send_rgb_result is not None),
+                "reused": True,
+                "delivered": False,
                 "asset_id": asset_id,
                 "temporary_channel_id": temporary_id,
-                "channel": channel,
-                "send_rgb": send_rgb_result,
-                "steps": steps,
-            },
-        )
+                "channel": existing,
+                "send_rgb": None,
+            }
+        channel = existing
+        if str(channel.get("status") or "") != "Opened":
+            channel = wait_for_opened(pubkey, asset_id, channel)
+            record(
+                "channel-status",
+                status=channel.get("status") if channel else None,
+            )
+        send_body = None
+        if recipient_id:
+            balance = rln("/assetbalance", {"asset_id": asset_id}, 30)
+            if _spendable(balance) < asset_amount:
+                raise RuntimeError(
+                    f"insufficient asset balance: {_spendable(balance)} < {asset_amount} required"
+                )
+            send_body = deliver(asset_id)
+        return {
+            "ok": True,
+            "reused": True,
+            "delivered": bool(recipient_id and send_body is not None),
+            "asset_id": asset_id,
+            "temporary_channel_id": temporary_id,
+            "channel": channel,
+            "send_rgb": send_body,
+        }
+
+    ensure_colored_spendable(capacity_sat, record)
+
+    create_channel_utxo(capacity_sat)
+    payload = build_openchannel_payload(
+        peer, capacity_sat, asset_id, asset_amount, push_msat
+    )
+    try:
+        opened = rln("/openchannel", payload, 60)
+    except RuntimeError as exc:
+        if "NoAvailableUtxos" not in str(exc):
+            raise
+        create_channel_utxo(capacity_sat)
+        opened = rln("/openchannel", payload, 60)
+    temporary_id = opened.get("temporary_channel_id")
+    record("openchannel", temporary_channel_id=temporary_id)
+
+    # Reference poll: wait for status "Opened". Mining here is the regtest
+    # stand-in for the external miner the reference environment runs.
+    deadline = time.time() + 120
+    channel = None
+    while time.time() < deadline:
+        channels = rln_get("/listchannels").get("channels") or []
+        channel = _channel_for(channels, pubkey, asset_id)
+        if channel and channel.get("status") == "Opened":
+            break
+        mine_blocks(1)
+        time.sleep(1)
+    record("channel-status", status=channel.get("status") if channel else None)
+
+    send_body = None
+    if recipient_id and deliver_wanted:
+        send_body = deliver(asset_id)
+
+    return {
+        "ok": True,
+        "delivered": bool(recipient_id and send_body is not None),
+        "asset_id": asset_id,
+        "temporary_channel_id": temporary_id,
+        "channel": channel,
+        "send_rgb": send_body,
+    }
+
+
+class Handler(BaseHTTPRequestHandler):
+    def _handle_bootstrap(self, body):
+        try:
+            status, payload = start_bootstrap_job(body)
+        except ValueError as exc:
+            self._json(400, {"error": str(exc)})
+            return
+        self._json(status, payload)
 
     def _cors(self):
         self.send_header("access-control-allow-origin", "*")
@@ -825,6 +986,14 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        if self.path.startswith("/lsp/bootstrap/"):
+            job_id = self.path.split("?", 1)[0].rsplit("/", 1)[-1]
+            job = get_job(job_id)
+            if job is None:
+                self._json(404, {"error": "unknown job"})
+            else:
+                self._json(200, job)
+            return
         if self.path.startswith("/lspinfo") or self.path.startswith("/lsp/info"):
             with urllib.request.urlopen("http://127.0.0.1:3101/nodeinfo", timeout=5) as resp:
                 self._json(200, json.loads(resp.read()))
