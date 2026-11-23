@@ -18,7 +18,10 @@ WALLET = "bdk-test"
 RLN = "http://127.0.0.1:3101"
 USDM_CACHE = "/tmp/metevo_usdm_asset.json"
 DELIVERIES = "/tmp/metevo_bootstrap_deliveries.json"
+PEER_LEDGER = "/tmp/metevo_peer_ledger.json"
 ISSUE_LOCK = threading.Lock()
+# Serialises every read-modify-write of the per-peer ledger.
+BOOTSTRAP_LOCK = threading.RLock()
 MIN_CHANNEL_CAPACITY_SAT = 30050
 MAX_CHANNEL_CAPACITY_SAT = 10000000
 # RGB needs the receiver's ack, then a broadcast, then min_confirmations=1.
@@ -578,6 +581,255 @@ def remember_delivery(asset_id, peer_pubkey, recipient_id, transfer):
         pass
 
 
+def load_peer_ledger():
+    """Per-peer bootstrap ledger; the RLN APIs stay the source of truth."""
+    try:
+        with open(PEER_LEDGER, encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_peer_ledger(ledger):
+    # Atomic replace: a crash mid-write must not corrupt the ledger.
+    tmp = f"{PEER_LEDGER}.tmp"
+    with open(tmp, "w", encoding="utf-8") as handle:
+        json.dump(ledger, handle)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, PEER_LEDGER)
+
+
+def _peer_key(pubkey):
+    return str(pubkey or "").strip().lower()
+
+
+def _channel_record(channel, previous=None):
+    previous = previous if isinstance(previous, dict) else {}
+    row = {
+        "channel_id": channel.get("channel_id") or previous.get("channel_id"),
+        "status": channel.get("status"),
+        "funding_txid": channel.get("funding_txid") or previous.get("funding_txid"),
+    }
+    capacity = channel.get("capacity_sat") or previous.get("capacity_sat")
+    if capacity is not None:
+        row["capacity_sat"] = int(capacity)
+    return row
+
+
+def _save_peer_mutation(pubkey, asset_id=None, amount=None, channel=None, delivery=None):
+    """Read-modify-write one peer record under the bootstrap lock."""
+    key = _peer_key(pubkey)
+    if not key:
+        return None
+    with BOOTSTRAP_LOCK:
+        ledger = load_peer_ledger()
+        record = ledger.get(key)
+        if not isinstance(record, dict):
+            record = {
+                "asset_id": None,
+                "amount": 0,
+                "deliveries": [],
+                "channel": None,
+                "updated_at": 0,
+            }
+        record["deliveries"] = list(record.get("deliveries") or [])
+        if asset_id:
+            record["asset_id"] = str(asset_id)
+        if amount:
+            record["amount"] = int(amount)
+        if channel is not None:
+            record["channel"] = _channel_record(channel, record.get("channel"))
+            if not record.get("asset_id") and channel.get("asset_id"):
+                record["asset_id"] = str(channel["asset_id"])
+        if delivery is not None:
+            recipient_id = str(delivery.get("recipient_id") or "")
+            record["deliveries"] = [
+                row
+                for row in record["deliveries"]
+                if not (
+                    recipient_id
+                    and str(row.get("recipient_id") or "") == recipient_id
+                )
+            ] + [
+                {
+                    "recipient_id": recipient_id,
+                    "txid": delivery.get("txid"),
+                    "status": delivery.get("status"),
+                    "at": int(time.time()),
+                }
+            ]
+        record["updated_at"] = int(time.time())
+        ledger[key] = record
+        try:
+            save_peer_ledger(ledger)
+        except OSError:
+            pass
+        return record
+
+
+def reconcile_peer(pubkey, asset_id=None):
+    """Return (record, channel, transfers) after reconciling with RLN.
+
+    The ledger is a cache, never the truth: recorded statuses are refreshed
+    from /listchannels and /listtransfers. An unreachable RLN leaves the
+    record untouched. `record` is None for a peer the ledger has never seen.
+    """
+    key = _peer_key(pubkey)
+    with BOOTSTRAP_LOCK:
+        saved = load_peer_ledger().get(key)
+        record = dict(saved) if isinstance(saved, dict) else None
+        if record is not None:
+            record["deliveries"] = [
+                dict(row) for row in record.get("deliveries") or []
+            ]
+    wanted = str(asset_id or (record or {}).get("asset_id") or "").strip()
+
+    channel = None
+    try:
+        channels = rln_get("/listchannels").get("channels") or []
+    except Exception as exc:  # noqa: BLE001
+        channels = None
+        print(f"peer reconcile: /listchannels failed: {exc}", flush=True)
+    if channels is not None:
+        peer_channels = [
+            row for row in channels if _peer_key(row.get("peer_pubkey")) == key
+        ]
+        if wanted:
+            channel = _channel_for(peer_channels, key, wanted)
+        else:
+            channel = next(
+                (row for row in peer_channels if row.get("asset_id")), None
+            )
+        if channel and record is not None:
+            record["channel"] = _channel_record(channel, record.get("channel"))
+            if not record.get("asset_id") and channel.get("asset_id"):
+                record["asset_id"] = str(channel["asset_id"])
+
+    transfers = None
+    if wanted:
+        try:
+            transfers = list_transfers(wanted).get("transfers") or []
+        except Exception as exc:  # noqa: BLE001
+            print(f"peer reconcile: /listtransfers failed: {exc}", flush=True)
+    if transfers is not None and record is not None:
+        for row in record.get("deliveries") or []:
+            rows = matching_transfers(transfers, row.get("recipient_id"))
+            if rows:
+                row["status"] = rows[0].get("status")
+                row["txid"] = rows[0].get("txid")
+
+    if record is not None:
+        record["updated_at"] = int(time.time())
+        with BOOTSTRAP_LOCK:
+            ledger = load_peer_ledger()
+            ledger[key] = record
+            try:
+                save_peer_ledger(ledger)
+            except OSError:
+                pass
+    return record, channel, transfers
+
+
+def _lsp_balance(asset_id):
+    if not asset_id:
+        return {"settled": 0, "future": 0, "spendable": 0}
+    try:
+        balance = rln("/assetbalance", {"asset_id": asset_id}, 30) or {}
+    except Exception:  # noqa: BLE001
+        balance = {}
+    return {
+        "settled": int(balance.get("settled") or 0),
+        "future": int(balance.get("future") or 0),
+        "spendable": int(balance.get("spendable") or 0),
+    }
+
+
+def existing_bootstrap(peer_pubkey, asset_id=None, recipient_id=None, amount=None):
+    """200 payload when this peer was already funded; None otherwise.
+
+    Read-only: a repeated POST must cost nothing. Provisioned means an
+    Opened/Opening channel for the peer, a Settled recorded delivery, or a
+    non-Failed transfer for the pinned asset on one of the known recipients.
+    """
+    try:
+        record, channel, transfers = reconcile_peer(peer_pubkey, asset_id)
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"bootstrap existing-check failed: {type(exc).__name__}: {exc}",
+            flush=True,
+        )
+        return None
+
+    channel_ok = channel_reusable(channel)
+    delivery = None
+    recorded = [
+        str(row.get("recipient_id") or "")
+        for row in (record or {}).get("deliveries") or []
+    ]
+    for row in (record or {}).get("deliveries") or []:
+        if str(row.get("status") or "") == "Settled":
+            delivery = row
+            break
+    if delivery is None and transfers is not None:
+        for candidate in [recipient_id] + recorded:
+            rid = str(candidate or "").strip()
+            if not rid:
+                continue
+            rows = [
+                row
+                for row in matching_transfers(transfers, rid)
+                if str(row.get("status") or "") != "Failed"
+            ]
+            if rows:
+                delivery = {
+                    "recipient_id": rid,
+                    "txid": rows[0].get("txid"),
+                    "status": rows[0].get("status"),
+                }
+                break
+    if not (channel_ok or delivery):
+        return None
+
+    resolved = str(
+        asset_id
+        or (record or {}).get("asset_id")
+        or (channel or {}).get("asset_id")
+        or ""
+    ) or None
+    if delivery is not None:
+        delivery = {
+            "recipient_id": delivery.get("recipient_id"),
+            "txid": delivery.get("txid"),
+            "status": delivery.get("status"),
+        }
+    # Persist the live evidence so /lsp/peer and later repeats need no re-derive.
+    if channel is not None or delivery is not None:
+        _save_peer_mutation(
+            peer_pubkey, resolved, amount=amount, channel=channel, delivery=delivery
+        )
+    return {
+        "ok": True,
+        "existing": True,
+        "asset_id": resolved,
+        "channel": channel,
+        "delivered": bool(delivery or channel_ok),
+        "delivery": delivery,
+        "lsp_balance": _lsp_balance(resolved),
+        "steps": [
+            make_step(
+                "existing",
+                recipient_id=recipient_id,
+                asset_id=resolved,
+                http_status=200,
+                channel_status=(channel or {}).get("status"),
+                delivery_status=(delivery or {}).get("status"),
+            )
+        ],
+    }
+
+
 def deliver_asset(
     asset_id,
     amount,
@@ -710,11 +962,9 @@ def reuse_blocked(channel):
 
 
 def _job_key(parsed):
-    """One running job per (asset pin, recipient); peers may run in parallel."""
-    return (
-        pinned_asset_id(parsed.get("asset_id")) or "",
-        str(parsed.get("recipient_id") or parsed.get("peer") or "").strip().lower(),
-    )
+    """One running bootstrap per peer pubkey: no second channel, no second send."""
+    pubkey = _peer_key(str(parsed.get("peer") or "").split("@", 1)[0])
+    return pubkey or str(parsed.get("recipient_id") or "").strip().lower()
 
 
 def _job_key_lock(key):
@@ -774,8 +1024,17 @@ def _job_record(job_id, name, **fields):
 
 
 def start_bootstrap_job(body, run=True):
-    """Create the job and answer 202 immediately; the work runs in a thread."""
+    """Answer 200 when the peer is already funded, else 202 + background job."""
     parsed = _parse_bootstrap(body)
+    # Idempotent per peer pubkey: a repeat costs two reads and no RLN writes.
+    existing = existing_bootstrap(
+        str(parsed["peer"]).split("@", 1)[0],
+        parsed["asset_id"],
+        parsed["recipient_id"],
+        parsed["asset_amount"],
+    )
+    if existing is not None:
+        return 200, existing
     key = _job_key(parsed)
     with JOBS_LOCK:
         running_id = ACTIVE_JOBS.get(key)
@@ -985,11 +1244,16 @@ def bootstrap_work(body, record):
             )
         if transfer is not None:
             remember_delivery(asset_id, pubkey, recipient_id, transfer)
+        row = transfer
         if str((transfer or {}).get("status") or "") != "Settled":
             settled, detail = refresh_until_settled(
                 asset_id, recipient_id, record=record
             )
             record("transfer-settled" if settled else "transfer-pending", **detail)
+            row = adopt_transfer(asset_id, recipient_id) or transfer
+        # Persist the real status: a pending transfer is recorded as pending.
+        if row:
+            _save_peer_mutation(pubkey, asset_id, asset_amount, delivery=row)
         return send_body
 
     asset_id = pin
@@ -1040,6 +1304,7 @@ def bootstrap_work(body, record):
                 "channel-status",
                 status=channel.get("status") if channel else None,
             )
+        _save_peer_mutation(pubkey, asset_id, asset_amount, channel=channel or existing)
         send_body = None
         if recipient_id:
             def require_spendable():
@@ -1088,6 +1353,8 @@ def bootstrap_work(body, record):
         mine_blocks(1)
         time.sleep(1)
     record("channel-status", status=channel.get("status") if channel else None)
+    if channel:
+        _save_peer_mutation(pubkey, asset_id, asset_amount, channel=channel)
 
     send_body = None
     if recipient_id and deliver_wanted:
@@ -1143,6 +1410,42 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(404, {"error": "unknown job"})
             else:
                 self._json(200, job)
+            return
+        if route.startswith("/lsp/peer/"):
+            pubkey = route[len("/lsp/peer/") :].strip()
+            if not pubkey or "/" in pubkey:
+                self._json(404, {"error": "unknown peer"})
+                return
+            try:
+                record, channel, transfers = reconcile_peer(pubkey)
+            except Exception as exc:  # noqa: BLE001
+                self._json(
+                    200,
+                    {
+                        "ok": False,
+                        "peer": pubkey,
+                        "record": None,
+                        "channel": None,
+                        "transfers": None,
+                        "lsp_balance": None,
+                        "error": str(exc),
+                    },
+                )
+                return
+            if record is None:
+                self._json(404, {"error": "unknown peer"})
+                return
+            self._json(
+                200,
+                {
+                    "ok": True,
+                    "peer": pubkey,
+                    "record": record,
+                    "channel": channel,
+                    "transfers": transfers,
+                    "lsp_balance": _lsp_balance(record.get("asset_id")),
+                },
+            )
             return
         if self.path.startswith("/lspinfo") or self.path.startswith("/lsp/info"):
             with urllib.request.urlopen("http://127.0.0.1:3101/nodeinfo", timeout=5) as resp:

@@ -144,6 +144,7 @@ class StubMixin(unittest.TestCase):
         "remember_delivery",
         "USDM_CACHE",
         "DELIVERIES",
+        "PEER_LEDGER",
     )
     ENV = ("METEVO_PINNED_ASSET_ID", "REGTEST_AUTOMINE")
 
@@ -153,6 +154,9 @@ class StubMixin(unittest.TestCase):
             for name in self.PATCHED
             if hasattr(helper, name)
         }
+        # Never touch the real ledger from a test.
+        self._ledger_path = tempfile.mktemp(prefix="metevo-test-ledger-", suffix=".json")
+        helper.PEER_LEDGER = self._ledger_path
         self._env = {name: os.environ.get(name) for name in self.ENV}
         for name in ("JOBS", "ACTIVE_JOBS", "JOB_KEY_LOCKS"):
             registry = getattr(helper, name, None)
@@ -162,6 +166,11 @@ class StubMixin(unittest.TestCase):
     def tearDown(self):
         for name, value in self._saved.items():
             setattr(helper, name, value)
+        for path in (self._ledger_path, f"{self._ledger_path}.tmp"):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
         for name, value in self._env.items():
             if value is None:
                 os.environ.pop(name, None)
@@ -307,6 +316,12 @@ class DeliveryConcurrencyTest(StubMixin):
 
 
 class BootstrapJobTest(StubMixin):
+    def setUp(self):
+        super().setUp()
+        # The idempotency pre-check reads RLN; keep tests off the live node.
+        helper.rln = FakeTransfers([])
+        helper.rln_get = lambda path, timeout=30: {"channels": []}
+
     def _body(self, recipient=RECIPIENT):
         return {
             "peer_pubkey_and_opt_addr": PEER,
@@ -346,7 +361,7 @@ class BootstrapJobTest(StubMixin):
         for field in ("job_id", "recipient_id", "asset_id", "started_at", "updated_at", "steps"):
             self.assertIn(field, job)
 
-    def test_identical_concurrent_requests_conflict_only_same_recipient(self):
+    def test_identical_concurrent_requests_conflict_per_peer(self):
         entered = threading.Event()
         release = threading.Event()
 
@@ -361,12 +376,16 @@ class BootstrapJobTest(StubMixin):
         self.assertEqual(status, 202)
         self.assertTrue(entered.wait(2))
         try:
+            # A second invoice for the same peer must not race the first job.
             status_same, body_same = helper.start_bootstrap_job(self._body())
             self.assertEqual(status_same, 409)
             self.assertEqual(body_same["job_id"], first["job_id"])
 
             status_other, other = helper.start_bootstrap_job(
-                self._body("bcrt:utxob:two")
+                {
+                    **self._body("bcrt:utxob:two"),
+                    "peer_pubkey_and_opt_addr": "02deadbeef@127.0.0.1:9802",
+                }
             )
             self.assertEqual(status_other, 202)
             self.assertNotEqual(other["job_id"], first["job_id"])
@@ -749,6 +768,225 @@ class ReusedChannelAdoptTest(StubMixin):
         self.assertEqual(sent, [], "asset_busy must fire before a send")
 
 
+class PeerBootstrapIdempotencyTest(StubMixin):
+    """A repeat bootstrap for one peer costs two reads and never sends again."""
+
+    PUBKEY = PEER.split("@")[0]
+
+    def setUp(self):
+        super().setUp()
+        os.environ["METEVO_PINNED_ASSET_ID"] = ASSET
+        self.channels = []
+        self.transfers = []
+        self.events = []
+        self.sends = 0
+
+        def fake_rln(path, payload=None, timeout=60, tolerate_allocation=False):
+            self.events.append(path)
+            if path == "/listtransfers":
+                return {"transfers": [dict(row) for row in self.transfers]}
+            if path == "/refreshtransfers":
+                return {}
+            if path == "/assetbalance":
+                return {"settled": 10**9, "future": 10**9, "spendable": 10**9}
+            raise AssertionError(f"unexpected rln call: {path}")
+
+        helper.rln = fake_rln
+        helper.rln_get = lambda path, timeout=30: {
+            "channels": [dict(row) for row in self.channels]
+        }
+        helper.mine_blocks = lambda count: None
+        helper.remember_delivery = lambda *args, **kwargs: None
+
+    def _settle_ledger(self, txid="tx-settled", status="Settled"):
+        helper._save_peer_mutation(
+            self.PUBKEY,
+            ASSET,
+            2000000000,
+            delivery={"recipient_id": RECIPIENT, "txid": txid, "status": status},
+        )
+
+    def test_repeat_with_settled_delivery_is_existing_with_zero_sends(self):
+        self._settle_ledger()
+
+        payload = helper.existing_bootstrap(
+            self.PUBKEY, ASSET, RECIPIENT, amount=2000000000
+        )
+
+        self.assertTrue(payload["existing"])
+        self.assertTrue(payload["delivered"])
+        self.assertEqual(payload["asset_id"], ASSET)
+        self.assertEqual(payload["delivery"]["txid"], "tx-settled")
+        self.assertEqual(payload["lsp_balance"]["settled"], 10**9)
+        self.assertNotIn("/sendrgb", self.events)
+        self.assertNotIn("/openchannel", self.events)
+        self.assertEqual(helper.load_peer_ledger()[self.PUBKEY]["amount"], 2000000000)
+        self.assertEqual(
+            set(payload["delivery"]), {"recipient_id", "txid", "status"}
+        )
+
+    def test_repeat_with_opened_channel_is_existing_with_no_open_or_send(self):
+        self.channels = [
+            {
+                "peer_pubkey": self.PUBKEY,
+                "asset_id": ASSET,
+                "status": "Opened",
+                "channel_id": "chan-1",
+                "capacity_sat": 500000,
+                "funding_txid": "fund-1",
+            }
+        ]
+
+        payload = helper.existing_bootstrap(self.PUBKEY, ASSET, RECIPIENT)
+
+        self.assertTrue(payload["existing"])
+        self.assertTrue(payload["delivered"])
+        self.assertEqual(payload["channel"]["status"], "Opened")
+        self.assertNotIn("/sendrgb", self.events)
+        self.assertNotIn("/openchannel", self.events)
+
+    def test_opened_channel_is_recorded_for_the_peer(self):
+        self.channels = [
+            {
+                "peer_pubkey": self.PUBKEY,
+                "asset_id": ASSET,
+                "status": "Opened",
+                "channel_id": "chan-1",
+                "capacity_sat": 500000,
+            }
+        ]
+        helper._save_peer_mutation(self.PUBKEY, ASSET, 2000000000)
+
+        helper.reconcile_peer(self.PUBKEY, ASSET)
+
+        record = helper.load_peer_ledger()[self.PUBKEY]
+        self.assertEqual(record["channel"]["channel_id"], "chan-1")
+        self.assertEqual(record["channel"]["status"], "Opened")
+        self.assertEqual(record["channel"]["capacity_sat"], 500000)
+
+    def test_fresh_peer_runs_exactly_one_send(self):
+        self.assertIsNone(helper.existing_bootstrap(self.PUBKEY, ASSET, RECIPIENT))
+        helper.prepare_usdm_asset = lambda *args, **kwargs: (ASSET, "pinned", {})
+        helper.refresh_until_settled = lambda *args, **kwargs: (
+            True,
+            {"status": "Settled"},
+        )
+
+        def fake_send(asset_id, amount, recipient_id, transport_endpoints):
+            self.sends += 1
+            self.transfers.append(
+                {
+                    "idx": 11,
+                    "status": "Settled",
+                    "recipient_id": recipient_id,
+                    "kind": "Send",
+                    "txid": "tx-new",
+                }
+            )
+            return 200, {"txid": "tx-new"}
+
+        helper.send_rgb = fake_send
+        result = helper.bootstrap_work(
+            {
+                "peer_pubkey_and_opt_addr": PEER,
+                "recipient_id": RECIPIENT,
+                "channel": False,
+                "deliver": True,
+                "ticker": "USDM",
+                "asset_id": ASSET,
+            },
+            lambda name, **fields: None,
+        )
+
+        self.assertEqual(self.sends, 1)
+        self.assertTrue(result["delivered"])
+        record = helper.load_peer_ledger()[self.PUBKEY]
+        self.assertEqual(record["asset_id"], ASSET)
+        self.assertEqual(record["amount"], 2000000000)
+        self.assertEqual(record["deliveries"][0]["txid"], "tx-new")
+        self.assertEqual(record["deliveries"][0]["status"], "Settled")
+        # A repeat now answers from the ledger, not from a new send.
+        self.assertTrue(helper.existing_bootstrap(self.PUBKEY, ASSET, RECIPIENT)["existing"])
+        self.assertEqual(self.sends, 1)
+
+    def test_pending_transfer_counts_as_existing_and_is_not_resent(self):
+        self.transfers = [
+            {
+                "idx": 4,
+                "status": "WaitingCounterparty",
+                "recipient_id": RECIPIENT,
+                "kind": "Send",
+                "txid": "tx-pending",
+            }
+        ]
+
+        payload = helper.existing_bootstrap(self.PUBKEY, ASSET, RECIPIENT)
+
+        self.assertTrue(payload["existing"])
+        self.assertEqual(payload["delivery"]["status"], "WaitingCounterparty")
+        self.assertEqual(payload["delivery"]["txid"], "tx-pending")
+        self.assertNotIn("/sendrgb", self.events)
+
+    def test_failed_transfer_is_not_existing(self):
+        self.transfers = [
+            {
+                "idx": 5,
+                "status": "Failed",
+                "recipient_id": RECIPIENT,
+                "kind": "Send",
+                "txid": "tx-failed",
+            }
+        ]
+
+        self.assertIsNone(helper.existing_bootstrap(self.PUBKEY, ASSET, RECIPIENT))
+
+    def test_ledger_survives_a_restart(self):
+        self._settle_ledger(txid="tx-restart")
+        # A restart loses process memory only; the file is the ledger.
+        reloaded = helper.load_peer_ledger()
+        self.assertEqual(reloaded[self.PUBKEY]["deliveries"][0]["txid"], "tx-restart")
+        self.assertFalse(os.path.exists(f"{helper.PEER_LEDGER}.tmp"))
+
+    def test_concurrent_reposts_for_one_peer_send_once(self):
+        entered = threading.Event()
+        release = threading.Event()
+        sends = []
+
+        def slow_work(body, record):
+            entered.set()
+            release.wait(5)
+            sends.append(1)
+            return {"ok": True}
+
+        helper.bootstrap_work = slow_work
+        body = {
+            "peer_pubkey_and_opt_addr": PEER,
+            "recipient_id": RECIPIENT,
+            "channel": False,
+            "deliver": True,
+            "ticker": "USDM",
+            "asset_id": ASSET,
+        }
+        status_first, first = helper.start_bootstrap_job(body)
+        self.assertEqual(status_first, 202)
+        self.assertTrue(entered.wait(2))
+        try:
+            status_second, second = helper.start_bootstrap_job(
+                {**body, "recipient_id": "bcrt:utxob:second"}
+            )
+            self.assertEqual(status_second, 409)
+            self.assertEqual(second["job_id"], first["job_id"])
+        finally:
+            release.set()
+        deadline = time.time() + 3
+        while time.time() < deadline:
+            job = helper.get_job(first["job_id"])
+            if job and job.get("state") != "running":
+                break
+            time.sleep(0.01)
+        self.assertEqual(sends, [1], "one send for one peer")
+
+
 class ChannelOnlyAssetTest(StubMixin):
     def test_channel_false_deliver_false_still_resolves_asset(self):
         calls = []
@@ -833,6 +1071,37 @@ class RouteExactnessTest(StubMixin):
         status, body = self._post("/lsp/bootstrapX", {})
         self.assertEqual(status, 404)
         self.assertIn("error", body)
+
+    def test_peer_route_unknown_is_404(self):
+        helper.rln_get = lambda path, timeout=30: {"channels": []}
+        status, body = self._get("/lsp/peer/02deadbeef")
+        self.assertEqual(status, 404)
+        self.assertEqual(body, {"error": "unknown peer"})
+
+    def test_peer_route_reports_the_ledger_record(self):
+        helper.rln_get = lambda path, timeout=30: {"channels": []}
+        helper.rln = lambda *args, **kwargs: {
+            "transfers": [],
+            "settled": 7,
+            "future": 7,
+            "spendable": 7,
+        }
+        helper._save_peer_mutation(
+            "02abc",
+            ASSET,
+            5,
+            delivery={"recipient_id": RECIPIENT, "txid": "t9", "status": "Settled"},
+        )
+
+        status, body = self._get("/lsp/peer/02abc")
+
+        self.assertEqual(status, 200)
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["peer"], "02abc")
+        self.assertEqual(body["record"]["deliveries"][0]["txid"], "t9")
+        self.assertIsNone(body["channel"])
+        self.assertEqual(body["transfers"], [])
+        self.assertEqual(body["lsp_balance"]["settled"], 7)
 
     def test_unknown_job_is_404_json(self):
         status, body = self._get("/lsp/bootstrap/nope")
