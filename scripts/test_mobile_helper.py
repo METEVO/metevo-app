@@ -1,8 +1,12 @@
+import json
 import os
 import sys
+import tempfile
 import threading
 import time
 import unittest
+import urllib.error
+import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -129,7 +133,18 @@ class ReuseGateTest(unittest.TestCase):
 class StubMixin(unittest.TestCase):
     """Restore patched module globals and registry state after every test."""
 
-    PATCHED = ("rln", "send_rgb", "mine_blocks", "bootstrap_work")
+    PATCHED = (
+        "rln",
+        "rln_get",
+        "send_rgb",
+        "mine_blocks",
+        "bootstrap_work",
+        "prepare_usdm_asset",
+        "refresh_until_settled",
+        "remember_delivery",
+        "USDM_CACHE",
+        "DELIVERIES",
+    )
     ENV = ("METEVO_PINNED_ASSET_ID", "REGTEST_AUTOMINE")
 
     def setUp(self):
@@ -572,6 +587,257 @@ class StructuredStepTest(unittest.TestCase):
             },
         )
         self.assertIsInstance(entry["ts"], int)
+
+
+class EmptyRecipientTest(StubMixin):
+    def test_matching_transfers_rejects_blank_recipient(self):
+        rows = [
+            {
+                "idx": 1,
+                "status": "WaitingCounterparty",
+                "recipient_id": RECIPIENT,
+                "kind": "Send",
+            }
+        ]
+        self.assertEqual(helper.matching_transfers(rows, ""), [])
+        self.assertEqual(helper.matching_transfers(rows, "   "), [])
+        self.assertEqual(len(helper.matching_transfers(rows, RECIPIENT)), 1)
+
+
+class IssueRaceTest(StubMixin):
+    def setUp(self):
+        super().setUp()
+        self.cache = tempfile.mktemp(prefix="metevo-test-usdm-", suffix=".json")
+        helper.USDM_CACHE = self.cache
+        self.assets = {"nia": []}
+        self.issue_calls = 0
+        self.calls_lock = threading.Lock()
+
+    def tearDown(self):
+        try:
+            os.remove(self.cache)
+        except OSError:
+            pass
+        super().tearDown()
+
+    def test_concurrent_no_pin_resolves_issue_once(self):
+        def fake_rln(path, payload=None, timeout=60, tolerate_allocation=False):
+            if path == "/listassets":
+                return {"nia": [dict(row) for row in self.assets["nia"]]}
+            if path == "/createutxos":
+                return {}
+            if path == "/issueassetnia":
+                with self.calls_lock:
+                    self.issue_calls += 1
+                asset = {
+                    "asset_id": "rgb:issued",
+                    "ticker": "USDM",
+                    "precision": 8,
+                    "issued_supply": 10000000000,
+                }
+                self.assets["nia"].append(asset)
+                return {"asset": asset}
+            if path == "/assetbalance":
+                return {"spendable": 100, "future": 100, "offchain_outbound": 0}
+            if path == "/refreshtransfers":
+                return {}
+            raise AssertionError(f"unexpected rln call: {path}")
+
+        helper.rln = fake_rln
+        helper.mine_blocks = lambda count: None
+
+        results = []
+        results_lock = threading.Lock()
+
+        def worker():
+            asset_id, source, _balance = helper.prepare_usdm_asset(
+                100, channel=False
+            )
+            with results_lock:
+                results.append((asset_id, source))
+
+        threads = [threading.Thread(target=worker) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(5)
+
+        self.assertEqual(self.issue_calls, 1, "only one /issueassetnia")
+        self.assertEqual([row[0] for row in results], ["rgb:issued", "rgb:issued"])
+        self.assertEqual(len(results), 2)
+
+
+class ReusedChannelAdoptTest(StubMixin):
+    def _run(self, transfers, spendable, sent):
+        def fake_rln(path, payload=None, timeout=30, tolerate_allocation=False):
+            if path == "/listtransfers":
+                return {"transfers": [dict(row) for row in transfers]}
+            if path == "/assetbalance":
+                return {
+                    "spendable": spendable,
+                    "future": spendable,
+                    "offchain_outbound": 0,
+                }
+            if path == "/refreshtransfers":
+                return {}
+            raise AssertionError(f"unexpected rln call: {path}")
+
+        helper.rln = fake_rln
+        helper.rln_get = lambda path, timeout=30: {
+            "channels": [
+                {
+                    "peer_pubkey": PEER.split("@")[0],
+                    "asset_id": ASSET,
+                    "status": "Opened",
+                    "channel_id": "chan-1",
+                }
+            ]
+        }
+        helper.prepare_usdm_asset = lambda *args, **kwargs: (ASSET, "pinned", {})
+        helper.refresh_until_settled = lambda *args, **kwargs: (
+            True,
+            {"status": "Settled"},
+        )
+        helper.remember_delivery = lambda *args, **kwargs: None
+
+        def fake_send(*_args, **_kwargs):
+            sent.append(1)
+            return 200, {"txid": "new"}
+
+        helper.send_rgb = fake_send
+        return helper.bootstrap_work(
+            {
+                "peer_pubkey_and_opt_addr": PEER,
+                "recipient_id": RECIPIENT,
+                "channel": True,
+                "deliver": True,
+                "ticker": "USDM",
+                "asset_id": ASSET,
+            },
+            lambda name, **fields: None,
+        )
+
+    def test_existing_transfer_wins_before_spendable_gate(self):
+        sent = []
+        result = self._run(
+            transfers=[
+                {
+                    "idx": 5,
+                    "status": "WaitingConfirmations",
+                    "recipient_id": RECIPIENT,
+                    "kind": "Send",
+                    "txid": "old",
+                }
+            ],
+            spendable=0,
+            sent=sent,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["delivered"])
+        self.assertTrue(result["send_rgb"]["adopted"])
+        self.assertEqual(result["send_rgb"]["txid"], "old")
+        self.assertEqual(sent, [], "adopted delivery must not send")
+
+    def test_no_existing_transfer_gates_on_spendable(self):
+        sent = []
+        with self.assertRaises(helper.AssetBusy) as caught:
+            self._run(transfers=[], spendable=0, sent=sent)
+
+        self.assertEqual(caught.exception.payload["spendable"], 0)
+        self.assertEqual(caught.exception.payload["asset_id"], ASSET)
+        self.assertEqual(sent, [], "asset_busy must fire before a send")
+
+
+class ChannelOnlyAssetTest(StubMixin):
+    def test_channel_false_deliver_false_still_resolves_asset(self):
+        calls = []
+
+        def fake_prepare(*args, **kwargs):
+            calls.append((args, kwargs))
+            return ASSET, "listed", {"spendable": 1}
+
+        helper.prepare_usdm_asset = fake_prepare
+        result = helper.bootstrap_work(
+            {
+                "peer_pubkey_and_opt_addr": PEER,
+                "channel": False,
+                "deliver": False,
+                "ticker": "USDM",
+            },
+            lambda name, **fields: None,
+        )
+
+        self.assertEqual(result["asset_id"], ASSET)
+        self.assertFalse(result["delivered"])
+        self.assertEqual(len(calls), 1)
+
+    def test_pin_is_returned_without_resolution(self):
+        helper.prepare_usdm_asset = lambda *args, **kwargs: self.fail(
+            "pin must not re-resolve"
+        )
+        result = helper.bootstrap_work(
+            {
+                "peer_pubkey_and_opt_addr": PEER,
+                "channel": False,
+                "deliver": False,
+                "ticker": "USDM",
+                "asset_id": ASSET,
+            },
+            lambda name, **fields: None,
+        )
+
+        self.assertEqual(result["asset_id"], ASSET)
+
+
+class RouteExactnessTest(StubMixin):
+    def setUp(self):
+        super().setUp()
+        self.server = helper.ThreadingHTTPServer(("127.0.0.1", 0), helper.Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        super().tearDown()
+
+    def _post(self, path, body):
+        req = urllib.request.Request(
+            self.base + path,
+            data=json.dumps(body).encode(),
+            headers={"content-type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read())
+
+    def _get(self, path):
+        try:
+            with urllib.request.urlopen(self.base + path, timeout=5) as resp:
+                return resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read())
+
+    def test_sendrgb_blank_recipient_is_400(self):
+        status, body = self._post(
+            "/lsp/sendrgb",
+            {"asset_id": ASSET, "amount": 1, "recipient_id": "   "},
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("recipient_id", body["error"])
+
+    def test_bootstrap_suffix_is_not_the_bootstrap_route(self):
+        status, body = self._post("/lsp/bootstrapX", {})
+        self.assertEqual(status, 404)
+        self.assertIn("error", body)
+
+    def test_unknown_job_is_404_json(self):
+        status, body = self._get("/lsp/bootstrap/nope")
+        self.assertEqual(status, 404)
+        self.assertEqual(body, {"error": "unknown job"})
 
 
 if __name__ == "__main__":

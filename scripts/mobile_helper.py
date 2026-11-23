@@ -138,12 +138,32 @@ def _asset_busy_payload(asset_id, balance):
     }
 
 
+def ticker_assets(listed, ticker):
+    """NIA/UDA/CFA/IFA rows whose ticker matches (case-insensitive)."""
+    wanted = (ticker or "USDM").strip().upper()
+    for schema in ("nia", "uda", "cfa", "ifa"):
+        for asset in listed.get(schema) or []:
+            if str(asset.get("ticker") or "").upper() == wanted:
+                yield asset
+
+
 def issue_usdm(ticker="USDM"):
-    """Issue the demo NIA once and cache it (single path for every caller)."""
+    """Issue the demo NIA once and cache it (single path for every caller).
+
+    The whole list/delete/issue/write sequence runs under ISSUE_LOCK and starts
+    with a re-list, so a second resolver that was already past its own
+    list_assets() call adopts the asset the first one just issued instead of
+    issuing another.
+    """
+    ticker = (ticker or "USDM").strip() or "USDM"
     with ISSUE_LOCK:
-        if os.path.exists(USDM_CACHE):
-            with open(USDM_CACHE, encoding="utf-8") as handle:
-                return {"asset": json.load(handle), "cached": True}
+        existing = next(ticker_assets(list_assets(), ticker), None)
+        if existing is not None:
+            return {"asset": existing, "cached": True}
+        try:
+            os.remove(USDM_CACHE)
+        except OSError:
+            pass
         # 100 USDm total; the device receives 1-20 USDm per delivery.
         rln(
             "/createutxos",
@@ -155,7 +175,7 @@ def issue_usdm(ticker="USDM"):
         issued = rln(
             "/issueassetnia",
             {
-                "ticker": ticker or "USDM",
+                "ticker": ticker,
                 "name": "Metevo USDm",
                 "precision": 8,
                 "amounts": [10000000000],
@@ -228,10 +248,8 @@ def prepare_usdm_asset(
     listed = list_assets()
 
     def matches():
-        for schema in ("nia", "uda", "cfa", "ifa"):
-            for asset in listed.get(schema) or []:
-                if str(asset.get("ticker") or "").upper() == ticker.upper():
-                    yield asset["asset_id"]
+        for asset in ticker_assets(listed, ticker):
+            yield asset["asset_id"]
 
     candidates = []
     for asset_id in matches():
@@ -254,25 +272,22 @@ def prepare_usdm_asset(
             f"{_spendable(best_balance)} < {needed(best_id)} required"
         )
 
-    # No ticker match at all: a fresh issue is the only way forward.
-    try:
-        os.remove(USDM_CACHE)  # issue_usdm would otherwise return the short asset
-    except OSError:
-        pass
+    # No ticker match at all: issue_usdm owns the cache delete and, under its
+    # lock, re-lists before issuing so a concurrent resolver cannot double-issue.
     asset_id = issue_usdm(ticker)["asset"]["asset_id"]
     mine_blocks(2)
 
-    needed = asset_amount * 2
+    need = needed(asset_id)
     deadline = time.time() + 60
     balance = {}
     while time.time() < deadline:
         balance = rln("/assetbalance", {"asset_id": asset_id}, 30)
-        if _spendable(balance) >= needed:
+        if _spendable(balance) >= need:
             return asset_id, "issued", balance
         mine_blocks(1)
         time.sleep(1)
     raise RuntimeError(
-        f"insufficient asset balance: {_spendable(balance)} < {needed} required"
+        f"insufficient asset balance: {_spendable(balance)} < {need} required"
     )
 
 
@@ -332,6 +347,8 @@ def list_transfers(asset_id):
 def matching_transfers(transfers, recipient_id):
     """Sender-side Send transfers for one blind invoice, newest first."""
     wanted = str(recipient_id or "").strip()
+    if not wanted:
+        return []
     rows = [
         transfer
         for transfer in transfers
@@ -531,11 +548,20 @@ def remember_delivery(asset_id, peer_pubkey, recipient_id, transfer):
         pass
 
 
-def deliver_asset(asset_id, amount, recipient_id, transport_endpoints, steps=None):
+def deliver_asset(
+    asset_id,
+    amount,
+    recipient_id,
+    transport_endpoints,
+    steps=None,
+    before_send=None,
+):
     """Exactly one /sendrgb per (asset, recipient_id).
 
     Adopt an existing non-Failed transfer first, send at most once, and adopt
-    again if the send raised but RLN created the transfer anyway.
+    again if the send raised but RLN created the transfer anyway. `before_send`
+    runs only when there is no existing transfer to adopt, so a spendable gate
+    never blocks an idempotent re-delivery.
     """
     steps = steps if steps is not None else []
     with _delivery_lock(asset_id, recipient_id):
@@ -552,6 +578,9 @@ def deliver_asset(asset_id, amount, recipient_id, transport_endpoints, steps=Non
                 )
             )
             return 200, _transfer_body(adopted), adopted
+
+        if before_send is not None:
+            before_send()
 
         try:
             code, body = send_rgb(asset_id, amount, recipient_id, transport_endpoints)
@@ -905,7 +934,7 @@ def bootstrap_work(body, record):
         record("asset", asset_id=asset_id, source=source, spendable=_spendable(balance))
         return asset_id
 
-    def deliver(asset_id):
+    def deliver(asset_id, before_send=None):
         send_steps = []
         code, send_body, transfer = deliver_asset(
             asset_id,
@@ -913,6 +942,7 @@ def bootstrap_work(body, record):
             recipient_id,
             transport_endpoints,
             steps=send_steps,
+            before_send=before_send,
         )
         for entry in send_steps:
             fields = dict(entry)
@@ -935,9 +965,11 @@ def bootstrap_work(body, record):
     asset_id = pin
     if not open_channel:
         record("channel-skipped", asset_id=asset_id)
-        send_body = None
-        if recipient_id and deliver_wanted:
+        need_delivery = bool(recipient_id and deliver_wanted)
+        if asset_id is None or need_delivery:
             asset_id = resolve_asset([])
+        send_body = None
+        if need_delivery:
             send_body = deliver(asset_id)
         return {
             "ok": True,
@@ -980,10 +1012,14 @@ def bootstrap_work(body, record):
             )
         send_body = None
         if recipient_id:
-            balance = rln("/assetbalance", {"asset_id": asset_id}, 30)
-            if _spendable(balance) < asset_amount:
-                raise AssetBusy(_asset_busy_payload(asset_id, balance))
-            send_body = deliver(asset_id)
+            def require_spendable():
+                balance = rln("/assetbalance", {"asset_id": asset_id}, 30)
+                if _spendable(balance) < asset_amount:
+                    raise AssetBusy(_asset_busy_payload(asset_id, balance))
+
+            # Adopt first: an existing transfer is delivered even when the asset
+            # is locked in it, so the spendable gate runs only before a new send.
+            send_body = deliver(asset_id, before_send=require_spendable)
         return {
             "ok": True,
             "reused": True,
@@ -1066,8 +1102,12 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        if self.path.startswith("/lsp/bootstrap/"):
-            job_id = self.path.split("?", 1)[0].rsplit("/", 1)[-1]
+        route = self.path.split("?", 1)[0]
+        if route.startswith("/lsp/bootstrap/"):
+            job_id = route[len("/lsp/bootstrap/") :]
+            if not job_id or "/" in job_id:
+                self._json(404, {"error": "unknown job"})
+                return
             job = get_job(job_id)
             if job is None:
                 self._json(404, {"error": "unknown job"})
@@ -1110,14 +1150,19 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "body must be a JSON object"})
             return
         try:
-            if self.path.startswith("/lsp/bootstrap"):
+            route = self.path.split("?", 1)[0]
+            if route == "/lsp/bootstrap":
                 self._handle_bootstrap(body)
                 return
-            if self.path.startswith("/lsp/sendrgb"):
+            if route == "/lsp/sendrgb":
+                recipient_id = str(body.get("recipient_id") or "").strip()
+                if not recipient_id:
+                    self._json(400, {"error": "recipient_id required"})
+                    return
                 code, data, _ = deliver_asset(
                     body["asset_id"],
                     int(body["amount"]),
-                    body["recipient_id"],
+                    recipient_id,
                     body.get("transport_endpoints", []),
                 )
                 self._json(code, data)
