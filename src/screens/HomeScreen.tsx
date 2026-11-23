@@ -143,7 +143,16 @@ function HomeShell({ session }: { session: WalletSession }) {
 
   return (
     <View style={styles.shell}>
-      <StatusHeader connection={connection} onOpenProfile={() => simulateIntent('profile')} />
+      <Pressable
+        onLongPress={() => {
+          // Diagnostics only: outbound channel-open probe (header long-press).
+          if (ENV.EXPO_PUBLIC_WALLET_MODE === 'wasm') {
+            void wasmCall('openTest').catch(() => {});
+          }
+        }}
+      >
+        <StatusHeader connection={connection} onOpenProfile={() => simulateIntent('profile')} />
+      </Pressable>
       <Pressable
         onLongPress={() => {
           // Diagnostics only: one-shot wallet dump on the balance card.

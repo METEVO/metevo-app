@@ -1035,6 +1035,28 @@ window.__metevoDispatch = async (raw) => {
         void runDiagFull();
         return;
       }
+      case "openTest": {
+        // One-shot diagnostic: open a vanilla channel OUTBOUND to the LSP.
+        // The reference flows prove this direction; the LSP-initiated direction
+        // currently dies in the SDK peer read path.
+        try {
+          const info = await (await helperFetch(`${MOBILE_HELPER}/lspinfo`)).json();
+          const peer = info && info.pubkey;
+          if (!peer) throw new Error("no LSP pubkey");
+          await node.connectPeer("127.0.0.1:9802", peer).catch(() => {});
+          const opened = node.openChannelValueWithOptions(
+            peer, 100000n, false, null, null, null, null, null,
+          );
+          post({ step: "open-test", opened });
+          const pending = node.listPendingFundingRequestsValue();
+          post({ step: "open-test-pending", pending });
+          reply({ ok: true, opened, pending });
+        } catch (e) {
+          post({ step: "open-test-error", error: String(e) });
+          reply({ ok: false, error: String(e) });
+        }
+        return;
+      }
       default:
         throw new Error(`unsupported method ${req.method}`);
     }
