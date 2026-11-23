@@ -243,6 +243,18 @@ def prepare_usdm_asset(
         balance = balance_of(pin)
         if _spendable(balance) >= needed(pin):
             return pin, "pinned-refreshed", balance
+        # A request pin can be stale client state (the phone cached an asset id
+        # from an older run). The operator's METEVO_PINNED_ASSET_ID is
+        # authoritative: fall back to it before reporting asset_busy.
+        env_pin = str(os.environ.get("METEVO_PINNED_ASSET_ID") or "").strip()
+        if env_pin and env_pin != pin:
+            env_balance = balance_of(env_pin)
+            if _spendable(env_balance) >= needed(env_pin):
+                return env_pin, "env-pinned", env_balance
+            refresh(env_pin)
+            env_balance = balance_of(env_pin)
+            if _spendable(env_balance) >= needed(env_pin):
+                return env_pin, "env-pinned-refreshed", env_balance
         raise AssetBusy(_asset_busy_payload(pin, balance))
 
     listed = list_assets()
