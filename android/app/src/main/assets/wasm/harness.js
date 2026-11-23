@@ -774,7 +774,13 @@ window.__metevoDispatch = async (raw) => {
             ? channelAssetAmount
             : usdmBalance ? Number(usdmBalance.settled ?? 0)
               : snap.usdm ? Number(snap.usdm.settled ?? 0) : (assetChannel ? 0 : null),
-          channelReady: (channels || []).some((c) => c.is_usable === true || c.ready === true),
+          // "Ready" for the UI = the gift is accounted for, or an LDK channel is
+          // usable. With the LSP-driven on-chain delivery there is no channel on
+          // the phone, so a channel-only check would leave the app on
+          // "Opening your USDm channel…" forever.
+          channelReady: (channels || []).some((c) => c.is_usable === true || c.ready === true)
+            || channelAssetAmount > 0
+            || Number((usdmBalance && usdmBalance.settled) || (snap.usdm && snap.usdm.settled) || 0) > 0,
           provisionError,
           pendingFunding,
           channels: (channels || []).map((c) => ({
