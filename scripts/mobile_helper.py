@@ -236,26 +236,44 @@ def prepare_usdm_asset(
             pass
 
     if pin:
-        balance = balance_of(pin)
-        if _spendable(balance) >= needed(pin):
-            return pin, "pinned", balance
-        refresh(pin)
-        balance = balance_of(pin)
-        if _spendable(balance) >= needed(pin):
+        # A request pin can be stale client state (asset id from another chain,
+        # or from an older run): /assetbalance then answers UnknownContractId.
+        # Treat that as "no usable pin" and fall through to the operator pin.
+        try:
+            balance = balance_of(pin)
+        except RuntimeError:
+            balance = None
+        if balance is not None:
+            if _spendable(balance) >= needed(pin):
+                return pin, "pinned", balance
+            refresh(pin)
+            try:
+                balance = balance_of(pin)
+            except RuntimeError:
+                balance = None
+        if balance is not None and _spendable(balance) >= needed(pin):
             return pin, "pinned-refreshed", balance
-        # A request pin can be stale client state (the phone cached an asset id
-        # from an older run). The operator's METEVO_PINNED_ASSET_ID is
-        # authoritative: fall back to it before reporting asset_busy.
         env_pin = str(os.environ.get("METEVO_PINNED_ASSET_ID") or "").strip()
         if env_pin and env_pin != pin:
-            env_balance = balance_of(env_pin)
-            if _spendable(env_balance) >= needed(env_pin):
+            try:
+                env_balance = balance_of(env_pin)
+            except RuntimeError:
+                env_balance = None
+            if env_balance is not None and _spendable(env_balance) >= needed(env_pin):
                 return env_pin, "env-pinned", env_balance
-            refresh(env_pin)
-            env_balance = balance_of(env_pin)
-            if _spendable(env_balance) >= needed(env_pin):
-                return env_pin, "env-pinned-refreshed", env_balance
-        raise AssetBusy(_asset_busy_payload(pin, balance))
+            if env_balance is not None:
+                refresh(env_pin)
+                try:
+                    env_balance = balance_of(env_pin)
+                except RuntimeError:
+                    env_balance = None
+                if env_balance is not None and _spendable(env_balance) >= needed(env_pin):
+                    return env_pin, "env-pinned-refreshed", env_balance
+        if balance is None:
+            # Unknown request pin and no usable operator pin: resolve by ticker.
+            pin = None
+        else:
+            raise AssetBusy(_asset_busy_payload(pin, balance))
 
     listed = list_assets()
 
