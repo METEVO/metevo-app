@@ -23,6 +23,21 @@ phone `45300DLAQ004TS` on `192.168.0.209`, host `192.168.1.30`.
 `POST /lsp/bootstrap` 202 at 16:14:52 → phone balance 2e9 at 16:15:24 = **32 s**, with the
 phone's 3 s `skip_sync=false` poll running and the helper mining on `WaitingConfirmations`.
 
+## Stack reset 23:2x (host IP 192.168.1.147, Wi-Fi adb)
+
+Docker lost its containers after a WSL restart; chain came back at height 150. New LSP
+datadir4 mnemonic (SAVE this): `antenna pond afraid guard wheel choose run nuclear lunar
+perfect hawk awkward`, pubkey `02215ef3…`, asset `rgb:Vua2xlA5-AC64Kag-tyPXiV9-7RXvded-
+ZIKcnYS-vT0L~5c` (10e9). Same run, with the `channelReady` fix (`47cd7e4`) installed:
+
+| Fact | Evidence |
+|---|---|
+| Balance | `usdm 2000000000`, `ready true`, `provisionError null` |
+| One send | `listtransfers` sends=1, `Settled`, txid `36fd8242…` |
+| Device accounting | stored asset = the new id, `settled/future/spendable 2000000000` |
+| UI | `channelReady: true` ⇒ the "Opening your USDm channel…" panel no longer renders |
+
+
 ## Notes for Phase 3
 
 - The phone still calls `/mine` (harness lines ~194, ~293, ~655 in the installed build);
