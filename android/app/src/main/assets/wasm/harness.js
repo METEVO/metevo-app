@@ -846,8 +846,7 @@ window.__metevoDispatch = async (raw) => {
           // the phone, so a channel-only check would leave the app on
           // "Opening your USDm channel…" forever.
           channelReady: (channels || []).some((c) => c.is_usable === true || c.ready === true)
-            || channelAssetAmount > 0
-            || Number((usdmBalance && usdmBalance.settled) || (snap.usdm && snap.usdm.settled) || 0) > 0,
+            || balanceSource !== null,
           provisionError,
           pendingFunding,
           channels: (channels || []).map((c) => ({
