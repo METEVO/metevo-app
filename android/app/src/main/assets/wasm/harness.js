@@ -514,9 +514,13 @@ async function blindRecipientId(s, node) {
 async function provisionChannel(s) {
   const node = s.node;
   provisionError = null;
+  diag("provision", { phase: "start" });
   const info = await (await helperFetch(`${MOBILE_HELPER}/lspinfo`)).json();
+  diag("provision", { phase: "lspinfo", pubkey: info && info.pubkey });
 
-  await node.connectPeer("127.0.0.1:9802", info.pubkey).catch(() => {});
+  await node.connectPeer("127.0.0.1:9802", info.pubkey).catch((e) => {
+    diag("provision", { phase: "connect-error", error: String(e) });
+  });
 
   const liveInfo = JSON.parse(node.nodePubkeyJson());
   const livePubkey = typeof liveInfo === "string" ? liveInfo : liveInfo.pubkey;
@@ -699,6 +703,7 @@ window.__metevoDispatch = async (raw) => {
         // again, and the bootstrap decides whether on-chain delivery is needed.
         // The reply stays fast; provisioning continues in the background.
         const existing = JSON.parse(node.listChannelsJson());
+        diag("open", { phase: "dispatch", running: openProvisionPromise !== null, channels: existing.length });
         if (openProvisionPromise === null) {
           openProvisionPromise = provisionChannel(s)
             .catch((e) => {
@@ -1160,13 +1165,18 @@ async function helperFetch(url, opts) {
         json: () => Promise.resolve(result),
       });
     });
-    window.ReactNativeWebView &&
-      window.ReactNativeWebView.postMessage(
+    const bridge = window.ReactNativeWebView;
+    if (!bridge) {
+      diag("helper", { phase: "no-bridge", url: url.slice(0, 60) });
+    }
+    bridge &&
+      bridge.postMessage(
         JSON.stringify({ helper: url.replace(MOBILE_HELPER, ""), id, body: opts && opts.body ? JSON.parse(opts.body) : null }),
       );
     setTimeout(() => {
       if (helperPending.has(id)) {
         helperPending.delete(id);
+        diag("helper", { phase: "timeout", url: url.slice(0, 60), id: String(id) });
         reject(new Error("helper fetch timed out"));
       }
     }, 60_000);
