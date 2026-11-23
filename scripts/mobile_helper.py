@@ -79,6 +79,14 @@ def _spendable(value):
     return int((value or {}).get("spendable") or 0)
 
 
+class AssetBusy(Exception):
+    """A pinned asset cannot fund the operation; never issue a replacement."""
+
+    def __init__(self, payload):
+        super().__init__("asset_busy")
+        self.payload = payload
+
+
 class BootstrapFailure(Exception):
     """Failure carrying the step and RLN HTTP detail for the job record."""
 
@@ -121,6 +129,15 @@ def make_step(name, recipient_id=None, asset_id=None, http_status=None, error=No
     return entry
 
 
+def _asset_busy_payload(asset_id, balance):
+    return {
+        "asset_id": asset_id,
+        "spendable": _spendable(balance),
+        "future": int((balance or {}).get("future") or 0),
+        "offchain_outbound": int((balance or {}).get("offchain_outbound") or 0),
+    }
+
+
 def issue_usdm(ticker="USDM"):
     """Issue the demo NIA once and cache it (single path for every caller)."""
     with ISSUE_LOCK:
@@ -158,47 +175,57 @@ def list_assets():
     )
 
 
-def prepare_usdm_asset(asset_amount, ticker="USDM", existing_asset_ids=(), preferred_asset_id=None):
+def prepare_usdm_asset(
+    asset_amount,
+    ticker="USDM",
+    existing_asset_ids=(),
+    preferred_asset_id=None,
+    channel=True,
+):
     """Return (asset_id, source, balance) with enough spendable USDM.
 
     An existing peer+asset channel only needs one asset_amount (the channel is
-    already funded); a fresh open needs two (channel allocation + delivery).
+    already funded); a fresh channel needs two (channel allocation + delivery);
+    an on-chain-only delivery needs one.
 
-    A `preferred_asset_id` from the device wins when it has enough spendable
-    after a refresh: the phone can only account for the asset id it holds.
-
-    Never issue a second asset for the same ticker: each issue needed its own
-    colorable UTXO and the demo ended up with four USDM assets, each partly
-    locked in pending transfers. When a ticker match is short, refresh the
-    transfers once and pick the asset with the most spendable balance.
+    A pin (request `asset_id` or METEVO_PINNED_ASSET_ID) is never re-issued: if
+    it cannot fund the operation the caller gets AssetBusy with the balance
+    breakdown. Without a pin, a ticker match is refreshed once; a fresh issue is
+    the last resort because each issue burns its own colorable UTXO.
     """
     existing = {str(asset_id) for asset_id in existing_asset_ids}
     ticker = (ticker or "USDM").strip() or "USDM"
-    preferred = str(preferred_asset_id or "").strip()
-    listed = list_assets()
+    pin = pinned_asset_id(preferred_asset_id)
 
-    def matches():
-        for schema in ("nia", "uda", "cfa", "ifa"):
-            for asset in listed.get(schema) or []:
-                if str(asset.get("ticker") or "").upper() == ticker.upper():
-                    yield asset["asset_id"]
+    def needed(asset_id):
+        if not channel or asset_id in existing:
+            return asset_amount
+        return asset_amount * 2
 
-    if preferred:
-        needed = asset_amount if preferred in existing else asset_amount
-        balance = rln("/assetbalance", {"asset_id": preferred}, 30)
-        if _spendable(balance) >= needed:
-            return preferred, "preferred", balance
+    def balance_of(asset_id):
+        return rln("/assetbalance", {"asset_id": asset_id}, 30)
+
+    def refresh(asset_id):
         try:
             rln(
                 "/refreshtransfers",
-                {"asset_id": preferred, "filter": [], "skip_sync": False},
+                {"asset_id": asset_id, "filter": [], "skip_sync": False},
                 60,
             )
         except RuntimeError:
             pass
-        balance = rln("/assetbalance", {"asset_id": preferred}, 30)
-        if _spendable(balance) >= needed:
-            return preferred, "preferred-refreshed", balance
+
+    if pin:
+        balance = balance_of(pin)
+        if _spendable(balance) >= needed(pin):
+            return pin, "pinned", balance
+        refresh(pin)
+        balance = balance_of(pin)
+        if _spendable(balance) >= needed(pin):
+            return pin, "pinned-refreshed", balance
+        raise AssetBusy(_asset_busy_payload(pin, balance))
+
+    listed = list_assets()
 
     def matches():
         for schema in ("nia", "uda", "cfa", "ifa"):
@@ -208,32 +235,23 @@ def prepare_usdm_asset(asset_amount, ticker="USDM", existing_asset_ids=(), prefe
 
     candidates = []
     for asset_id in matches():
-        needed = asset_amount if asset_id in existing else asset_amount * 2
-        balance = rln("/assetbalance", {"asset_id": asset_id}, 30)
-        if _spendable(balance) >= needed:
+        balance = balance_of(asset_id)
+        if _spendable(balance) >= needed(asset_id):
             return asset_id, "listed", balance
         candidates.append(asset_id)
 
     if candidates:
         best_id, best_balance = None, None
         for asset_id in candidates:
-            try:
-                rln(
-                    "/refreshtransfers",
-                    {"asset_id": asset_id, "filter": [], "skip_sync": False},
-                    60,
-                )
-            except RuntimeError:
-                pass
-            balance = rln("/assetbalance", {"asset_id": asset_id}, 30)
-            needed = asset_amount if asset_id in existing else asset_amount * 2
-            if _spendable(balance) >= needed:
+            refresh(asset_id)
+            balance = balance_of(asset_id)
+            if _spendable(balance) >= needed(asset_id):
                 return asset_id, "refreshed", balance
             if best_balance is None or _spendable(balance) > _spendable(best_balance):
                 best_id, best_balance = asset_id, balance
         raise RuntimeError(
             f"no spendable {ticker}: best asset {best_id} has "
-            f"{_spendable(best_balance)} < {asset_amount if best_id in existing else asset_amount * 2} required"
+            f"{_spendable(best_balance)} < {needed(best_id)} required"
         )
 
     # No ticker match at all: a fresh issue is the only way forward.
@@ -370,7 +388,6 @@ def refresh_until_settled(
         if rows:
             transfer = rows[0]
             status = str(transfer.get("status") or "")
-            last = status
             detail = {
                 "status": status,
                 "transfer_idx": transfer.get("idx"),
@@ -379,6 +396,9 @@ def refresh_until_settled(
                 "polls": polls,
                 "mined": mined,
             }
+            if status != last and record is not None:
+                record("transfer-wait", **detail)
+            last = status
             if status == "Settled":
                 return True, detail
             if status == "Failed":
@@ -770,6 +790,24 @@ def _run_bootstrap_job(job_id, body, key):
                     current_step="done",
                     updated_at=time.time(),
                 )
+    except AssetBusy as exc:
+        record("asset-busy", http_status=409, error="asset_busy", **exc.payload)
+        with JOBS_LOCK:
+            job = JOBS.get(job_id)
+            if job:
+                job.update(
+                    state="asset_busy",
+                    http_status=409,
+                    asset_busy=exc.payload,
+                    error={
+                        "step": "asset",
+                        "reason": "asset_busy",
+                        "rln_status": None,
+                        "rln_body": None,
+                    },
+                    current_step="asset-busy",
+                    updated_at=time.time(),
+                )
     except BootstrapFailure as exc:
         traceback.print_exc()
         print(
@@ -862,6 +900,7 @@ def bootstrap_work(body, record):
             ticker,
             peer_asset_ids,
             pin,
+            channel=open_channel,
         )
         record("asset", asset_id=asset_id, source=source, spendable=_spendable(balance))
         return asset_id
@@ -943,9 +982,7 @@ def bootstrap_work(body, record):
         if recipient_id:
             balance = rln("/assetbalance", {"asset_id": asset_id}, 30)
             if _spendable(balance) < asset_amount:
-                raise RuntimeError(
-                    f"insufficient asset balance: {_spendable(balance)} < {asset_amount} required"
-                )
+                raise AssetBusy(_asset_busy_payload(asset_id, balance))
             send_body = deliver(asset_id)
         return {
             "ok": True,

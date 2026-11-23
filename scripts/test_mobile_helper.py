@@ -379,8 +379,94 @@ class BootstrapJobTest(StubMixin):
         self.assertEqual(job["steps"][0]["step"], "sendrgb")
         self.assertEqual(job["steps"][0]["recipient_id"], RECIPIENT)
 
+    def test_asset_busy_is_recorded_with_breakdown(self):
+        payload = {
+            "asset_id": ASSET,
+            "spendable": 1,
+            "future": 2,
+            "offchain_outbound": 3,
+        }
+
+        def busy_work(body, record):
+            raise helper.AssetBusy(payload)
+
+        helper.bootstrap_work = busy_work
+        _status, accepted = helper.start_bootstrap_job(self._body())
+        job = self._wait(accepted["job_id"])
+
+        self.assertEqual(job["state"], "asset_busy")
+        self.assertEqual(job["http_status"], 409)
+        self.assertEqual(job["asset_busy"], payload)
+        self.assertEqual(job["error"]["reason"], "asset_busy")
+
     def test_unknown_job_is_none(self):
         self.assertIsNone(helper.get_job("missing"))
+
+
+class PinnedAssetTest(StubMixin):
+    PIN = "rgb:pin"
+
+    def test_pinned_short_returns_asset_busy_and_never_issues(self):
+        os.environ["METEVO_PINNED_ASSET_ID"] = self.PIN
+        calls = []
+
+        def fake_rln(path, payload=None, timeout=60, tolerate_allocation=False):
+            calls.append(path)
+            if path == "/assetbalance":
+                return {"spendable": 5, "future": 7, "offchain_outbound": 9}
+            if path == "/refreshtransfers":
+                return {}
+            raise AssertionError(f"unexpected call {path}")
+
+        helper.rln = fake_rln
+        with self.assertRaises(helper.AssetBusy) as caught:
+            helper.prepare_usdm_asset(100, channel=False)
+
+        self.assertEqual(
+            caught.exception.payload,
+            {
+                "asset_id": self.PIN,
+                "spendable": 5,
+                "future": 7,
+                "offchain_outbound": 9,
+            },
+        )
+        self.assertNotIn("/issueassetnia", calls)
+        self.assertNotIn("/listassets", calls)
+
+    def test_request_pin_wins_over_env(self):
+        os.environ["METEVO_PINNED_ASSET_ID"] = "rgb:env"
+        asked = []
+
+        def fake_rln(path, payload=None, timeout=60, tolerate_allocation=False):
+            if path == "/assetbalance":
+                asked.append(payload["asset_id"])
+                return {"spendable": 100, "future": 0, "offchain_outbound": 0}
+            raise AssertionError(f"unexpected call {path}")
+
+        helper.rln = fake_rln
+        asset_id, source, _balance = helper.prepare_usdm_asset(
+            100, preferred_asset_id="rgb:request", channel=False
+        )
+
+        self.assertEqual(asset_id, "rgb:request")
+        self.assertEqual(source, "pinned")
+        self.assertEqual(asked, ["rgb:request"])
+
+    def test_pinned_sufficient_skips_refresh(self):
+        os.environ["METEVO_PINNED_ASSET_ID"] = self.PIN
+        calls = []
+
+        def fake_rln(path, payload=None, timeout=60, tolerate_allocation=False):
+            calls.append(path)
+            return {"spendable": 1000, "future": 0, "offchain_outbound": 0}
+
+        helper.rln = fake_rln
+        asset_id, source, _balance = helper.prepare_usdm_asset(100, channel=True)
+
+        self.assertEqual(asset_id, self.PIN)
+        self.assertEqual(source, "pinned")
+        self.assertEqual(calls, ["/assetbalance"])
 
 
 class SettleLoopTest(StubMixin):
@@ -444,6 +530,48 @@ class SettleLoopTest(StubMixin):
         self.assertEqual(helper.SETTLE_TIMEOUT_SECONDS, 600)
         self.assertGreaterEqual(helper.SETTLE_POLL_SECONDS, 2)
         self.assertLessEqual(helper.SETTLE_POLL_SECONDS, 3)
+
+    def test_transition_steps_are_recorded(self):
+        os.environ["REGTEST_AUTOMINE"] = "0"
+        self._stub(["WaitingCounterparty", "WaitingConfirmations", "Settled"])
+        helper.mine_blocks = lambda count: None
+        steps = []
+
+        def record(name, **fields):
+            steps.append(helper.make_step(name, **fields))
+
+        settled, _detail = helper.refresh_until_settled(
+            ASSET, RECIPIENT, timeout_seconds=5, interval=0.001, record=record
+        )
+
+        self.assertTrue(settled)
+        self.assertEqual(
+            [entry["status"] for entry in steps],
+            ["WaitingCounterparty", "WaitingConfirmations", "Settled"],
+        )
+        self.assertTrue(all(entry["step"] == "transfer-wait" for entry in steps))
+
+
+class StructuredStepTest(unittest.TestCase):
+    def test_every_step_has_the_six_fields(self):
+        entry = helper.make_step(
+            "sendrgb",
+            recipient_id=RECIPIENT,
+            asset_id=ASSET,
+            http_status=200,
+        )
+        self.assertEqual(
+            set(entry),
+            {
+                "ts",
+                "step",
+                "recipient_id",
+                "asset_id",
+                "http_status",
+                "error",
+            },
+        )
+        self.assertIsInstance(entry["ts"], int)
 
 
 if __name__ == "__main__":
