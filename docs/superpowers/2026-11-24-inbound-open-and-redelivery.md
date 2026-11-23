@@ -71,3 +71,35 @@ So: **yes, cold-launch redelivery still occurs**, and it is supply-draining rath
 2. **Redelivery**: persist the rgb-lib wallet DB (VSS backup or an IndexedDB mirror of `data_dir`) so
    a launch restores the settled balance instead of asking for a new delivery; or gate `deliver` on a
    server-side per-peer "already delivered" record instead of the local wallet state.
+
+## 4. Update (00:35): the handshake never completes — 
+
+After the stack reset the phone could not even provision ( →
+). Instrumented phases
+( /  / xdg-open - opens a file or URL in the user's preferred application
+
+Synopsis
+
+xdg-open { file | URL }
+
+xdg-open { --help | --manual | --version }
+
+Use 'man xdg-open' or 'xdg-open --manual' for additional info.) show the timeout occurs in
+, after  succeeds.
+
+LSP LDK log at the exact attempt:
+
+
+
+Gateway side for the same window: 71 , 163  frames of
+50/66/84 bytes, **0  frames logged**. Noise handshake sizes are 50/66/66,
+so the extra bytes and the repeated 3-frame bursts per connection point at a framing
+mismatch between the SDK WS transport and raw TCP LDK (and/or several concurrent
+sessions for one peer).
+
+Consequence: with  the LSP drops the peer immediately,  never
+reports a completed handshake, so  is never called and no delivery can
+happen. The earlier failure to accept  is downstream of the same transport
+problem. This needs a transport-level fix (SDK framing vs gateway protocol) or the
+reference SDK build proven against this gateway; it is not fixable from the app or
+helper side.
