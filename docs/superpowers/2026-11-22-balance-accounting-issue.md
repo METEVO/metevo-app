@@ -13,6 +13,37 @@ The LSP issues 20 USDM (2 000 000 000 base units, precision 8) into a blind RGB 
 
 ---
 
+## 1a. Resolution (2026-11-23) — asset-id drift, not lost funds
+
+The balance bug is diagnosed and fixed. Root cause: the LSP issued several USDM assets over successive runs (four+ NIA ids), and the phone queried a `localStorage` asset id that was **not** the asset the LSP delivered to. `getAssetBalanceValue(storedId)` returned `"Asset ... not found"` → balance 0, while the wallet's real funds sat under a different id.
+
+Proof from the fixed run (`[metevo-diag]` lines, device 45300DLAQ004TS):
+
+```
+storedAssetId: rgb:0Zg01leJ-805~z3Z-YalZZxc-7KqecAN-4qG_uek-Ukv65w8
+balance: rgb:0Zg01leJ-805~z3Z-Yal  settled 2000000000  future 2000000000  spendable 2000000000
+byAsset: rgb:0Zg01leJ-805~z3Z-Yal [{"idx":1,"kind":"ReceiveBlind","status":"Settled"}]
+transfersAll: {"count":0,"highestIdx":-1,"rows":[]}
+```
+
+LSP side for the same asset:
+
+```
+idx 20 Send Settled  recipient bcrt:utxob:648uVSBd-…  txid fef4543f21dd92a6
+assetbalance: {"settled":2000000000,"future":2000000000,"spendable":2000000000}
+```
+
+Two confirmed sub-findings:
+
+1. **H2 confirmed**: `listTransfersValue(null)` does not list the consumed `ReceiveBlind` (`count 0`), while `listTransfersValue(assetId)` returns it as `Settled`. Status/diagnostics must query per asset, never rely on the unfiltered list.
+2. **H7 confirmed**: delivery must target the asset id the phone holds. The helper now honours the request `asset_id`, falls back to the operator pin (`METEVO_PINNED_ASSET_ID`) when the request cannot fund, and never issues a second asset for the same ticker.
+
+Timeline of the fixed run: `POST /lsp/bootstrap` 202 at 14:15:53 → phone `balanceUsdmBaseUnits: 2000000000` at 14:16:26 (33 s).
+
+Open point: the wallet DB is in `/tmp` inside the WASM filesystem; a cold launch re-derives it and the phone asks for delivery again (deliver flag true when the balance is missing). That trades strict "gift once" for "always shows the gift", and must be decided before the demo.
+
+---
+
 ## 2. Project overview (for a reader with no context)
 
 **Product.** A self-custodial Bitcoin + RGB stablecoin wallet that runs entirely on an Android phone, plus a LAN "LSP" that gives the phone a working channel and demo dollars. Built for a hackathon on "Agentic Dollars on Bitcoin"; demo target: register with a fingerprint, get 20 USDM + Lightning sats, pay over Lightning, voice-agent UI on top.
@@ -231,9 +262,7 @@ seq8  peer_hook_error         "peer transport is disconnected"
 
 ---
 
-## 6. What is already ruled out
-
-1. **Transport reachability.** Phone → proxy works; consignment fetched; ack posted (4.3). CORS on :3005 is `Access-Control-Allow-Origin: *` and OPTIONS returns 204.
+## 6. What is already ruled out1. **Transport reachability.** Phone → proxy works; consignment fetched; ack posted (4.3). CORS on :3005 is `Access-Control-Allow-Origin: *` and OPTIONS returns 204.
 2. **LSP inventory / spendable.** `spendable: 4e9 ≥ 2e9`; the send did go through (`Send Settled`).
 3. **Witness tx.** Confirmed at height 2435, `confirmed:true` (4.4).
 4. **SDK API mismatch.** Our prebuilt SDK and the reference `wasm-flow-testing` SDK expose the same method names (checked by diffing `.d.ts` exports; ours has 4 extra).
