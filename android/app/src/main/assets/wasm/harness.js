@@ -420,6 +420,9 @@ async function readWalletSnapshot(wallet, online) {
 let openProvisionPromise = null;
 // Last provisioning failure, surfaced in the status reply/Home attention card.
 let provisionError = null;
+// LSP-reported settled USDm from the last bootstrap. A cold launch (WASM wallet
+// DB reset) has no wallet balance, so the status reply can still show the value.
+let lspUsdmBaseUnits = null;
 // Tick counter for the throttled wallet diagnostics.
 let statusTick = 0;
 // Last runtime-event summary emitted on its own [metevo-diag] line.
@@ -568,6 +571,18 @@ async function provisionChannel(s) {
     if (boot && boot.ok !== false && boot.asset_id) {
       assetId = boot.asset_id;
       localStorage.setItem("metevo.usdm_asset_id", assetId);
+    }
+    if (boot && boot.existing === true) {
+      // The LSP already funded this node: no new transfer is expected, only a
+      // reconnect + balance read. Keep its balance for a wallet-DB reset.
+      const lspSettled = Number((boot.lsp_balance && boot.lsp_balance.settled) || 0);
+      if (lspSettled > 0) lspUsdmBaseUnits = lspSettled;
+      diag("bootstrap-existing", {
+        asset_id: boot.asset_id || assetId || null,
+        channelStatus: boot.channel && boot.channel.status,
+        delivered: boot.delivered === true,
+        txid: boot.delivery && boot.delivery.txid,
+      });
     }
     post({
       step: "bootstrap",
@@ -810,13 +825,22 @@ window.__metevoDispatch = async (raw) => {
             diag("wallet-diag", { sync, backup, unspents, ...snapshot });
           } catch (_e) { /* diagnostics must never break the status reply */ }
         }
+        const walletUsdmBaseUnits = channelAssetAmount > 0
+          ? channelAssetAmount
+          : usdmBalance ? Number(usdmBalance.settled ?? 0)
+            : snap.usdm ? Number(snap.usdm.settled ?? 0) : (assetChannel ? 0 : null);
+        // A wallet with no settled value falls back to what the LSP reported at
+        // bootstrap, so a cold launch (WASM wallet DB reset) still shows USDm.
+        const lspSettledBaseUnits = lspUsdmBaseUnits === null ? null : Number(lspUsdmBaseUnits);
+        const balanceSource = walletUsdmBaseUnits !== null && walletUsdmBaseUnits > 0
+          ? "wallet"
+          : lspSettledBaseUnits !== null && lspSettledBaseUnits > 0 ? "lsp" : null;
         reply({
           nodePubkey: unwrapPubkey(JSON.parse(node.nodePubkeyJson())),
           btcSpendableSat: snap.btcSpendableSat,
-          balanceUsdmBaseUnits: channelAssetAmount > 0
-            ? channelAssetAmount
-            : usdmBalance ? Number(usdmBalance.settled ?? 0)
-              : snap.usdm ? Number(snap.usdm.settled ?? 0) : (assetChannel ? 0 : null),
+          balanceUsdmBaseUnits: balanceSource === "lsp" ? lspSettledBaseUnits : walletUsdmBaseUnits,
+          lspBalanceBaseUnits: lspSettledBaseUnits,
+          balanceSource,
           // "Ready" for the UI = the gift is accounted for, or an LDK channel is
           // usable. With the LSP-driven on-chain delivery there is no channel on
           // the phone, so a channel-only check would leave the app on
@@ -937,6 +961,16 @@ window.__metevoDispatch = async (raw) => {
           if (boot && boot.ok !== false && boot.asset_id) {
             assetId = boot.asset_id;
             localStorage.setItem("metevo.usdm_asset_id", assetId);
+          }
+          if (boot && boot.existing === true) {
+            const lspSettled = Number((boot.lsp_balance && boot.lsp_balance.settled) || 0);
+            if (lspSettled > 0) lspUsdmBaseUnits = lspSettled;
+            diag("bootstrap-existing", {
+              asset_id: boot.asset_id || assetId || null,
+              channelStatus: boot.channel && boot.channel.status,
+              delivered: boot.delivered === true,
+              txid: boot.delivery && boot.delivery.txid,
+            });
           }
         } catch (e) {
           // A 60 s bridge timeout (or a 502 while RLN finishes) must not end
