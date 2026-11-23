@@ -306,8 +306,43 @@ async function emitLaunchState(trigger) {
       }
     });
     diag("launch-state", state);
+    // One-shot outbound channel probe (diagnostic). The LSP-initiated direction
+    // currently dies in the SDK peer read path; this records whether the
+    // device-initiated direction works. Guarded so it runs once per install.
+    try {
+      if (trigger === "first-sync" && localStorage.getItem("metevo.openTest") !== "1") {
+        localStorage.setItem("metevo.openTest", "1");
+        window.setTimeout(() => { void runOpenTest(); }, 10000);
+      }
+    } catch (_e) { /* diagnostics only */ }
   } catch (_e) {
     /* diagnostics only */
+  }
+}
+
+/** Outbound vanilla channel to the LSP; logs the SDK reply and pending funding. */
+async function runOpenTest() {
+  try {
+    const s = window.__sdk;
+    if (!s || !s.ready) return;
+    const node = s.node;
+    const info = await (await helperFetch(`${MOBILE_HELPER}/lspinfo`)).json();
+    const peer = info && info.pubkey;
+    if (!peer) throw new Error("no LSP pubkey");
+    await node.connectPeer("127.0.0.1:9802", peer).catch(() => {});
+    const opened = node.openChannelValueWithOptions(peer, 100000n, false, null, null, null, null, null);
+    post({ step: "open-test", opened });
+    for (let i = 0; i < 10; i += 1) {
+      await new Promise((r) => setTimeout(r, 1000));
+      try {
+        const pending = node.listPendingFundingRequestsValue();
+        const rows = Array.isArray(pending) ? pending : (pending && pending.requests) || [];
+        post({ step: "open-test-pending", count: rows.length, sample: rows.slice(0, 2) });
+        if (rows.length > 0) break;
+      } catch (_e) { /* retry */ }
+    }
+  } catch (e) {
+    post({ step: "open-test-error", error: String(e) });
   }
 }
 
