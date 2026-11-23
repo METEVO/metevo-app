@@ -70,6 +70,267 @@ async function pump(node) {
   try { node.processNativeRuntimeQueueValue(); } catch (_e) { /* ignore */ }
 }
 
+// --- diagnostics -----------------------------------------------------------
+// Every line is its own logcat entry. The WebView console is dropped in a
+// release build (react-native-webview ignores console in non-debug builds), so
+// lines travel over postMessage and the RN bridge logs them. logcat truncates
+// near 4 KB, so an oversized payload is split into indexed lines
+// (`wallet-diag:before:balances:0`), never truncated.
+const DIAG_PREFIX = "[metevo-diag]";
+const DIAG_MAX_BYTES = 3400;
+const DIAG_CHUNK_CHARS = 600;
+
+function diagBytes(text) {
+  try { return new TextEncoder().encode(text).length; } catch (_e) { return text.length; }
+}
+
+/** Emits one labelled payload, splitting it if it would exceed the limit. */
+function diagPost(label, text) {
+  if (diagBytes(`${DIAG_PREFIX} ${label} ${text}`) <= DIAG_MAX_BYTES) {
+    post({ step: "diag", line: `${DIAG_PREFIX} ${label} ${text}` });
+    return;
+  }
+  for (let at = 0, part = 0; at < text.length; at += DIAG_CHUNK_CHARS, part += 1) {
+    post({
+      step: "diag",
+      // Never emit a raw JSON fragment: each part is a complete JSON object.
+      line: `${DIAG_PREFIX} ${label}:${part} ${JSON.stringify({
+        part,
+        value: text.slice(at, at + DIAG_CHUNK_CHARS),
+      })}`,
+    });
+  }
+}
+
+/** One JSON value per line, descended into field by field until it fits. */
+function diagField(label, value, depth = 0) {
+  if (depth > 6) {
+    post({
+      step: "diag",
+      line: `${DIAG_PREFIX} ${label} ${JSON.stringify({ truncated: true })}`,
+    });
+    return;
+  }
+  let json;
+  try {
+    json = JSON.stringify(value);
+    if (json === undefined) json = JSON.stringify({ unserializable: String(value) });
+  } catch (e) {
+    json = JSON.stringify({ unserializable: String(e) });
+  }
+  const whole = `${DIAG_PREFIX} ${label} ${json}`;
+  if (diagBytes(whole) <= DIAG_MAX_BYTES) {
+    post({ step: "diag", line: whole });
+    return;
+  }
+  if (Array.isArray(value) && value.length > 0) {
+    let chunk = [];
+    let part = 0;
+    const flush = () => {
+      if (chunk.length === 0) return;
+      const current = chunk;
+      chunk = [];
+      try {
+        // A single oversized element is descended into, never re-packed into
+        // another one-element array (that recursed forever).
+        if (current.length === 1) diagField(`${label}:${part}`, current[0], depth + 1);
+        else diagField(`${label}:${part}`, current, depth + 1);
+      } catch (_e) {
+        /* one element must not discard its siblings */
+      }
+      part += 1;
+    };
+    for (const item of value) {
+      chunk.push(item);
+      let fits;
+      try {
+        fits = diagBytes(
+          `${DIAG_PREFIX} ${label}:${part} ${JSON.stringify(chunk)}`,
+        ) <= DIAG_MAX_BYTES;
+      } catch (_e) {
+        fits = false;
+      }
+      if (!fits) {
+        chunk.pop();
+        flush();
+        chunk = [item];
+      }
+    }
+    flush();
+    return;
+  }
+  if (value !== null && typeof value === "object") {
+    for (const [key, inner] of Object.entries(value)) {
+      try {
+        diagField(`${label}:${key}`, inner, depth + 1);
+      } catch (_e) {
+        /* one field must not discard its siblings */
+      }
+    }
+    return;
+  }
+  diagPost(label, json);
+}
+
+/** One JSON object per line; too-big objects split per field, arrays per item. */
+function diag(tag, payload) {
+  try {
+    diagField(tag, payload);
+  } catch (_e) {
+    /* diagnostics must never break a wallet call */
+  }
+}
+
+function parseValue(raw) {
+  return typeof raw === "string" ? JSON.parse(raw) : raw;
+}
+
+function diagAssetRows(parsed) {
+  return [...((parsed && parsed.nia) || []), ...((parsed && parsed.ifa) || [])];
+}
+
+function diagTransferRows(parsed) {
+  const rows = (parsed && parsed.transfers) || parsed || [];
+  return (Array.isArray(rows) ? rows : []).map((t) => ({
+    idx: t.idx ?? null,
+    kind: t.kind ?? null,
+    status: t.status ?? null,
+    value: (t.requested_assignment && t.requested_assignment.value) ?? t.amount ?? null,
+  }));
+}
+
+function diagHighestIdx(rows) {
+  return rows.reduce((top, t) => (typeof t.idx === "number" && t.idx > top ? t.idx : top), -1);
+}
+
+/**
+ * The wallet's own view of balances and transfers. Must run inside
+ * withWallet: rgb-lib panics on overlapping calls.
+ */
+async function walletDiagSnapshot(phase) {
+  const s = window.__sdk;
+  const stored = localStorage.getItem("metevo.usdm_asset_id");
+  const assets = [];
+  try {
+    for (const a of diagAssetRows(parseValue(await s.wallet.listAssetsValue(["Nia", "Ifa"])))) {
+      assets.push({
+        id: String(a.asset_id || ""),
+        ticker: a.ticker ?? null,
+        supply: a.issued_supply ?? null,
+      });
+    }
+  } catch (_e) { /* busy */ }
+
+  const ids = [];
+  if (stored) ids.push(stored);
+  for (const a of assets) if (a.id && ids.indexOf(a.id) === -1) ids.push(a.id);
+
+  const balances = [];
+  for (const id of ids) {
+    const row = { id, settled: null, future: null, spendable: null, balance: null };
+    try {
+      const bal = parseValue(await s.wallet.getAssetBalanceValue(id)) || {};
+      row.balance = bal;
+      row.settled = bal.settled ?? null;
+      row.future = bal.future ?? null;
+      row.spendable = bal.spendable ?? null;
+    } catch (e) {
+      row.balance = String(e);
+    }
+    balances.push(row);
+  }
+
+  const transfersByAsset = [];
+  for (const id of ids) {
+    const row = { id, highestIdx: null, transfers: [] };
+    try {
+      row.transfers = diagTransferRows(parseValue(await s.wallet.listTransfersValue(id)));
+      row.highestIdx = diagHighestIdx(row.transfers);
+    } catch (e) {
+      row.transfers = String(e);
+    }
+    transfersByAsset.push(row);
+  }
+
+  let transfersAll = null;
+  try {
+    const rows = diagTransferRows(parseValue(await s.wallet.listTransfersValue(null)));
+    transfersAll = { count: rows.length, highestIdx: diagHighestIdx(rows), rows };
+  } catch (e) {
+    transfersAll = String(e);
+  }
+
+  return { phase: phase ?? null, storedAssetId: stored, assets, balances, transfersAll, transfersByAsset };
+}
+
+/**
+ * Launch identity and what the wallet actually holds. Emitted once the wallet
+ * is online and again after the first completed chain-sync tick.
+ */
+async function emitLaunchState(trigger) {
+  try {
+    const s = window.__sdk;
+    if (!s || !s.ready) return;
+    const state = {
+      trigger,
+      runtimeId: s.runtimeId,
+      runtimeIdSource,
+      dataDir: s.dataDir,
+      ...(coldLaunch ? { coldLaunch: true } : { reload: true }),
+    };
+    await withWallet(async () => {
+      try {
+        state.assets = diagAssetRows(parseValue(await s.wallet.listAssetsValue(["Nia", "Ifa"]))).map(
+          (a) => ({ id: String(a.asset_id || ""), ticker: a.ticker ?? null }),
+        );
+      } catch (e) {
+        state.assets = String(e);
+      }
+      try {
+        const rows = diagTransferRows(parseValue(await s.wallet.listTransfersValue(null)));
+        state.transfersAll = { count: rows.length, highestIdx: diagHighestIdx(rows), rows };
+      } catch (e) {
+        state.transfersAll = String(e);
+      }
+      state.transfersByAsset = [];
+      for (const a of Array.isArray(state.assets) ? state.assets : []) {
+        if (!a.id) continue;
+        const row = { id: a.id, highestIdx: null, transfers: [] };
+        try {
+          row.transfers = diagTransferRows(parseValue(await s.wallet.listTransfersValue(a.id)));
+          row.highestIdx = diagHighestIdx(row.transfers);
+        } catch (e) {
+          row.transfers = String(e);
+        }
+        state.transfersByAsset.push(row);
+      }
+    });
+    diag("launch-state", state);
+  } catch (_e) {
+    /* diagnostics only */
+  }
+}
+
+/** diag-full: snapshot, one real refresh, snapshot again. */
+async function runDiagFull() {
+  try {
+    await withWallet(async () => diag("wallet-diag:before", await walletDiagSnapshot("before")));
+  } catch (e) {
+    diag("wallet-diag:before:error", String(e));
+  }
+  try {
+    const s = window.__sdk;
+    await withWallet(() => s.wallet.refreshValue(s.online, null, [], false));
+  } catch (e) {
+    diag("wallet-diag:refresh-error", String(e));
+  }
+  try {
+    await withWallet(async () => diag("wallet-diag:after", await walletDiagSnapshot("after")));
+  } catch (e) {
+    diag("wallet-diag:after:error", String(e));
+  }
+}
+
 // rgb-lib's wasm wallet holds a RefCell<Wallet>: overlapping calls panic the
 // instance and every later call fails with "Error" (UTEXO rgb-lib-wasm #86,
 // closed as by-design). One promise chain per wallet serialises everything.
@@ -125,6 +386,11 @@ let openProvisionPromise = null;
 let provisionError = null;
 // Tick counter for the throttled wallet diagnostics.
 let statusTick = 0;
+// Last runtime-event summary emitted on its own [metevo-diag] line.
+let lastRuntimeDiag = null;
+// Launch identity, filled in by main() before the first diagnostic.
+let runtimeIdSource = null;
+let coldLaunch = true;
 
 // Safe helper call for the provisioning loop (never throws).
 async function callHelperSafe(path, body) {
@@ -457,12 +723,23 @@ window.__metevoDispatch = async (raw) => {
         // The LSP now funds the channel (push_msat) and holds the asset side;
         // there is no device-side pending funding request any more.
         const pendingFunding = [];
-        let runtimeEvents = null;
+        // Runtime events stay out of the 5 s ping: they overflow one logcat
+        // entry, so they get their own line and only when they changed.
         try {
-          runtimeEvents = JSON.parse(node.listRuntimeEventsJson());
-          if (runtimeEvents && runtimeEvents.events) {
-            runtimeEvents = runtimeEvents.events.slice(-6).map((e) => ({
-              kind: e.event_kind, status: e.status, applied: e.applied, err: e.error }));
+          const parsed = parseValue(node.listRuntimeEventsJson());
+          const events = (parsed && parsed.events) || parsed || [];
+          const rows = (Array.isArray(events) ? events : []).slice(-6).map((e) => ({
+            seq: e.seq ?? e.idx ?? null,
+            sources: e.sources ?? e.source ?? null,
+            kind: e.event_kind ?? e.kind ?? null,
+            status: e.status ?? null,
+            applied: e.applied ?? null,
+            error: e.error ?? null,
+          }));
+          const summary = JSON.stringify(rows);
+          if (summary !== lastRuntimeDiag) {
+            lastRuntimeDiag = summary;
+            diag("runtime-events", { count: Array.isArray(events) ? events.length : null, rows });
           }
         } catch (_e) { /* ignore */ }
         // Over lightning this node's local asset amount is 0 until it receives
@@ -471,30 +748,23 @@ window.__metevoDispatch = async (raw) => {
           ? Number(assetChannel.asset_local_amount || 0)
           : 0;
         // Balance-accounting diagnostics (docs/superpowers/2026-11-22-balance-accounting-issue.md).
+        // Probe cadence is unchanged (every 12th tick, offset 5) and the probe
+        // still does one real (skip_sync=false) refresh before reading.
         statusTick += 1;
         if (statusTick % 12 === 5) {
           try {
-            const diag = { sync: null, unspents: null, asset: null, transfersAsset: null, backup: null };
             const stored = localStorage.getItem("metevo.usdm_asset_id");
             if (stored) {
-              // One real (skip_sync=false) refresh, then read what the wallet
-              // actually holds: this is the balance-accounting probe.
               try { await withWallet(() => s.wallet.refreshValue(s.online, stored, [], false)); } catch (_e) { /* busy */ }
             }
-            try { diag.sync = node.chainSyncStatusValue(); } catch (_e) { diag.sync = String(_e); }
-            try {
-              diag.unspents = await withWallet(() => s.wallet.listUnspentsValue(true));
-            } catch (_e) { diag.unspents = String(_e); }
-            if (stored) {
-              try {
-                diag.asset = await withWallet(() => s.wallet.getAssetBalanceValue(stored));
-              } catch (_e) { diag.asset = String(_e); }
-              try {
-                diag.transfersAsset = await withWallet(() => s.wallet.listTransfersValue(stored));
-              } catch (_e) { diag.transfersAsset = String(_e); }
-            }
-            try { diag.backup = s.wallet.backupInfo(); } catch (_e) { diag.backup = String(_e); }
-            post({ step: "wallet-diag", diag });
+            let sync = null;
+            try { sync = node.chainSyncStatusValue(); } catch (e) { sync = String(e); }
+            let unspents = null;
+            try { unspents = await withWallet(() => s.wallet.listUnspentsValue(true)); } catch (e) { unspents = String(e); }
+            let backup = null;
+            try { backup = s.wallet.backupInfo(); } catch (e) { backup = String(e); }
+            const snapshot = await withWallet(() => walletDiagSnapshot(null));
+            diag("wallet-diag", { sync, backup, unspents, ...snapshot });
           } catch (_e) { /* diagnostics must never break the status reply */ }
         }
         reply({
@@ -517,7 +787,6 @@ window.__metevoDispatch = async (raw) => {
           })),
           assets,
           transfers,
-          runtimeEvents,
         });
         return;
       }
@@ -746,6 +1015,13 @@ window.__metevoDispatch = async (raw) => {
         reply(result);
         return;
       }
+      case "diagFull": {
+        // Long-press on the balance card. Reply at once and run the probes on
+        // the wallet chain: a diag failure must never reach the app flow.
+        reply({ ok: true });
+        void runDiagFull();
+        return;
+      }
       default:
         throw new Error(`unsupported method ${req.method}`);
     }
@@ -808,6 +1084,12 @@ async function helperFetch(url, opts) {
     setStatus("wasm ready");
 
     const wantFresh = getQueryParam("freshRuntime", "") === "1";
+    // Cold launch vs WebView reload: the marker survives a reload of the page
+    // but not a new app session.
+    try {
+      coldLaunch = sessionStorage.getItem("metevo.launch.marker") === null;
+      sessionStorage.setItem("metevo.launch.marker", new Date().toISOString());
+    } catch (_e) { /* storage disabled: report a cold launch */ }
     let rid;
     let mnemonic;
     const explicitRuntimeId = getQueryParam("runtimeId", "");
@@ -817,14 +1099,19 @@ async function helperFetch(url, opts) {
       mnemonic = explicitMnemonic;
       localStorage.setItem("rln_wasm_runtime_id", rid);
       localStorage.setItem("rln_wasm_e2e_mnemonic", mnemonic);
+      runtimeIdSource = "explicit";
     } else if (wantFresh) {
       rid = Math.random().toString(16).slice(2) + Math.random().toString(16).slice(2);
       mnemonic = rgbGenerateKeysValue("regtest").mnemonic;
+      runtimeIdSource = "fresh";
     } else {
       rid = localStorage.getItem("rln_wasm_runtime_id");
       if (!rid) {
         rid = Math.random().toString(16).slice(2);
         localStorage.setItem("rln_wasm_runtime_id", rid);
+        runtimeIdSource = "generated";
+      } else {
+        runtimeIdSource = "localStorage";
       }
       mnemonic = localStorage.getItem("rln_wasm_e2e_mnemonic");
       if (!mnemonic) {
@@ -900,6 +1187,7 @@ async function helperFetch(url, opts) {
         walletAddress,
         mnemonic,
         runtimeId: rid,
+        dataDir: walletData.data_dir,
         nodeProxyUrl,
         indexerUrl,
         ready: true,
@@ -930,6 +1218,14 @@ async function helperFetch(url, opts) {
     const pubkey = (JSON.parse(node.nodePubkeyJson()) || {}).pubkey || "?";
     setStatus(`ready · pubkey=${pubkey} · wallet=${walletAddress.slice(0, 18)}…`);
     post({ step: "ready", pubkey });
+
+    // Diagnostics: wallet identity/state now that it is online, then again
+    // after the first completed chain-sync tick. Never blocks or fails boot.
+    void emitLaunchState("init");
+    void (async () => {
+      try { await node.chainSyncTickValue(); } catch (_e) { /* offline: keep going */ }
+      void emitLaunchState("first-sync");
+    })();
 
   } catch (err) {
     window.__sdk = { ready: false, error: String(err) };
