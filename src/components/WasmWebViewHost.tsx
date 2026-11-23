@@ -99,6 +99,11 @@ export function WasmWebViewHost({
         allowUniversalAccessFromFileURLs
         mixedContentMode="always"
         onMessage={(event) => handleWasmMessage(event.nativeEvent.data)}
+        onConsoleMessage={(event) => {
+          // The WASM SDK logs peer-session diagnostics to the WebView console;
+          // release builds drop it unless it is forwarded to RN.
+          console.log('[wasm-console]', event.nativeEvent.message);
+        }}
         onError={(event) => {
           console.log('[metevo] wasm host error:', event.nativeEvent.description);
         }}
