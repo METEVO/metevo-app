@@ -334,30 +334,71 @@ def adopt_transfer(asset_id, recipient_id):
     return None
 
 
-def refresh_until_settled(asset_id, timeout_seconds=90):
-    """Reference refreshUntilTransferSettled: the LSP keeps refreshing (and the
-    regtest miner keeps producing) until a transfer for this asset settles."""
-    deadline = time.time() + timeout_seconds
+def refresh_until_settled(
+    asset_id,
+    recipient_id,
+    timeout_seconds=None,
+    interval=None,
+    record=None,
+):
+    """Poll the sender until THIS recipient's transfer settles.
+
+    The ack is pull-only: the sender only learns about it inside
+    /refreshtransfers. Poll every 2.5 s, mine only while WaitingConfirmations
+    (REGTEST_AUTOMINE=1), and give the receiver up to 10 minutes.
+    """
+    timeout_seconds = SETTLE_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
+    interval = SETTLE_POLL_SECONDS if interval is None else interval
+    started = time.time()
+    polls = 0
+    mined = 0
     last = None
-    while time.time() < deadline:
+    while time.time() - started < timeout_seconds:
+        polls += 1
         try:
             rln(
                 "/refreshtransfers",
                 {"asset_id": asset_id, "filter": [], "skip_sync": False},
                 60,
             )
-            mine_blocks(1)
-            listed = rln("/listtransfers", {"asset_id": asset_id}, 30)
+            rows = matching_transfers(
+                list_transfers(asset_id).get("transfers") or [], recipient_id
+            )
         except RuntimeError as exc:
-            last = str(exc)
-            time.sleep(2)
-            continue
-        transfers = listed.get("transfers") or []
-        if any(str(t.get("status") or "") == "Settled" for t in transfers):
-            return True, None
-        last = ", ".join(str(t.get("status")) for t in transfers)[:200]
-        time.sleep(2)
-    return False, last
+            rows = []
+            last = f"refresh/list failed: {exc}"
+        if rows:
+            transfer = rows[0]
+            status = str(transfer.get("status") or "")
+            last = status
+            detail = {
+                "status": status,
+                "transfer_idx": transfer.get("idx"),
+                "txid": transfer.get("txid"),
+                "elapsed_s": round(time.time() - started, 1),
+                "polls": polls,
+                "mined": mined,
+            }
+            if status == "Settled":
+                return True, detail
+            if status == "Failed":
+                return False, detail
+            if status == "WaitingConfirmations" and os.environ.get("REGTEST_AUTOMINE") == "1":
+                try:
+                    mine_blocks(1)
+                    mined += 1
+                except Exception:  # noqa: BLE001
+                    last = f"{status} (mine failed)"
+        elif last is None:
+            last = "transfer not listed yet"
+        time.sleep(interval)
+    return False, {
+        "status": last,
+        "elapsed_s": round(time.time() - started, 1),
+        "polls": polls,
+        "mined": mined,
+        "timeout": True,
+    }
 
 
 def send_rgb(asset_id, amount, recipient_id, transport_endpoints):
@@ -846,8 +887,10 @@ def bootstrap_work(body, record):
         if transfer is not None:
             remember_delivery(asset_id, pubkey, recipient_id, transfer)
         if str((transfer or {}).get("status") or "") != "Settled":
-            settled, detail = refresh_until_settled(asset_id)
-            record("transfer-settled" if settled else "transfer-pending", detail=detail)
+            settled, detail = refresh_until_settled(
+                asset_id, recipient_id, record=record
+            )
+            record("transfer-settled" if settled else "transfer-pending", **detail)
         return send_body
 
     asset_id = pin

@@ -383,5 +383,68 @@ class BootstrapJobTest(StubMixin):
         self.assertIsNone(helper.get_job("missing"))
 
 
+class SettleLoopTest(StubMixin):
+    def _stub(self, statuses):
+        position = {"i": 0}
+
+        def fake_rln(path, payload=None, timeout=60, tolerate_allocation=False):
+            if path == "/refreshtransfers":
+                return {}
+            if path == "/listtransfers":
+                index = min(position["i"], len(statuses) - 1)
+                position["i"] += 1
+                return {
+                    "transfers": [
+                        {
+                            "idx": 99,
+                            "status": "Settled",
+                            "recipient_id": "bcrt:utxob:other",
+                            "kind": "Send",
+                        },
+                        {
+                            "idx": 2,
+                            "status": statuses[index],
+                            "recipient_id": RECIPIENT,
+                            "kind": "Send",
+                        },
+                    ]
+                }
+            raise AssertionError(f"unexpected call {path}")
+
+        helper.rln = fake_rln
+
+    def test_polls_only_this_recipient_and_mines_only_on_confirmations(self):
+        os.environ["REGTEST_AUTOMINE"] = "1"
+        self._stub(["WaitingCounterparty", "WaitingConfirmations", "Settled"])
+        mines = []
+        helper.mine_blocks = lambda count: mines.append(count)
+
+        settled, detail = helper.refresh_until_settled(
+            ASSET, RECIPIENT, timeout_seconds=5, interval=0.001
+        )
+
+        self.assertTrue(settled)
+        self.assertEqual(detail["status"], "Settled")
+        self.assertEqual(detail["polls"], 3)
+        self.assertEqual(mines, [1], "one block per WaitingConfirmations poll")
+
+    def test_failed_transfer_stops_the_loop(self):
+        self._stub(["Failed"])
+        helper.mine_blocks = lambda count: None
+
+        settled, detail = helper.refresh_until_settled(
+            ASSET, RECIPIENT, timeout_seconds=5, interval=0.001
+        )
+
+        self.assertFalse(settled)
+        self.assertEqual(detail["status"], "Failed")
+        self.assertEqual(detail["polls"], 1)
+
+    def test_defaults_are_ten_minutes_and_two_to_three_seconds(self):
+        self.assertEqual(helper.SETTLE_TIMEOUT_SECONDS, 600)
+        self.assertGreaterEqual(helper.SETTLE_POLL_SECONDS, 2)
+        self.assertLessEqual(helper.SETTLE_POLL_SECONDS, 3)
+
+
 if __name__ == "__main__":
     unittest.main()
