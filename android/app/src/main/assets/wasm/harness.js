@@ -728,14 +728,21 @@ window.__metevoDispatch = async (raw) => {
         try {
           const parsed = parseValue(node.listRuntimeEventsJson());
           const events = (parsed && parsed.events) || parsed || [];
-          const rows = (Array.isArray(events) ? events : []).slice(-6).map((e) => ({
-            seq: e.seq ?? e.idx ?? null,
-            sources: e.sources ?? e.source ?? null,
-            kind: e.event_kind ?? e.kind ?? null,
-            status: e.status ?? null,
-            applied: e.applied ?? null,
-            error: e.error ?? null,
-          }));
+          const rows = (Array.isArray(events) ? events : []).slice(-6).map((e) => {
+            const hex = typeof e.payload_hex === "string" ? e.payload_hex : "";
+            return {
+              seq: e.seq ?? e.idx ?? null,
+              sources: e.sources ?? e.source ?? null,
+              kind: e.event_kind ?? e.kind ?? null,
+              status: e.status ?? null,
+              applied: e.applied ?? null,
+              error: e.error ?? null,
+              // First two bytes of an LDK wire message = BOLT message type
+              // (0x0020 = open_channel, 0x0021 = accept_channel, 0x0012 = ping).
+              msg_type: hex.length >= 4 ? `0x${hex.slice(0, 4)}` : null,
+              len: hex.length ? Math.floor(hex.length / 2) : null,
+            };
+          });
           const summary = JSON.stringify(rows);
           if (summary !== lastRuntimeDiag) {
             lastRuntimeDiag = summary;
