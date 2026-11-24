@@ -579,7 +579,7 @@ async function provisionChannel(s) {
     if (boot && boot.existing === true) {
       // The LSP already funded this node: no new transfer is expected, only a
       // reconnect + balance read. Keep its balance for a wallet-DB reset.
-      const lspSettled = Number((boot.lsp_balance && boot.lsp_balance.settled) || 0);
+      const lspSettled = Number((boot.peer_balance && boot.peer_balance.settled) || (boot.lsp_balance && boot.lsp_balance.settled) || 0);
       if (lspSettled > 0) lspUsdmBaseUnits = lspSettled;
       diag("bootstrap-existing", {
         asset_id: boot.asset_id || assetId || null,
@@ -967,7 +967,7 @@ window.__metevoDispatch = async (raw) => {
             localStorage.setItem("metevo.usdm_asset_id", assetId);
           }
           if (boot && boot.existing === true) {
-            const lspSettled = Number((boot.lsp_balance && boot.lsp_balance.settled) || 0);
+            const lspSettled = Number((boot.peer_balance && boot.peer_balance.settled) || (boot.lsp_balance && boot.lsp_balance.settled) || 0);
             if (lspSettled > 0) lspUsdmBaseUnits = lspSettled;
             diag("bootstrap-existing", {
               asset_id: boot.asset_id || assetId || null,

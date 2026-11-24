@@ -746,6 +746,26 @@ def _lsp_balance(asset_id):
     }
 
 
+def _peer_settled_amount(transfers, recipients, fallback=0):
+    """USDm actually delivered to this peer: sum of its Settled Send rows.
+
+    `_lsp_balance` is the LSP's own inventory and must never be shown as the
+    peer's balance (it dropped 10e9 -> 8e9 after one 2e9 delivery, which the app
+    displayed as 80 USDm).
+    """
+    wanted = {str(r).strip() for r in recipients if str(r or "").strip()}
+    total = 0
+    for row in transfers or []:
+        if str(row.get("kind") or "") != "Send":
+            continue
+        if str(row.get("status") or "") != "Settled":
+            continue
+        rid = str(row.get("recipient_id") or "").strip()
+        if rid and rid in wanted:
+            total += int(((row.get("requested_assignment") or {}).get("value")) or 0)
+    return total if total > 0 else int(fallback or 0)
+
+
 def existing_bootstrap(peer_pubkey, asset_id=None, recipient_id=None, amount=None):
     """200 payload when this peer was already funded; None otherwise.
 
@@ -816,6 +836,13 @@ def existing_bootstrap(peer_pubkey, asset_id=None, recipient_id=None, amount=Non
         "channel": channel,
         "delivered": bool(delivery or channel_ok),
         "delivery": delivery,
+        "peer_balance": {
+            "settled": _peer_settled_amount(
+                transfers,
+                recorded + [recipient_id],
+                fallback=(amount if delivery is not None else 0),
+            )
+        },
         "lsp_balance": _lsp_balance(resolved),
         "steps": [
             make_step(
