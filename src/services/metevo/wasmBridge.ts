@@ -19,20 +19,33 @@ const HELPER_BASE =
 /** The harness must post `ready` within this window after the page mounts. */
 const READY_TIMEOUT_MS = 180_000;
 
-const readyPromise = new Promise<void>((resolve, reject) => {
+// The readiness window must start when the WebView actually attaches (i.e. after
+// login), not at module load: a slow login used to burn the whole window before
+// the harness page even mounted.
+let readyPromise = new Promise<void>((resolve, reject) => {
   resolveReady = resolve;
-  setTimeout(() => {
-    if (!ready) {
-      reject(new Error('the on-device node did not become ready within 180 s'));
-    }
-  }, READY_TIMEOUT_MS);
+  void reject; // the timer is armed on attach
 });
 // Callers attach their own rejection handlers; this keeps an idle bridge from
 // logging an unhandled rejection when nothing is waiting for readiness.
 void readyPromise.catch(() => {});
 
+function armReadyWindow(): void {
+  ready = false;
+  readyPromise = new Promise<void>((resolve, reject) => {
+    resolveReady = resolve;
+    setTimeout(() => {
+      if (!ready) {
+        reject(new Error('the on-device node did not become ready within 180 s'));
+      }
+    }, READY_TIMEOUT_MS);
+  });
+  void readyPromise.catch(() => {});
+}
+
 export function attachWasmWebView(ref: WebViewHandle | null): void {
   webview = ref;
+  if (ref !== null) armReadyWindow();
 }
 
 export function handleWasmMessage(raw: string): void {
