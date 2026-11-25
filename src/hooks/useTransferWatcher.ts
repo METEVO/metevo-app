@@ -40,7 +40,7 @@ const TACTON_BY_OUTCOME: Record<
  * a second call while watching returns the in-flight watch instead of
  * starting a competing loop over the same node.
  */
-export function useTransferWatcher() {
+export function useTransferWatcher({ announce = true }: { announce?: boolean } = {}) {
   const { refreshTransfers, checkPayment } = useWalletSession();
   const [phase, setPhase] = useState<TransferWatchPhase>('idle');
   const [transfer, setTransfer] = useState<TransferInfo | null>(null);
@@ -88,7 +88,7 @@ export function useTransferWatcher() {
           // stays silent: the caller chose to stop listening.
           if (!cancelledRef.current) {
             playTacton(TACTON_BY_OUTCOME[outcome]);
-            speakAnnouncement(VOICE_BY_OUTCOME[outcome]);
+            if (announce) speakAnnouncement(VOICE_BY_OUTCOME[outcome]);
           }
           return result;
         })
@@ -98,7 +98,7 @@ export function useTransferWatcher() {
       watchRef.current = run;
       return run;
     },
-    [refreshTransfers],
+    [refreshTransfers, announce],
   );
 
   /** Cancels the running watch; its promise resolves unknown and stays
@@ -136,7 +136,7 @@ export function useTransferWatcher() {
           }
           if (!cancelledRef.current) {
             playTacton(TACTON_BY_OUTCOME[outcome]);
-            speakAnnouncement(VOICE_BY_OUTCOME[outcome]);
+            if (announce) speakAnnouncement(VOICE_BY_OUTCOME[outcome]);
           }
           return result;
         })
@@ -146,7 +146,7 @@ export function useTransferWatcher() {
       watchRef.current = run;
       return run;
     },
-    [],
+    [announce],
   );
 
   return useMemo(

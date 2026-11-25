@@ -10,7 +10,7 @@ import { toFilesystemPath } from './localModel';
  * parser.
  */
 
-export type SupportedLanguage = 'en' | 'it' | 'tr' | 'fr' | 'hi';
+export type SupportedLanguage = 'auto' | 'en' | 'it' | 'tr' | 'fr' | 'hi';
 
 /** Download progress as reported by the SDK (see the QVAC quickstart). */
 export interface ModelDownloadProgress {
@@ -58,6 +58,7 @@ export async function initializeWhisper(
 
   whisperModelId = modelId;
   currentLanguage = language;
+  if (__DEV__) console.info('[metevo] voice-language transcription', { language, translate: false });
 }
 
 export async function transcribeAudio(audioFilePath: string): Promise<string> {

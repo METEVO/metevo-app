@@ -4,7 +4,7 @@ import { isAudioEnabled } from '../services/audioPreference';
 
 /**
  * Spoken replies for the home voice agent (port of the reference
- * `nativeSpeaker`): the device's English system voice through expo-speech.
+ * `nativeSpeaker`): the device's matching system voice through expo-speech.
  * Speech is an enhancement — every failure degrades to silence with a log,
  * the on-screen text stays the source of truth.
  */
@@ -12,8 +12,7 @@ import { isAudioEnabled } from '../services/audioPreference';
 let generation = 0;
 let speech: typeof import('expo-speech') | undefined;
 
-/** Reads one short English sentence out loud. Safe to call fire-and-forget. */
-export function speakEnglish(text: string): void {
+export function speakLocalized(text: string, language = 'en'): void {
   const trimmed = text.trim();
   if (trimmed.length === 0 || !isAudioEnabled()) {
     return;
@@ -28,11 +27,12 @@ export function speakEnglish(text: string): void {
         return;
       }
       const voice = voices.find((candidate) =>
-        candidate.language.toLowerCase().startsWith('en'),
+        candidate.language.toLowerCase().split('-')[0] === language,
       );
       if (voice === undefined) {
-        throw new Error('no English system voice is installed');
+        throw new Error(`no ${language} system voice is installed`);
       }
+      if (__DEV__) console.info('[metevo] voice-language playback', { requested: language, voice: voice.language });
       speech.speak(trimmed, {
         language: voice.language,
         voice: voice.identifier,
@@ -66,4 +66,8 @@ export function announceForAccessibility(text: string): void {
   if (text.trim().length > 0) {
     AccessibilityInfo.announceForAccessibility(text);
   }
+}
+
+export function speakEnglish(text: string): void {
+  speakLocalized(text, 'en');
 }

@@ -1,8 +1,9 @@
+import { ENV } from '../config/env';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { RuntimeSnapshot, voiceRuntime } from '../ai/qvacRuntime';
 import { transcribeAudio } from '../ai/whisper';
-import { parseWalletInstruction } from '../ai/qwen';
+import { detectVoiceLanguage, parseWalletInstruction } from '../ai/qwen';
 import { cleanTranscript } from '../voice/stt';
 import { understandTranscript } from '../voice/intents';
 import {
@@ -12,7 +13,7 @@ import {
   VoiceSnapshot,
 } from '../voice/orchestrator';
 import { VoiceIntentAction } from '../utils/voiceIntentMapping';
-import { speakEnglish, stopSpeaking } from '../utils/speaker';
+import { speakLocalized, stopSpeaking } from '../utils/speaker';
 import { useAudioRecorder } from './useAudioRecorder';
 
 /**
@@ -74,12 +75,17 @@ export function useVoiceAssistant(
     [],
   );
 
+  useEffect(() => {
+    if (__DEV__) console.info('[metevo] voice-language diagnostics v3 loaded');
+  }, []);
+
   const recorder = useAudioRecorder(onClip);
 
   const portsRef = useRef<OrchestratorPorts | null>(null);
   const orchestratorRef = useRef<VoiceOrchestrator | null>(null);
   if (orchestratorRef.current === null) {
     orchestratorRef.current = new VoiceOrchestrator({
+      initialLanguage: ENV.EXPO_PUBLIC_VOICE_FALLBACK_LANGUAGE,
       startRecording: async () => {
         await portsRef.current?.startRecording();
       },
@@ -96,7 +102,8 @@ export function useVoiceAssistant(
         understandTranscript(transcript, { llmParse: parseWalletInstruction }),
       execute: (action) => onAction(action),
       describeBalances: () => portsRef.current?.describeBalances?.() ?? null,
-      speak: (text) => speakEnglish(text),
+      speak: (text, language) => speakLocalized(text, language),
+      detectLanguage: detectVoiceLanguage,
       stopSpeaking: () => stopSpeaking(),
       isRecording: () => recorder.isRecording(),
     });
@@ -127,7 +134,8 @@ export function useVoiceAssistant(
       understandTranscript(transcript, { llmParse: parseWalletInstruction }),
     execute: (action) => onActionRef.current(action),
     describeBalances: () => getBalancesRef.current?.() ?? null,
-    speak: (text) => speakEnglish(text),
+    speak: (text, language) => speakLocalized(text, language),
+    detectLanguage: detectVoiceLanguage,
     stopSpeaking: () => stopSpeaking(),
     isRecording: () => recorder.isRecording(),
   };

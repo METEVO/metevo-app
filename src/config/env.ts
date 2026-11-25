@@ -6,7 +6,10 @@ import { AppEnv, appEnvSchema, EnvInput } from './schema';
  * time; other loaders (scripts, later phases) can feed `EnvInput` the same
  * way.
  */
-const RAW_ENV: EnvInput = { ...process.env };
+const RAW_ENV: EnvInput = {
+  ...process.env,
+  EXPO_PUBLIC_VOICE_FALLBACK_LANGUAGE: process.env.EXPO_PUBLIC_VOICE_FALLBACK_LANGUAGE,
+};
 
 let cached: AppEnv | null = null;
 

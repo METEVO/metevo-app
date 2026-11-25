@@ -1,3 +1,5 @@
+import { getConversationLanguage, VoiceLanguage } from '../voice/language';
+import { paymentSpeech, paymentErrorSpeech } from '../services/metevo/paymentSpeech';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ENV } from '../config/env';
@@ -16,11 +18,10 @@ import { SubmittedPayment } from '../services/metevo/wallet-gateway';
 import {
   NOT_AUTHORIZED_NOTE,
   lowBalanceWarning,
-  paymentMessage,
   type PaymentMessageContext,
 } from '../services/metevo/paymentMessages';
 import { playTacton } from '../services/metevo/tacton';
-import { announceForAccessibility, speakEnglish } from '../utils/speaker';
+import { announceForAccessibility, speakLocalized } from '../utils/speaker';
 import { useTransferWatcher } from './useTransferWatcher';
 import { useWalletSession } from './useWalletSession';
 
@@ -82,7 +83,8 @@ async function resolveRecipientPubkey(recipient: string): Promise<string | null>
 
 export function usePaymentFlow() {
   const { submitPayment, checkPayment, wallet } = useWalletSession();
-  const watcher = useTransferWatcher();
+  const watcher = useTransferWatcher({ announce: false });
+  const languageRef = useRef<VoiceLanguage>(getConversationLanguage() ?? ENV.EXPO_PUBLIC_VOICE_FALLBACK_LANGUAGE);
   const [stage, setStage] = useState<PaymentFlowStage>('idle');
   const [proposal, setProposal] = useState<PaymentFlowProposal | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -114,9 +116,9 @@ export function usePaymentFlow() {
     if (mountedRef.current) {
       setStage(next);
     }
-    const spoken = paymentMessage(next, contextRef.current).spoken;
+    const spoken = paymentSpeech(next, contextRef.current, languageRef.current);
     if (spoken !== null && mountedRef.current) {
-      speakEnglish(spoken);
+      speakLocalized(spoken, languageRef.current);
       announceForAccessibility(spoken);
     }
   }, []);
@@ -127,7 +129,7 @@ export function usePaymentFlow() {
       enterStage('error');
       setNote(note);
       playTacton('error');
-      speakEnglish(note);
+      speakLocalized(paymentErrorSpeech(note, contextRef.current.recipient, languageRef.current), languageRef.current);
       announceForAccessibility(note);
     },
     [enterStage],
@@ -141,7 +143,7 @@ export function usePaymentFlow() {
       setNote(note);
     }
     playTacton('error');
-    speakEnglish(note);
+    speakLocalized(paymentErrorSpeech(note, contextRef.current.recipient, languageRef.current), languageRef.current);
     announceForAccessibility(note);
   }, []);
 

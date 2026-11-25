@@ -1,3 +1,4 @@
+import { setConversationLanguage, VoiceLanguage } from './language';
 import { intentActionFromInstruction, VoiceIntentAction } from '../utils/voiceIntentMapping';
 import { Parsed } from './intents';
 import { replyForBalances, replyForError, replyForIntent, replyForUnclear, sanitizeForSpeech } from './replies';
@@ -28,6 +29,7 @@ export interface VoiceSnapshot {
 }
 
 export interface OrchestratorPorts {
+  initialLanguage?: VoiceLanguage;
   /** Starts the recorder; resolves once the mic is actually running. */
   startRecording: () => Promise<void>;
   /** Stops the recorder; resolves with the clip uri (null = failed). */
@@ -46,7 +48,8 @@ export interface OrchestratorPorts {
   execute: (action: VoiceIntentAction) => void;
   /** The live wallet balances for read replies (null = wallet closed). */
   describeBalances?: () => { usdm: number | null; sats: number | null } | null;
-  speak: (text: string) => void;
+  detectLanguage?: (text: string) => Promise<VoiceLanguage | null>;
+  speak: (text: string, language?: VoiceLanguage) => void;
   stopSpeaking: () => void;
   isRecording: () => boolean;
 }
@@ -61,6 +64,7 @@ const INTERRUPTIBLE: ReadonlySet<VoicePhase> = new Set([
 
 export class VoiceOrchestrator {
   private phase: VoicePhase = 'idle';
+  private language: VoiceLanguage = 'en';
   private turnId = 0;
   private starting = false;
   private releaseQueued = false;
@@ -75,6 +79,7 @@ export class VoiceOrchestrator {
 
   constructor(ports: OrchestratorPorts) {
     this.ports = ports;
+    this.language = ports.initialLanguage ?? 'en';
   }
 
   /** Rebinds the ports (the hook refreshes closures on every render). */
@@ -161,7 +166,7 @@ export class VoiceOrchestrator {
       const transcript = await this.ports.transcribe(uri);
       if (!alive()) return;
       if (transcript === null) {
-        this.settle(replyForUnclear());
+        this.settle(replyForUnclear(this.language));
         return;
       }
       this.setSnapshot({ transcript });
@@ -170,27 +175,35 @@ export class VoiceOrchestrator {
       await this.ports.prepareLlm();
       if (!alive()) return;
 
+      const detected = await this.ports.detectLanguage?.(transcript);
+      if (!alive()) return;
+      if (detected) this.language = detected;
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.info('[metevo] voice-language selection', { detected, selected: this.language });
+      }
+
       const parsed = await this.ports.understand(transcript);
       if (!alive()) return;
       if (parsed.kind === 'unclear') {
-        this.settle(replyForUnclear());
+        this.settle(replyForUnclear(this.language));
         return;
       }
 
       const action = intentActionFromInstruction(parsed.instruction, transcript);
       if (action === null) {
-        this.settle(replyForUnclear());
+        this.settle(replyForUnclear(this.language));
         return;
       }
 
       this.toPhase('acting');
+      setConversationLanguage(this.language);
       this.ports.execute(action);
       // A balance read announces the actual values, not just the template
       // line — the reply is composed from the executor result.
       const spoken =
         action.cardId === 'read-balance'
-          ? replyForBalances(this.ports.describeBalances?.() ?? null)
-          : replyForIntent(action.cardId);
+          ? replyForBalances(this.ports.describeBalances?.() ?? null, this.language)
+          : replyForIntent(action.cardId, this.language);
       this.settle(spoken);
     } catch (cause) {
       if (!alive()) return;
@@ -205,7 +218,7 @@ export class VoiceOrchestrator {
   private settle(reply: string): void {
     this.toPhase('speaking');
     this.setSnapshot({ reply });
-    this.ports.speak(reply);
+    this.ports.speak(reply, this.language);
     this.scheduleIdle(reply.length);
   }
 
@@ -213,9 +226,10 @@ export class VoiceOrchestrator {
     if (cause !== undefined) {
       console.warn('[metevo] voice turn failed:', message, cause);
     }
+    message = replyForError(message, this.language);
     this.toPhase('error');
     this.setSnapshot({ error: message });
-    this.ports.speak(sanitizeForSpeech(message));
+    this.ports.speak(sanitizeForSpeech(message), this.language);
     this.scheduleIdle(message.length);
   }
 

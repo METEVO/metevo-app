@@ -125,11 +125,12 @@ const baseAppEnvSchema = z.object({
     z.string().regex(PEER_URI_PATTERN).optional(),
   ),
 
-  // --- Voice AI (on-device QVAC models, English) -------------------------------
+  // --- Voice AI (on-device QVAC models, multilingual) -------------------------------
   /** English Whisper STT model: a QVAC registry preset name (the SDK
    * downloads and checksum-verifies it on device on first use) or a local
    * model file name resolved under <documents>/models/whisper for offline
-   * sideloading. The voice agent runs English only. */
+   * sideloading. Auto language detection requires a multilingual checkpoint. */
+  EXPO_PUBLIC_VOICE_FALLBACK_LANGUAGE: z.enum(['en', 'tr', 'it']).default('en'),
   EXPO_PUBLIC_QVAC_WHISPER_MODEL_ENGLISH: stringFromEnv('WHISPER_SMALL_Q8_0'),
   /** Qwen LLM model: a QVAC registry preset name (downloaded on device on
    * first use) or a local model file name resolved under

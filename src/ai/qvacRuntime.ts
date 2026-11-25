@@ -224,9 +224,9 @@ class QvacRuntime {
     try {
       if (kind === 'stt') {
         if (whisperSource?.kind === 'registry') {
-          await initializeWhisper('en', whisperSource.source);
+          await initializeWhisper('auto', whisperSource.source);
         } else if (path !== null) {
-          await initializeWhisper('en', path);
+          await initializeWhisper('auto', path);
         } else {
           throw new Error('Whisper model source is unavailable.');
         }
