@@ -304,3 +304,31 @@ Before and alongside the hackathon we ran protocol tests in two dedicated reposi
 
 - [wdk-rgb-flow-testing](https://github.com/ABallarini/wdk-rgb-flow-testing) — end-to-end payment flows between an RGB Lightning Node (RLN, driven through its REST API) and Tether's WDK RGB Lightning library acting as an embedded mobile node, automated on regtest and extended to the public UTEXO Signet network: a basic Lightning payment (WDK invoice paid by RLN via REST), an on-chain BTC transfer a complete RGB NIA asset flow.
 - [bitcode](https://github.com/faktotum-project/bitcode) — a terminal coding and Bitcoin agent in Node. multi-provider LLMs (OpenAI, Anthropic, Groq, Ollama, LM Studio), MCP, local skills and custom commands, plus a first integration of QVAC local inference (qvac/bitcode-local), its Bitcoin payment tools are testnet-only and always require explicit human approval.
+
+
+### Automatic voice reply language
+
+The home voice assistant transcribes with Whisper's `language: auto` and
+`translate: false`. Use a multilingual Whisper checkpoint (the default
+`WHISPER_SMALL_Q8_0` supports this); an English-only model cannot provide
+multilingual recognition. The existing `EXPO_PUBLIC_QVAC_WHISPER_MODEL_ENGLISH`
+variable name is retained for compatibility.
+
+The SDK's transcript segments do not expose a language code. Recognized command
+words select Turkish, English, or Italian; other phrases are classified by the
+on-device Qwen model. Unclassified utterances retain the previous reply language.
+`EXPO_PUBLIC_VOICE_FALLBACK_LANGUAGE=en` in `.env.local` selects the initial
+language (`en`, `tr`, or `it`) and is validated at startup.
+
+Replies use reviewed templates and unchanged wallet values, then select a
+matching system voice. If no matching voice is installed, the localized text
+remains visible and speech is skipped rather than spoken in the wrong language.
+This covers voice-agent replies and remote payment flow announcements, including
+review, authorization, errors and settlement. Payment cards remain in English.
+Other screens and independent payment alerts are not localized.
+Other reply languages are not implemented yet.
+
+After reloading the app, test “Bakiyem ne kadar?”, “What is my balance?” and
+“Qual è il mio saldo?”. Check both displayed and spoken replies, then try an
+ambiguous utterance and verify that the previous language is retained. Actual
+recognition accuracy and installed voice availability require a device test.
