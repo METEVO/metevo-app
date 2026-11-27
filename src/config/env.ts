@@ -6,7 +6,13 @@ import { AppEnv, appEnvSchema, EnvInput } from './schema';
  * time; other loaders (scripts, later phases) can feed `EnvInput` the same
  * way.
  */
-const RAW_ENV: EnvInput = { ...process.env };
+const RAW_ENV: EnvInput = {
+  ...process.env,
+  // Expo inlines only static `process.env.EXPO_PUBLIC_*` member reads; the
+  // spread above does not carry them into a release bundle.
+  EXPO_PUBLIC_WALLET_MODE: process.env.EXPO_PUBLIC_WALLET_MODE,
+  EXPO_PUBLIC_WALLET_TRANSPORT: process.env.EXPO_PUBLIC_WALLET_TRANSPORT,
+};
 
 let cached: AppEnv | null = null;
 

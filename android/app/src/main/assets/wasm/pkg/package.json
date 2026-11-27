@@ -1,0 +1,16 @@
+{
+  "name": "rln-wasm-sdk",
+  "type": "module",
+  "description": "Standalone WASM SDK bridge for RLN + rgb-lib-wasm",
+  "version": "0.1.0",
+  "files": [
+    "rln_wasm_sdk_bg.wasm",
+    "rln_wasm_sdk.js",
+    "rln_wasm_sdk.d.ts"
+  ],
+  "main": "rln_wasm_sdk.js",
+  "types": "rln_wasm_sdk.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

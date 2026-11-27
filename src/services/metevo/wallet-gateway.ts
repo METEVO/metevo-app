@@ -1,5 +1,6 @@
 import { ENV } from '../../config/env';
 import { createBareWalletSessionGateway } from './bareGateway';
+import { createWasmWalletSessionGateway } from './wasmGateway';
 import { createRemoteRlnWalletSessionGateway } from './remoteRlnGateway';
 import type { DecodedInvoiceView, ReviewedPayment } from './paymentGuard';
 import type { TransferInfo } from './transferWatcher';
@@ -31,6 +32,8 @@ export interface WalletSessionSnapshot {
   btcSpendableSat: number;
   balanceUsdmBaseUnits: number | null;
   channelReady: boolean;
+  /** Last background provisioning failure, if any (null when healthy). */
+  provisionError?: string | null;
 }
 
 export type WalletProgressListener = (step: WalletSetupStep, message: string) => void;
@@ -233,6 +236,9 @@ function selectGateway(): WalletSessionGateway {
   }
   if (ENV.EXPO_PUBLIC_WALLET_MODE === 'remote') {
     return createRemoteRlnWalletSessionGateway();
+  }
+  if (ENV.EXPO_PUBLIC_WALLET_MODE === 'wasm') {
+    return createWasmWalletSessionGateway();
   }
   if (ENV.EXPO_PUBLIC_WALLET_TRANSPORT === 'bare') {
     // See docs/known-issues/wallet-bare-android-crash.md: a real duplicate
