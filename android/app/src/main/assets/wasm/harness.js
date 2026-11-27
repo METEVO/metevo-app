@@ -70,6 +70,14 @@ async function pump(node) {
   try { node.processNativeRuntimeQueueValue(); } catch (_e) { /* ignore */ }
 }
 
+// A stuck chain-sync tick must never park provisioning forever.
+async function pumpSafe(node, timeoutMs = 5000) {
+  await Promise.race([
+    pump(node),
+    new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+  ]);
+}
+
 // --- diagnostics -----------------------------------------------------------
 // Every line is its own logcat entry. The WebView console is dropped in a
 // release build (react-native-webview ignores console in non-debug builds), so
@@ -418,6 +426,9 @@ async function readWalletSnapshot(wallet, online) {
 // One background provisioning run at a time; the LSP performs the whole RGB
 // bootstrap (asset, colorable UTXOs, channel open, asset push).
 let openProvisionPromise = null;
+// One provisioning run per WebView lifetime. A second `open` from a remount or
+// login transition must not open a second peer session.
+let provisionStarted = false;
 // Last provisioning failure, surfaced in the status reply/Home attention card.
 let provisionError = null;
 // LSP-reported settled USDm from the last bootstrap. A cold launch (WASM wallet
@@ -441,76 +452,45 @@ async function callHelperSafe(path, body) {
   return r.json();
 }
 
-// RGB consignment transport: same LAN host as the helper, proxy port 3005.
-const RGB_PROXY = `rpc://${new URL(MOBILE_HELPER).hostname}:3005/json-rpc`;
+// Connect to the LSP once and never again while both sides hold the session.
+// Returns only when the LSP peer list AND the local node list contain the
+// pubkey; if the LSP lists it but the local node does not (one-sided), it
+// reconnects once to restore the session.
+let peerConnectAttempted = false;
 
-// Device side of reference flow4: one blind RGB invoice, then POST
-// /lsp/bootstrap. The LSP issues/funds/opens and delivers the asset.
-async function blindRecipientId(s, node) {
-  try { await node.connectPeer("127.0.0.1:9802", (await (await helperFetch(`${MOBILE_HELPER}/lspinfo`)).json()).pubkey); } catch (_e) { /* already connected */ }
-  // rgb-lib needs one on-chain UTXO to witness a blind receive invoice; a
-  // freshly registered wallet has none, and the LSP provisions the channel,
-  // not the device wallet, so ask the helper for the seed UTXO.
-  await withWallet(async () => {
-    const spendable = (b) => Number((b && b.vanilla && (b.vanilla.spendable ?? b.vanilla.settled)) || 0);
-    let bal = null;
-    try { bal = await s.wallet.getBtcBalanceValue(); } catch (_e) { /* fresh: unfunded */ }
-    if (spendable(bal) >= 20000) return;
-    let address = null;
-    for (let a = 0; a < 10 && !address; a += 1) {
-      try { address = await s.wallet.getAddress(); } catch (_e) { await new Promise((r) => setTimeout(r, 1000)); }
-    }
-    if (!address) throw new Error("could not get a funding address: wallet busy");
-    setStatus("witness UTXO");
-    const fund = await helperFetch(`${MOBILE_HELPER}/fund`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ address, btc: 0.0005 }),
-    });
-    if (!fund.ok) throw new Error(`fund failed: ${await fund.text()}`);
-    for (let i = 0; i < 90; i += 1) {
-      try { await s.wallet.syncOnline(s.online); } catch (_e) { /* retry */ }
-      try { bal = await s.wallet.getBtcBalanceValue(); } catch (_e) { /* retry */ }
-      if (spendable(bal) >= 20000) return;
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-    throw new Error("the witness UTXO never appeared on the device wallet");
-  });
-  return withWallet(async () => {
-    setStatus("blind RGB invoice");
-    const makeInvoice = async () => {
-      const inv = await s.wallet.blindReceiveValue(null, "Any", null, [RGB_PROXY], 1);
-      const data = typeof inv === "string" ? JSON.parse(inv) : inv;
-      const recipientId = data.recipient_id || data.recipientId || (data.invoice && data.invoice.recipient_id);
-      if (!recipientId) throw new Error(`no recipient id: ${JSON.stringify(data).slice(0, 240)}`);
-      return recipientId;
-    };
+async function ensurePeerConnected(node, pubkey) {
+  const want = String(pubkey || "").toLowerCase();
+  const lspListed = async () => {
     try {
-      return await makeInvoice();
-    } catch (e) {
-      // rgb-lib wants a colorable UTXO (an allocation) to witness the
-      // invoice; the funded seed UTXO is not allocated until we ask.
-      if (!/allocation/i.test(String(e))) throw e;
-      setStatus("colorable UTXO");
-      const begin = await s.wallet.createUtxosBegin(s.online, false, 1, 20000, 1n, false);
-      const signed = s.wallet.signPsbtValue(begin);
-      await s.wallet.createUtxosEnd(s.online, signed, false);
-      try {
-        await helperFetch(`${MOBILE_HELPER}/mine`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ blocks: 2 }),
-        });
-      } catch (_e) { /* retry sync below */ }
-      for (let i = 0; i < 30; i += 1) {
-        try { await s.wallet.syncOnline(s.online); } catch (_e) { /* retry */ }
-        await new Promise((r) => setTimeout(r, 1000));
-      }
-      return makeInvoice();
+      const peers = await (await helperFetch(`${MOBILE_HELPER}/lsp/peers`)).json();
+      return (peers.peers || []).some(
+        (p) => String(p.pubkey || "").toLowerCase() === want,
+      );
+    } catch (_e) {
+      return false;
     }
-  });
+  };
+  // The LSP's peer list is authoritative. The local `listPeers` view is empty
+  // on the Android WebView even while the session is live; using it here made
+  // every second provision call connectPeer again, which closed the live
+  // session and produced the LSP `Bad MAC`.
+  if (await lspListed()) return;
+  if (peerConnectAttempted) return;
+  peerConnectAttempted = true;
+  try {
+    await node.connectPeer("127.0.0.1:9802", pubkey);
+    diag("provision", { phase: "connected", pubkey: String(pubkey || "").slice(0, 16) });
+  } catch (e) {
+    peerConnectAttempted = false;
+    diag("provision", { phase: "connect-error", error: String(e) });
+  }
 }
 
+
+// Channel-first provisioning: the device connects to the LSP, waits until the
+// LSP lists it as a peer, then asks /lsp/bootstrap to open an RGB channel and
+// push USDm to this node. The device never mines and never creates a blind
+// invoice or witness/colorable UTXO here.
 async function provisionChannel(s) {
   const node = s.node;
   provisionError = null;
@@ -518,137 +498,97 @@ async function provisionChannel(s) {
   const info = await (await helperFetch(`${MOBILE_HELPER}/lspinfo`)).json();
   diag("provision", { phase: "lspinfo", pubkey: info && info.pubkey });
 
-  await node.connectPeer("127.0.0.1:9802", info.pubkey).catch((e) => {
-    diag("provision", { phase: "connect-error", error: String(e) });
-  });
+  await ensurePeerConnected(node, info.pubkey);
 
   const liveInfo = JSON.parse(node.nodePubkeyJson());
   const livePubkey = typeof liveInfo === "string" ? liveInfo : liveInfo.pubkey;
+  const lspPubkey = String(info.pubkey || "").toLowerCase();
+
+  // A channel is "ready" only when the session is live; never on an Opening
+  // or cancelled row.
+  const isReady = (c) =>
+    c.is_usable === true || c.ready === true ||
+    c.status === "ready" || c.status === "Opened";
+
+  let assetId = localStorage.getItem("metevo.usdm_asset_id");
+  const bootstrapBody = () => ({
+    peer_pubkey_and_opt_addr: `${livePubkey}@127.0.0.1:9802`,
+    channel: true,
+    deliver: false,
+    ticker: "USDM",
+    asset_id: assetId || null,
+    capacity_sat: 1000000,
+    asset_amount: 2000000000,
+    // Demo topology: the client receives the full 20 USDm; LSP forwarding
+    // liquidity lives on the recipient channel.
+    push_asset_amount: 2000000000,
+    push_msat: 500000000,
+  });
+
+  const runBootstrap = async () => {
+    try {
+      setStatus("LSP bootstrap");
+      const boot = await callHelperSafe("/lsp/bootstrap", bootstrapBody());
+      if (boot && boot.ok !== false && boot.asset_id) {
+        assetId = boot.asset_id;
+        localStorage.setItem("metevo.usdm_asset_id", assetId);
+      }
+      if (boot && boot.existing === true) {
+        // The LSP already funded this node: no new transfer is expected, only
+        // a reconnect + balance read. Keep its balance for a wallet-DB reset.
+        const lspSettled = Number((boot.peer_balance && boot.peer_balance.settled) || (boot.lsp_balance && boot.lsp_balance.settled) || 0);
+        if (lspSettled > 0) lspUsdmBaseUnits = lspSettled;
+        diag("bootstrap-existing", {
+          asset_id: boot.asset_id || assetId || null,
+          channelStatus: boot.channel && boot.channel.status,
+          delivered: boot.delivered === true,
+          txid: boot.delivery && boot.delivery.txid,
+        });
+      }
+      post({
+        step: "bootstrap",
+        ok: !(boot && boot.error),
+        assetId: boot && boot.asset_id,
+        temporaryChannelId: boot && boot.temporary_channel_id,
+        channelStatus: boot && boot.channel && boot.channel.status,
+        error: boot && boot.error,
+      });
+    } catch (e) {
+      // A bridge timeout is not a failure: the LSP keeps opening the channel.
+      // The poll below is the real success signal.
+      post({ step: "bootstrap-pending", error: String(e) });
+    }
+  };
+
   let seen = false;
   for (let i = 0; i < 120; i += 1) {
-    await pump(node);
     try {
       const peers = await (await helperFetch(`${MOBILE_HELPER}/lsp/peers`)).json();
-      seen = (peers.peers || []).some(
+      const lspSeen = (peers.peers || []).some(
         (p) => String(p.pubkey || "").toLowerCase() === String(livePubkey).toLowerCase(),
       );
+      seen = lspSeen;
       if (seen) break;
+      if (i % 10 === 0) diag("provision", { phase: "wait-peer", lspSeen });
     } catch (_e) { /* retry */ }
-    if (i % 20 === 19) {
-      void node.connectPeer("127.0.0.1:9802", info.pubkey).catch(() => {});
-    }
     await new Promise((r) => setTimeout(r, 500));
   }
   if (!seen) throw new Error("the LSP never listed this node as a peer");
 
-  // Reference flow4: the device only creates a blind RGB invoice. Everything
-  // else — USDM issuance, colorable UTXOs, the RGB channel, the sats/asset
-  // push — happens on the LSP.
-  const recipientId = await blindRecipientId(s, node);
-  post({ step: "blind-invoice", recipientId });
+  await runBootstrap();
 
-  let assetId = localStorage.getItem("metevo.usdm_asset_id");
-  // Deliver the asset again only when this wallet has no settled USDM (fresh
-  // install or reset wallet DB); a retry with balance already present skips it.
-  let deliver = true;
-  if (assetId) {
-    try {
-      const raw = await withWallet(() => s.wallet.getAssetBalanceValue(assetId));
-      const cached = typeof raw === "string" ? JSON.parse(raw) : raw;
-      deliver = !(cached && Number(cached.settled || 0) > 0);
-    } catch (_e) { deliver = true; }
-  }
-  try {
-    setStatus("LSP bootstrap");
-    const boot = await callHelperSafe("/lsp/bootstrap", {
-      peer_pubkey_and_opt_addr: `${livePubkey}@127.0.0.1:9802`,
-      recipient_id: recipientId,
-      transport_endpoints: [RGB_PROXY],
-      // The LSP opens the RGB channel too, but the phone cannot yet complete
-      // an inbound channel handshake; deliver on-chain now (same asset, same
-      // blind invoice) so the USDm balance lands.
-      channel: false,
-      ticker: "USDM",
-      asset_id: assetId || null,
-      deliver,
-    });
-    if (boot && boot.ok !== false && boot.asset_id) {
-      assetId = boot.asset_id;
-      localStorage.setItem("metevo.usdm_asset_id", assetId);
-    }
-    if (boot && boot.existing === true) {
-      // The LSP already funded this node: no new transfer is expected, only a
-      // reconnect + balance read. Keep its balance for a wallet-DB reset.
-      const lspSettled = Number((boot.peer_balance && boot.peer_balance.settled) || (boot.lsp_balance && boot.lsp_balance.settled) || 0);
-      if (lspSettled > 0) lspUsdmBaseUnits = lspSettled;
-      diag("bootstrap-existing", {
-        asset_id: boot.asset_id || assetId || null,
-        channelStatus: boot.channel && boot.channel.status,
-        delivered: boot.delivered === true,
-        txid: boot.delivery && boot.delivery.txid,
-      });
-    }
-    post({
-      step: "bootstrap",
-      ok: !(boot && boot.error),
-      assetId: boot && boot.asset_id,
-      temporaryChannelId: boot && boot.temporary_channel_id,
-      channelStatus: boot && boot.channel && boot.channel.status,
-      error: boot && boot.error,
-    });
-  } catch (e) {
-    // A bridge timeout is not a failure: the LSP keeps opening the channel.
-    // The poll below is the real success signal.
-    post({ step: "bootstrap-pending", error: String(e) });
-  }
-
-  // Reference waitForChannelToBeUsable: chainSyncTick + driveRgbFundingWork
-  // every tick; mine every 3rd tick; wallet sync/refresh every few ticks.
+  // Poll every 500 ms: chainSyncTick each tick; wallet sync/refresh every 6th.
+  // Re-POST the same idempotent bootstrap every 120 ticks (~60 s) while no
+  // peer channel row exists yet. No mining: the LSP owns mining.
   const deadline = Date.now() + 10 * 60 * 1000;
   for (let i = 0; Date.now() < deadline; i += 1) {
-    await pump(node);
-    await withWallet(async () => {
-      try { await node.driveRgbFundingWork(); } catch (_e) { /* ignore */ }
-    });
-    if (i % 3 === 2) {
-      try { await callHelperSafe("/mine", { blocks: 1 }); } catch (_e) { /* ignore */ }
-    }
-    if (i % 6 === 5) {
-      await withWallet(async () => {
-        try { await s.wallet.syncOnline(s.online); } catch (_e) { /* ignore */ }
-        try { await s.wallet.refreshValue(s.online, null, [], false); } catch (_e) { /* ignore */ }
-      });
-    }
-    if (i % 40 === 39) {
-      try {
-        const peers = await (await helperFetch(`${MOBILE_HELPER}/lsp/peers`)).json();
-        const stillThere = (peers.peers || []).some(
-          (p) => String(p.pubkey || "").toLowerCase() === String(livePubkey).toLowerCase(),
-        );
-        if (!stillThere) {
-          void node.connectPeer("127.0.0.1:9802", info.pubkey).catch(() => {});
-        }
-      } catch (_e) { /* retry */ }
-    }
-    // Self-heal a bootstrap that returned 502 (channel still Opening): the
-    // helper's reuse path opens nothing new and delivers once it is Opened.
-    if (i > 0 && i % 60 === 0) {
-      try {
-        await callHelperSafe("/lsp/bootstrap", {
-          peer_pubkey_and_opt_addr: `${livePubkey}@127.0.0.1:9802`,
-          recipient_id: recipientId,
-          transport_endpoints: [RGB_PROXY],
-          channel: false,
-          ticker: "USDM",
-          asset_id: assetId || null,
-          deliver: true,
-        });
-      } catch (_e) { /* next tick */ }
-    }
+    try { await node.chainSyncTickValue(); } catch (_e) { /* ignore */ }
+    try { node.processNativeRuntimeQueueValue(); } catch (_e) { /* ignore */ }
     const channels = JSON.parse(node.listChannelsJson());
     const peerChannels = (channels || []).filter(
-      (c) => String(c.peer_pubkey || "").toLowerCase() === String(info.pubkey || "").toLowerCase(),
+      (c) => String(c.peer_pubkey || "").toLowerCase() === lspPubkey,
     );
+    if (i > 0 && i % 120 === 0 && peerChannels.length === 0) await runBootstrap();
     // Prefer the channel row's asset id whenever it differs: the local id can
     // be missing (bridge timeout) or stale from another regtest chain.
     const assetRow = peerChannels.find((c) => c.asset_id);
@@ -656,10 +596,20 @@ async function provisionChannel(s) {
       assetId = assetRow.asset_id;
       localStorage.setItem("metevo.usdm_asset_id", assetId);
     }
-    const channel = peerChannels.find((c) => c.is_usable === true);
+    const channel = peerChannels.find((c) => isReady(c));
     if (channel) {
       provisionError = null;
       post({ step: "channel-ready", channel, assetId });
+      return;
+    }
+    // The pushed USDm lands on the responder (this node) side; the channel row
+    // reporting a positive asset_local_amount is the pushed balance, but only
+    // once the channel itself is ready (never while Opening/cancelled).
+    const pushedRow = peerChannels.find((c) => Number(c.asset_local_amount || 0) > 0 && isReady(c));
+    if (pushedRow) {
+      provisionError = null;
+      const balance = { settled: Number(pushedRow.asset_local_amount) };
+      post({ step: "channel-ready", channel: pushedRow, assetId, balance });
       return;
     }
     if (assetId) {
@@ -704,7 +654,9 @@ window.__metevoDispatch = async (raw) => {
         // The reply stays fast; provisioning continues in the background.
         const existing = JSON.parse(node.listChannelsJson());
         diag("open", { phase: "dispatch", running: openProvisionPromise !== null, channels: existing.length });
-        if (openProvisionPromise === null) {
+        if (openProvisionPromise === null && !provisionStarted) {
+          provisionStarted = true;
+          diag("provision", { phase: "dispatch-start" });
           openProvisionPromise = provisionChannel(s)
             .catch((e) => {
               provisionError = e && e.message ? e.message : String(e);
@@ -725,9 +677,11 @@ window.__metevoDispatch = async (raw) => {
         // processes the inbound virtual-channel open/funding on the device
         // (reference e2e-test-wasm-wdk.js waitForChannelToBeUsable does
         // chainSyncTick + driveRgbFundingWork each tick).
-        await withWallet(async () => {
-          try { await node.driveRgbFundingWork(); } catch (_e) { /* ignore */ }
-        });
+        // chainSyncTick is enough here: the SDK auto-drive tick already runs
+        // RGB funding work before and after peer events. Calling it again from
+        // the status poll held the single-threaded RGB wallet and every other
+        // wallet call failed with "wallet is busy".
+        try { await node.chainSyncTickValue(); } catch (_e) { /* ignore */ }
         try { node.processNativeRuntimeQueueValue(); } catch (_e) { /* ignore */ }
         // The LSP pushes the bootstrap USDM into the channel's responder
         // side — this node — so RLN reports it as asset_local_amount here
@@ -935,85 +889,14 @@ window.__metevoDispatch = async (raw) => {
         return;
       }
       case "shutdown":
-        try { node.persistLdkRuntimeState(); } catch (_e) { /* best-effort */ }
         reply({ ok: true });
         return;
       case "issueusdm": {
-        // No device-side RGB provisioning: one blind invoice, one LSP
-        // bootstrap (reference flow4 — the LSP issues, allocates, opens the
-        // RGB channel and delivers the asset to this recipient id).
-        const info = await (await helperFetch(`${MOBILE_HELPER}/lspinfo`)).json();
-        await node.connectPeer("127.0.0.1:9802", info.pubkey).catch(() => {});
-        const liveInfo = JSON.parse(node.nodePubkeyJson());
-        const livePubkey = typeof liveInfo === "string" ? liveInfo : liveInfo.pubkey;
-
-        const recipientId = await blindRecipientId(s, node);
-
-        let assetId = localStorage.getItem("metevo.usdm_asset_id");
-        try {
-          setStatus("LSP bootstrap");
-          const boot = await callHelperSafe("/lsp/bootstrap", {
-            peer_pubkey_and_opt_addr: `${livePubkey}@127.0.0.1:9802`,
-            recipient_id: recipientId,
-            transport_endpoints: [RGB_PROXY],
-            channel: false,
-            ticker: "USDM",
-            asset_id: localStorage.getItem("metevo.usdm_asset_id"),
-            deliver: true,
-          });
-          if (boot && boot.error) throw new Error(`LSP bootstrap failed: ${boot.error}`);
-          if (boot && boot.ok !== false && boot.asset_id) {
-            assetId = boot.asset_id;
-            localStorage.setItem("metevo.usdm_asset_id", assetId);
-          }
-          if (boot && boot.existing === true) {
-            const lspSettled = Number((boot.peer_balance && boot.peer_balance.settled) || (boot.lsp_balance && boot.lsp_balance.settled) || 0);
-            if (lspSettled > 0) lspUsdmBaseUnits = lspSettled;
-            diag("bootstrap-existing", {
-              asset_id: boot.asset_id || assetId || null,
-              channelStatus: boot.channel && boot.channel.status,
-              delivered: boot.delivered === true,
-              txid: boot.delivery && boot.delivery.txid,
-            });
-          }
-        } catch (e) {
-          // A 60 s bridge timeout (or a 502 while RLN finishes) must not end
-          // the flow: the balance poll below is the real result.
-          post({ step: "bootstrap-pending", error: String(e) });
-        }
-        if (!assetId) {
-          const rows = JSON.parse(node.listChannelsJson()) || [];
-          const row = rows.find(
-            (c) => c.asset_id && String(c.peer_pubkey || "").toLowerCase() === String(info.pubkey || "").toLowerCase(),
-          );
-          if (row) {
-            assetId = row.asset_id;
-            localStorage.setItem("metevo.usdm_asset_id", assetId);
-          }
-        }
-        if (!assetId) throw new Error("LSP bootstrap returned no asset id");
-
-        setStatus("waiting for USDm");
-        let balance = null;
-        for (let i = 0; i < 120; i += 1) {
-          await withWallet(async () => {
-            try { await node.driveRgbFundingWork(); } catch (_e) { /* ignore */ }
-          });
-          try {
-            balance = await withWallet(async () => {
-              try { await s.wallet.refreshValue(s.online, null, [], false); } catch (_e) { /* not ready */ }
-              const raw = await s.wallet.getAssetBalanceValue(assetId);
-              return typeof raw === "string" ? JSON.parse(raw) : raw;
-            });
-          } catch (_e) { /* busy: retry */ }
-          if (balance && Number(balance.settled || 0) > 0) break;
-          if (i % 5 === 4) {
-            try { await callHelperSafe("/mine", { blocks: 1 }); } catch (_e) { /* ignore */ }
-          }
-          await new Promise((r) => setTimeout(r, 1000));
-        }
-        setStatus(`usdm balance ${JSON.stringify(balance || null)}`);
-        reply({ ok: true, assetId, balance: balance || null });
+        // Channel-first: provisionChannel opens the RGB channel and the LSP
+        // pushes the USDm. Reuse an in-flight run so we never double-provision.
+        // No mining, no blind invoice, no mining helper call.
+        await (openProvisionPromise ?? provisionChannel(s));
+        reply({ ok: true, assetId: localStorage.getItem("metevo.usdm_asset_id") });
         return;
       }
       case "selftest": {
@@ -1027,7 +910,7 @@ window.__metevoDispatch = async (raw) => {
               const info = await (await helperFetch(`${MOBILE_HELPER}/lspinfo`)).json();
               await node.connectPeer("127.0.0.1:9802", info.pubkey);
               for (let w = 0; w < 20; w += 1) {
-                await pump(node);
+                await pumpSafe(node);
                 const chans = JSON.parse(node.listChannelsJson());
                 if ((chans || []).some((c) => c.is_usable === true)) break;
                 await new Promise((r) => setTimeout(r, 500));
@@ -1047,7 +930,9 @@ window.__metevoDispatch = async (raw) => {
           // Outbound: device -> LSP keysend; must actually reach "succeeded".
           // Live model: a real keysend is accounted by the ChannelManager, the
           // parity ledger never records it (handoff L4).
-          const sent = JSON.parse(node.keysendLiveJson(info.pubkey, 3000000n, undefined, undefined));
+          const assetId = localStorage.getItem("metevo.usdm_asset_id");
+          const assetAmount = 100000000n;
+          const sent = JSON.parse(node.keysendLiveJson(info.pubkey, 3000000n, assetId, assetAmount));
           const readLivePayments = async () => {
             const raw = await node.livePaymentsValue();
             const list = typeof raw === "string" ? JSON.parse(raw) : raw;
@@ -1055,7 +940,7 @@ window.__metevoDispatch = async (raw) => {
           };
           let sentOk = false;
           for (let i = 0; i < 240; i += 1) {
-            await pump(node);
+            await pumpSafe(node);
             try {
               const match = (await readLivePayments()).find(
                 (p) => p.payment_hash === sent.payment_hash && p.status === "succeeded",
@@ -1076,14 +961,14 @@ window.__metevoDispatch = async (raw) => {
             const resp = await helperFetch(`${MOBILE_HELPER}/lsp/keysend`, {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ dest_pubkey: livePubkey, amt_msat: 3000000 }),
+              body: JSON.stringify({ dest_pubkey: livePubkey, amt_msat: 3000000, asset_id: assetId, asset_amount: Number(assetAmount) }),
             });
             if (resp.ok) {
               const payload = await resp.json();
               receivedHash = payload.payment_hash ?? null;
             }
             for (let i = 0; i < 240; i += 1) {
-              await pump(node);
+              await pumpSafe(node);
               try {
                 const match = (await readLivePayments()).find(
                   (p) =>
@@ -1183,6 +1068,88 @@ async function helperFetch(url, opts) {
   });
 }
 
+// --- durable wallet backup ------------------------------------------------
+// rgb-lib keeps its state in memory only; the WASM wallet DB resets on every
+// cold launch. Persist the encrypted backup in IndexedDB and restore it before
+// the wallet goes online so USDm/channel state survives a restart.
+const WALLET_DB = "metevo-wallet";
+const WALLET_STORE = "kv";
+
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    try {
+      const req = indexedDB.open(WALLET_DB, 1);
+      req.onupgradeneeded = () => {
+        try { req.result.createObjectStore(WALLET_STORE); } catch (_e) { /* exists */ }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+let idbDiagDone = false;
+function idbUnavailable(e) {
+  if (idbDiagDone) return;
+  idbDiagDone = true;
+  diag("wallet-backup", { phase: "idb-unavailable", error: String(e) });
+}
+
+async function idbGet(key) {
+  let db = null;
+  try {
+    db = await idbOpen();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(WALLET_STORE, "readonly");
+      const req = tx.objectStore(WALLET_STORE).get(key);
+      req.onsuccess = () => resolve(req.result ?? null);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) {
+    idbUnavailable(e);
+    return null;
+  } finally {
+    try { if (db) db.close(); } catch (_e) { /* best-effort */ }
+  }
+}
+
+async function idbSet(key, value) {
+  let db = null;
+  try {
+    db = await idbOpen();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(WALLET_STORE, "readwrite");
+      tx.objectStore(WALLET_STORE).put(value, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) {
+    idbUnavailable(e);
+  } finally {
+    try { if (db) db.close(); } catch (_e) { /* best-effort */ }
+  }
+}
+
+async function sha256Hex(text) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// Optional VSS identity derived from the mnemonic. Never logged.
+async function deriveVssIdentity(mnemonic) {
+  try {
+    if (!crypto || !crypto.subtle) throw new Error("crypto.subtle unavailable");
+    const base = await sha256Hex(mnemonic);
+    const signingKey = await sha256Hex(`${mnemonic}:vss-signing`);
+    return { storeId: `metevo-${base.slice(0, 24)}`, signingKey };
+  } catch (e) {
+    diag("vss", { phase: "derive-failed", error: String(e) });
+    return null;
+  }
+}
+
 (async function main() {
   try {
     setStatus("wasm init");
@@ -1244,19 +1211,58 @@ async function helperFetch(url, opts) {
     const nodeProxyUrl = baseProxyUrl.split("#runtime:")[0];
 
     const node = RlnWasmNode.newWithNodeRuntimeId(nodeProxyUrl, rid, "Regtest");
+    // Optional VSS replication when ?vssUrl= is present. Derive the identity
+    // from the mnemonic (never logged); a failure keeps the IndexedDB path.
+    const vssUrl = getQueryParam("vssUrl", "");
+    let vss = null;
+    if (vssUrl) {
+      vss = await deriveVssIdentity(mnemonic);
+      if (vss && typeof node.configureLdkVssReplication === "function") {
+        try { await node.configureLdkVssReplication(vssUrl, vss.storeId, vss.signingKey); }
+        catch (e) { diag("vss", { phase: "ldk-configure-failed", error: String(e) }); }
+      }
+    }
     // No installAutoPeerManagerHooks(): the reference flows never install it,
     // and it intercepts inbound peer payloads before LDK sees channel messages
     // (the device never answered the LSP's OpenChannel with it installed).
     node.chainSyncStartValue(indexerUrl, 5000);
-    try {
-      node.reconnectManagerStartValue();
-    } catch (_e) {
-      /* optional */
-    }
+    // No reconnect manager: it races connectPeer and opens a second session
+    // for the same node id, which the LSP drops with `Bad MAC`. Provisioning
+    // owns the single peer session (ensurePeerConnected).
 
     const keys = rgbRestoreKeysValue("regtest", mnemonic);
     const walletData = buildWalletData(keys, rid);
+    // Namespace the backup by seed so a different seed never restores this
+    // seed's wallet. sha256 of the mnemonic; fall back to the runtime id.
+    let seedTag;
+    try {
+      seedTag = await sha256Hex(mnemonic);
+    } catch (_e) {
+      seedTag = rid;
+    }
+    const backupKey = `wallet-backup:${seedTag}`;
     const wallet = await RlnWasmWallet.create(JSON.stringify(walletData));
+    // Restore the encrypted backup persisted on the previous run before the
+    // wallet goes online. A missing/failed restore just continues fresh.
+    try {
+      const saved = await idbGet(backupKey);
+      if (saved instanceof Uint8Array && saved.length > 0) {
+        wallet.restoreBackup(saved, password);
+        diag("wallet-backup", { phase: "restored", bytes: saved.length });
+      }
+    } catch (e) {
+      diag("wallet-backup", { phase: "restore-failed", error: String(e) });
+    }
+    if (vss) {
+      try {
+        if (typeof wallet.configureVssBackup === "function") {
+          wallet.configureVssBackup(vssUrl, vss.storeId, vss.signingKey);
+          if (typeof wallet.vssRestoreBackup === "function") await wallet.vssRestoreBackup();
+        }
+      } catch (e) {
+        diag("vss", { phase: "restore-failed", error: String(e) });
+      }
+    }
     const online = await wallet.goOnlineValue(true, indexerUrl); setStatus("wallet online");
 
     try {
@@ -1268,11 +1274,10 @@ async function helperFetch(url, opts) {
       try { node.attachWallet(wallet); } catch (_e) { /* optional */ }
     }
 
-    // Handoff L6: the SDK's own driver replaces the hand-rolled pump
-    // (chain sync -> live LDK -> event drain -> channel reconcile).
-    try {
-      await sdk.preloadPersistentRuntimeState();
-    } catch (_e) { /* optional */ }
+    // The persisted LDK snapshot can be undecodable (`InvalidValue`) after a
+    // SDK/format change and then every connectPeer fails. The browser harness
+    // does not preload it and connects cleanly, so the app skips it too.
+    // Durable identity/channels come from VSS (`configureLdkVssReplication`).
     let autoDriveOn = false;
     try {
       node.autoDriveStartValue(400);
@@ -1280,16 +1285,8 @@ async function helperFetch(url, opts) {
     } catch (_e) { /* older SDK: flows keep their manual pumps */ }
     post({ step: "auto-drive", autoDriveOn });
 
-    // RGB-specific work the LN tick does not cover (handoff L6). Queued on
-    // the wallet chain so it never overlaps a running flow.
-    const rgbWork = () => {
-      withWallet(async () => {
-        try { await node.processPendingRgbTransactions(); } catch (_e) { /* ignore */ }
-        try { await node.driveRgbFundingWork(); } catch (_e) { /* ignore */ }
-      });
-    };
-    rgbWork();
-    const rgbTimer = setInterval(rgbWork, 4000);
+    // RGB work is driven by the SDK auto-drive tick (pre/post peer events).
+    // A second 4 s timer here competed for the single-threaded RGB wallet.
 
     const walletAddress = wallet.getAddress();
 
@@ -1309,25 +1306,28 @@ async function helperFetch(url, opts) {
       })
     );
 
-    const flushLdkState = () => {
+    // Do not persist the LDK runtime state here: the boot flush writes an
+    // incomplete ChannelManager snapshot, and the next connectPeer dies with
+    // `channel manager snapshot decode: InvalidValue`. Durable LDK state is
+    // VSS' job (`configureLdkVssReplication`).
+
+    // Persist the encrypted wallet backup (rgb-lib state is in-memory only).
+    // Runs once now, then every 30 s while the page lives, plus on exit. The
+    // snapshot runs on the wallet chain (rgb-lib is single-threaded).
+    const backupWallet = async () => {
       try {
-        node.persistLdkRuntimeState();
+        await withWallet(async () => {
+          const backup = wallet.backup(password);
+          if (backup instanceof Uint8Array) await idbSet(backupKey, backup);
+        });
       } catch (_e) {
-        /* best-effort */
+        /* best-effort: a missing backup just means a fresh restore next boot */
       }
     };
-    window.addEventListener("pagehide", flushLdkState);
-    window.addEventListener("beforeunload", flushLdkState);
-
-    // A force-stop never fires pagehide/beforeunload, so the freshly
-    // generated node keys must hit the persistent store now, not on page
-    // exit — otherwise the next boot preloads nothing and the pubkey
-    // rotates (preloadPersistentRuntimeState runs earlier, above).
-    flushLdkState();
-    // The keys are generated lazily once chain sync starts, so the boot
-    // flush can still be too early; keep flushing until the state sticks.
-    const flushTimer = setInterval(flushLdkState, 15000);
-    window.addEventListener("pagehide", () => clearInterval(flushTimer));
+    void backupWallet();
+    const backupTimer = setInterval(backupWallet, 30000);
+    window.addEventListener("pagehide", () => { clearInterval(backupTimer); void backupWallet(); });
+    window.addEventListener("beforeunload", () => { void backupWallet(); });
 
     const pubkey = (JSON.parse(node.nodePubkeyJson()) || {}).pubkey || "?";
     setStatus(`ready · pubkey=${pubkey} · wallet=${walletAddress.slice(0, 18)}…`);

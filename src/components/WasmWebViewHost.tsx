@@ -72,9 +72,13 @@ export function WasmWebViewHost({
     };
   }, []);
 
-  const helper = process.env.EXPO_PUBLIC_WASM_HELPER_URL || 'http://192.168.1.147:3010';
-  const indexer = process.env.EXPO_PUBLIC_WASM_INDEXER_URL || 'http://192.168.1.147:3002';
-  const nodeProxy = process.env.EXPO_PUBLIC_WASM_NODE_PROXY_URL || 'ws://192.168.1.147:3001';
+  // One host switch: the LSP/helper/indexer/gateway usually share a LAN host.
+  // Point EXPO_PUBLIC_METEVO_LAN_HOST at the current IP instead of editing three URLs.
+  const lanHost = process.env.EXPO_PUBLIC_METEVO_LAN_HOST || '192.168.1.30';
+  const helper = process.env.EXPO_PUBLIC_WASM_HELPER_URL || `http://${lanHost}:3010`;
+  const indexer = process.env.EXPO_PUBLIC_WASM_INDEXER_URL || `http://${lanHost}:3002`;
+  const nodeProxy = process.env.EXPO_PUBLIC_WASM_NODE_PROXY_URL || `ws://${lanHost}:3001`;
+  const vssUrl = process.env.EXPO_PUBLIC_VSS_URL || '';
 
   return (
     <View style={styles.offscreen} pointerEvents="none">
@@ -89,7 +93,9 @@ export function WasmWebViewHost({
             mnemonic,
           )}&runtimeId=${runtimeId}&helper=${encodeURIComponent(
             helper,
-          )}&indexerUrl=${encodeURIComponent(indexer)}&nodeProxyUrl=${encodeURIComponent(nodeProxy)}`,
+          )}&indexerUrl=${encodeURIComponent(indexer)}&nodeProxyUrl=${encodeURIComponent(nodeProxy)}${
+            vssUrl ? `&vssUrl=${encodeURIComponent(vssUrl)}` : ''
+          }`,
         }}
         originWhitelist={['*']}
         javaScriptEnabled
@@ -119,8 +125,8 @@ export function WasmWebViewHost({
 }
 
 const styles = StyleSheet.create({
-  // Offscreen, clipped, non-touchable, behind the app. A 1x1 wrapper with
-  // overflow hidden keeps the native view from expanding into the layout.
+  // 1x1, non-touchable, attached to the view tree. Kept on top so Android
+  // does not suspend the WebView renderer; clipped so it cannot show.
   offscreen: {
     position: 'absolute',
     width: 1,
@@ -128,9 +134,8 @@ const styles = StyleSheet.create({
     left: 0,
     top: 0,
     overflow: 'hidden',
-    zIndex: -1,
-    elevation: -1,
-    transform: [{ translateX: -5000 }, { translateY: -5000 }],
+    zIndex: 100,
+    elevation: 100,
   },
   webview: {
     width: '100%',
